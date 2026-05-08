@@ -5,7 +5,10 @@
 const { useState: useStateC, useEffect: useEffectC, useRef: useRefC } = React;
 
 // =================== TOP NAV ===================
-function TopNav({ active, onNav, onLaunch }) {
+function TopNav({ active, onNav, onLaunch, user, onLogout, onAdmin }) {
+  const [showMenu, setShowMenu] = useStateC(false);
+  const initial = (user?.name || user?.email || "?").charAt(0).toUpperCase();
+
   return (
     <header style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -42,19 +45,65 @@ function TopNav({ active, onNav, onLaunch }) {
           ))}
         </nav>
       </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
         <button className="qs-btn qs-btn--ghost qs-btn--sm" onClick={() => onNav("join")}>
           <I.users size={16} /> Unirme a un quiz
         </button>
         <button className="qs-btn qs-btn--primary" onClick={onLaunch}>
           <I.play size={16} /> Iniciar sesión
         </button>
-        <div style={{
-          width: 38, height: 38, borderRadius: "50%",
-          background: "linear-gradient(135deg, var(--amber-400), var(--pink-500))",
-          display: "grid", placeItems: "center", color: "#fff",
-          fontWeight: 800, fontFamily: "var(--font-display)",
-        }}>D</div>
+        <button
+          onClick={() => setShowMenu(!showMenu)}
+          style={{
+            width: 38, height: 38, borderRadius: "50%",
+            background: "linear-gradient(135deg, var(--amber-400), var(--pink-500))",
+            display: "grid", placeItems: "center", color: "#fff",
+            fontWeight: 800, fontFamily: "var(--font-display)",
+            border: "none", cursor: "pointer",
+          }}
+          title={user?.name || user?.email}
+        >{initial}</button>
+
+        {showMenu && (
+          <>
+            <div
+              onClick={() => setShowMenu(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 60 }}
+            />
+            <div style={{
+              position: "absolute", top: "100%", right: 0, marginTop: 8,
+              background: "var(--white)", border: "1px solid var(--ink-200)",
+              borderRadius: 12, padding: 8, minWidth: 240, zIndex: 70,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+            }}>
+              <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--ink-100)", marginBottom: 4 }}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{user?.name || "Usuario"}</div>
+                <div style={{ fontSize: 12, color: "var(--ink-500)" }}>{user?.email}</div>
+                {user?.institution && (
+                  <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 2 }}>🏫 {user.institution}</div>
+                )}
+              </div>
+              {onAdmin && (
+                <button
+                  onClick={() => { setShowMenu(false); onAdmin(); }}
+                  style={{
+                    width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 8,
+                    background: "transparent", border: "none", cursor: "pointer", fontSize: 14,
+                    color: "var(--violet-700)", fontWeight: 600,
+                  }}
+                >🛡️ Panel de administración</button>
+              )}
+              <button
+                onClick={() => { setShowMenu(false); onLogout(); }}
+                style={{
+                  width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 8,
+                  background: "transparent", border: "none", cursor: "pointer", fontSize: 14,
+                  color: "var(--red-500)", fontWeight: 600,
+                }}
+              >🚪 Cerrar sesión</button>
+            </div>
+          </>
+        )}
       </div>
     </header>
   );
@@ -62,12 +111,52 @@ function TopNav({ active, onNav, onLaunch }) {
 
 // =================== DASHBOARD ===================
 function Dashboard({ onOpenEditor, onLaunch, onResults }) {
-  const quizzes = [
-    { id: "q1", title: "Cultura general — Edición Latam", emoji: "🌎", qs: 12, plays: 8, color: "var(--violet-500)" },
-    { id: "q2", title: "Repaso Biología 9°", emoji: "🧬", qs: 18, plays: 24, color: "var(--emerald-500)" },
-    { id: "q3", title: "Onboarding del equipo", emoji: "🚀", qs: 8, plays: 3, color: "var(--pink-500)" },
-    { id: "q4", title: "Trivia de viernes", emoji: "🎉", qs: 15, plays: 41, color: "var(--amber-500)" },
-  ];
+  const [quizzes, setQuizzes] = useStateC([]);
+  const [loadingQuizzes, setLoadingQuizzes] = useStateC(true);
+  const userData = window.QS.currentUserData;
+  const userName = userData?.name || "Profesor";
+  const firstName = userName.split(" ")[0];
+
+  useEffectC(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const uid = window.QS.currentUser?.uid;
+        if (!uid) { setLoadingQuizzes(false); return; }
+        const snap = await window.QS.db.collection("quizzes")
+          .where("ownerId", "==", uid).get();
+        const list = snap.docs.map(d => {
+          const data = d.data();
+          return {
+            id: d.id,
+            title: data.title || "Sin título",
+            emoji: data.cover || "✨",
+            qs: (data.questions || []).length,
+            plays: data.plays || 0,
+            color: data.color || "var(--violet-500)",
+          };
+        });
+        list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        if (!cancelled) { setQuizzes(list); setLoadingQuizzes(false); }
+      } catch (err) {
+        console.error("Error cargando quizzes:", err);
+        if (!cancelled) setLoadingQuizzes(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, []);
+
+  const deleteQuiz = async (id) => {
+    if (!confirm("¿Eliminar este quiz? Esta acción no se puede deshacer.")) return;
+    try {
+      await window.QS.db.collection("quizzes").doc(id).delete();
+      setQuizzes(quizzes.filter(q => q.id !== id));
+    } catch (err) {
+      alert("Error al eliminar: " + err.message);
+    }
+  };
+
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px" }}>
       {/* Hero */}
@@ -80,9 +169,9 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
           <div className="qs-chip" style={{
             background: "rgba(255,255,255,.2)", color: "#fff", marginBottom: 12,
           }}>
-            <I.flame size={14} stroke="#fff" /> 3 sesiones esta semana
+            <I.flame size={14} stroke="#fff" /> {quizzes.length} quizzes en tu biblioteca
           </div>
-          <h1 style={{ fontSize: 36, color: "#fff", marginBottom: 8 }}>¡Hola, Daniela! 👋</h1>
+          <h1 style={{ fontSize: 36, color: "#fff", marginBottom: 8 }}>¡Hola, {firstName}! 👋</h1>
           <p style={{ opacity: .9, marginBottom: 20, fontSize: 16 }}>
             Crea un quiz, comparte el código con tus participantes y mira las respuestas en vivo.
           </p>
@@ -109,10 +198,10 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 16, marginBottom: 32 }}>
         {[
-          { label: "Quizzes creados", value: 12, icon: "list", c: "var(--violet-500)" },
-          { label: "Sesiones jugadas", value: 76, icon: "play", c: "var(--pink-500)" },
-          { label: "Participantes únicos", value: 348, icon: "users", c: "var(--amber-500)" },
-          { label: "Promedio de aciertos", value: "72%", icon: "star", c: "var(--emerald-500)" },
+          { label: "Quizzes creados", value: quizzes.length, icon: "list", c: "var(--violet-500)" },
+          { label: "Sesiones jugadas", value: quizzes.reduce((s, q) => s + (q.plays || 0), 0), icon: "play", c: "var(--pink-500)" },
+          { label: "Total de preguntas", value: quizzes.reduce((s, q) => s + (q.qs || 0), 0), icon: "users", c: "var(--amber-500)" },
+          { label: "Tu rol", value: (window.QS.currentUserData?.role === "admin" ? "Admin" : "Profesor"), icon: "star", c: "var(--emerald-500)" },
         ].map((s, i) => {
           const Ico = I[s.icon];
           return (
@@ -156,6 +245,23 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
           <div style={{ fontWeight: 800, fontSize: 16, fontFamily: "var(--font-display)" }}>Nuevo quiz</div>
           <div style={{ fontSize: 13, color: "var(--violet-700)", opacity: .75 }}>Empieza desde cero</div>
         </button>
+        {loadingQuizzes && (
+          <div className="qs-card" style={{
+            padding: 24, minHeight: 220, display: "grid", placeItems: "center",
+            color: "var(--ink-500)",
+          }}>Cargando tus quizzes...</div>
+        )}
+        {!loadingQuizzes && quizzes.length === 0 && (
+          <div className="qs-card" style={{
+            padding: 24, minHeight: 220, display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", textAlign: "center",
+            color: "var(--ink-500)", gridColumn: "span 2",
+          }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>📝</div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>Aún no tienes quizzes</div>
+            <div style={{ fontSize: 13 }}>Crea tu primer quiz haciendo clic en "Nuevo quiz" 👈</div>
+          </div>
+        )}
         {quizzes.map(q => (
           <div key={q.id} className="qs-card" style={{ overflow: "hidden", display: "flex", flexDirection: "column" }}>
             <div style={{
@@ -163,10 +269,14 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
               fontSize: 56, position: "relative",
             }}>
               <span>{q.emoji}</span>
-              <button style={{
-                position: "absolute", top: 10, right: 10, width: 32, height: 32, borderRadius: 999,
-                background: "rgba(255,255,255,.25)", color: "#fff", display: "grid", placeItems: "center",
-              }}><I.more size={18} stroke="#fff" /></button>
+              <button
+                onClick={() => deleteQuiz(q.id)}
+                title="Eliminar quiz"
+                style={{
+                  position: "absolute", top: 10, right: 10, width: 32, height: 32, borderRadius: 999,
+                  background: "rgba(255,255,255,.25)", color: "#fff", display: "grid", placeItems: "center",
+                  border: "none", cursor: "pointer",
+                }}><I.trash size={16} stroke="#fff" /></button>
             </div>
             <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: 15, fontFamily: "var(--font-display)" }}>{q.title}</div>
@@ -192,10 +302,56 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
 
 // =================== EDITOR ===================
 function Editor({ onBack, onLaunch }) {
-  const [quiz, setQuiz] = useStateC(MOCK_QUIZ);
+  const [quiz, setQuiz] = useStateC(() => ({
+    ...MOCK_QUIZ,
+    id: "new-" + Date.now(),
+    title: "Nuevo quiz",
+    questions: [{
+      id: "qq-" + Date.now(),
+      type: "multi",
+      text: "Escribe tu pregunta aquí",
+      timer: 20,
+      options: [
+        { id: "a", text: "Opción A", correct: true },
+        { id: "b", text: "Opción B", correct: false },
+        { id: "c", text: "Opción C", correct: false },
+        { id: "d", text: "Opción D", correct: false },
+      ],
+    }],
+  }));
   const [activeIdx, setActiveIdx] = useStateC(0);
   const [showSettings, setShowSettings] = useStateC(false);
+  const [saving, setSaving] = useStateC(false);
+  const [saveStatus, setSaveStatus] = useStateC(""); // "" | "saved" | "error"
   const active = quiz.questions[activeIdx];
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveStatus("");
+    try {
+      const uid = window.QS.currentUser?.uid;
+      if (!uid) throw new Error("No hay sesión activa");
+      const data = {
+        ...quiz,
+        ownerId: uid,
+        updatedAt: Date.now(),
+      };
+      // Si el id empieza con "new-", crear documento; si no, actualizar
+      if (String(quiz.id).startsWith("new-") || !quiz.id) {
+        const docRef = await window.QS.db.collection("quizzes").add(data);
+        setQuiz(q => ({ ...q, id: docRef.id }));
+      } else {
+        await window.QS.db.collection("quizzes").doc(quiz.id).set(data, { merge: true });
+      }
+      setSaveStatus("saved");
+      setTimeout(() => setSaveStatus(""), 2500);
+    } catch (err) {
+      console.error("Error guardando:", err);
+      setSaveStatus("error");
+      alert("Error al guardar: " + err.message);
+    }
+    setSaving(false);
+  };
 
   const updateQuestion = (patch) => {
     setQuiz(q => ({
@@ -263,12 +419,20 @@ function Editor({ onBack, onLaunch }) {
               borderRadius: 8, minWidth: 320, color: "var(--ink-900)",
             }}/>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {saveStatus === "saved" && (
+            <span style={{ fontSize: 13, color: "var(--emerald-600)", fontWeight: 600 }}>
+              ✓ Guardado
+            </span>
+          )}
           <button onClick={() => setShowSettings(true)} className="qs-btn qs-btn--ghost qs-btn--sm">
             <I.lock size={14}/> Privacidad y reglas
           </button>
           <button className="qs-btn qs-btn--ghost qs-btn--sm">
             <I.eye size={14}/> Vista previa
+          </button>
+          <button onClick={handleSave} disabled={saving} className="qs-btn qs-btn--primary qs-btn--sm">
+            {saving ? "Guardando..." : "💾 Guardar"}
           </button>
           <button className="qs-btn qs-btn--success" onClick={() => onLaunch(quiz.id)}>
             <I.play size={14}/> Lanzar

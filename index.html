@@ -14,23 +14,32 @@
   <!-- Estilos del proyecto -->
   <link rel="stylesheet" href="styles.css" />
 
-  <!-- React 18 + Babel para JSX en navegador -->
+  <!-- React 18 + Babel -->
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Firebase v9 compat (versión global, funciona con scripts simples) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 </head>
 <body>
   <div id="root"></div>
 
-  <!-- Pantalla de carga mínima mientras Babel compila -->
   <noscript>
     <p style="text-align:center;padding:2rem;font-family:sans-serif;">
       Esta aplicación requiere JavaScript habilitado.
     </p>
   </noscript>
 
-  <!-- Archivos del proyecto en orden de dependencias.
-       type="text/babel" hace que Babel los compile en el navegador. -->
+  <!-- Configuración de Firebase (debe ir antes que cualquier otro script de la app) -->
+  <script src="00-firebase.js"></script>
+
+  <!-- Módulo de autenticación (componentes de login, registro, admin) -->
+  <script type="text/babel" data-presets="react" src="00b-auth.js"></script>
+
+  <!-- Archivos del proyecto en orden de dependencias -->
   <script type="text/babel" data-presets="react" src="01-core.js"></script>
   <script type="text/babel" data-presets="react" src="02-tweaks.js"></script>
   <script type="text/babel" data-presets="react" src="03-creator.js"></script>
