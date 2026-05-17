@@ -582,11 +582,9 @@ function LiveSessionHost({ quizId, onExit }) {
     const nextIdx = session.currentQuestionIdx + 1;
     if (nextIdx >= quiz.questions.length) {
       // Terminar: primero guardar resultados de cada participante
-      try {
-        await saveLiveResults();
-      } catch (err) {
-        console.error("Error guardando resultados:", err);
-        // No bloqueamos la finalización aunque falle el guardado
+      const saveResult = await saveLiveResults();
+      if (saveResult && saveResult.errors > 0) {
+        alert(`⚠️ Se guardaron ${saveResult.saved} de ${saveResult.total} resultados. ${saveResult.errors} fallaron. Revisa la consola para más detalle.`);
       }
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
         status: "finished",
@@ -602,70 +600,115 @@ function LiveSessionHost({ quizId, onExit }) {
   };
 
   // Guardar resultados de la sala en vivo en la colección 'results' (para panel y Excel)
+  // Versión robusta con logging detallado y guardado uno-por-uno
   const saveLiveResults = async () => {
+    console.log("[QuizSpark] === saveLiveResults INICIADO ===");
     const uid = window.QS.currentUser?.uid;
-    if (!uid || !session || !quiz) return;
+    console.log("[QuizSpark] uid:", uid);
+    console.log("[QuizSpark] session:", session?.id, "code:", session?.code);
+    console.log("[QuizSpark] quiz:", quiz?.id, "título:", quiz?.title);
+
+    if (!uid) {
+      console.error("[QuizSpark] ❌ No hay uid (usuario no autenticado)");
+      alert("Error: no hay sesión de profesor para guardar resultados.");
+      return { saved: 0, total: 0, errors: 1 };
+    }
+    if (!session || !quiz) {
+      console.error("[QuizSpark] ❌ No hay session o quiz cargados");
+      return { saved: 0, total: 0, errors: 1 };
+    }
+
     const participants = Object.values(session.participants || {});
-    if (participants.length === 0) return;
+    console.log("[QuizSpark] Total participantes:", participants.length);
+
+    if (participants.length === 0) {
+      console.warn("[QuizSpark] ⚠️ No hay participantes en la sala, nada que guardar");
+      return { saved: 0, total: 0, errors: 0 };
+    }
 
     const maxPoints = calculateMaxPoints(quiz);
     const today = new Date().toISOString().slice(0, 10);
+    console.log("[QuizSpark] maxPoints:", maxPoints, "fecha:", today);
 
-    // Cargar todas las respuestas de esta sesión de una vez
-    const answersSnap = await window.QS.db.collection("liveSessions")
-      .doc(sessionIdRef.current).collection("answers").get();
-    const answersByParticipant = {};
-    answersSnap.docs.forEach(d => {
-      const data = d.data();
-      if (!answersByParticipant[data.participantId]) answersByParticipant[data.participantId] = [];
-      answersByParticipant[data.participantId].push(data);
-    });
-
-    // Por cada participante crear un documento en results
-    const batch = window.QS.db.batch();
-    for (const p of participants) {
-      const myAnswers = answersByParticipant[p.id] || [];
-      const correctCount = myAnswers.filter(a => a.correct).length;
-      const score = p.score || 0;
-      const grade = convertToGrade(score, maxPoints, quiz.gradingScale);
-
-      // Reconstruir gradeDetail compatible con el formato asincrónico
-      const gradeDetail = quiz.questions.map((q, qIdx) => {
-        const ans = myAnswers.find(a => a.questionIdx === qIdx);
-        return {
-          qid: q.id,
-          type: q.type,
-          userAnswer: ans?.answer ?? null,
-          correct: ans?.correct ?? false,
-          points: ans?.points ?? 0,
-          pointsMax: (q.pointsCorrect ?? 100) + (q.pointsSpeedBonus ?? 0),
-        };
+    // Cargar todas las respuestas de esta sesión
+    let answersByParticipant = {};
+    try {
+      const answersSnap = await window.QS.db.collection("liveSessions")
+        .doc(sessionIdRef.current).collection("answers").get();
+      console.log("[QuizSpark] Total respuestas leídas:", answersSnap.size);
+      answersSnap.docs.forEach(d => {
+        const data = d.data();
+        if (!answersByParticipant[data.participantId]) answersByParticipant[data.participantId] = [];
+        answersByParticipant[data.participantId].push(data);
       });
-
-      const resultData = {
-        quizId: quiz.id,
-        quizTitle: quiz.title || "Quiz",
-        ownerId: uid,
-        studentName: p.name || "Sin nombre",
-        studentCourse: p.course || "Sin curso",
-        examDate: today,
-        mode: "live",  // distintivo
-        sessionCode: session.code,
-        answers: {},  // No tenemos formato exacto como asincrónico, dejamos vacío
-        gradeDetail,
-        correct: correctCount,
-        total: quiz.questions.length,
-        score: grade,
-        percent: maxPoints > 0 ? Math.round((score / maxPoints) * 100) : 0,
-        pointsEarned: score,
-        pointsMax: maxPoints,
-        submittedAt: Date.now(),
-      };
-
-      const docRef = window.QS.db.collection("results").doc();
-      batch.set(docRef, resultData);
+    } catch (err) {
+      console.error("[QuizSpark] ❌ Error leyendo answers:", err);
+      // Continuamos aunque falle, con lo que tengamos
     }
-    await batch.commit();
+
+    // Guardar uno por uno (más robusto que batch)
+    let saved = 0;
+    let errors = 0;
+    const errorMessages = [];
+
+    for (const p of participants) {
+      try {
+        const myAnswers = answersByParticipant[p.id] || [];
+        const correctCount = myAnswers.filter(a => a.correct).length;
+        const score = p.score || 0;
+        const grade = convertToGrade(score, maxPoints, quiz.gradingScale);
+
+        const gradeDetail = quiz.questions.map((q, qIdx) => {
+          const ans = myAnswers.find(a => a.questionIdx === qIdx);
+          return {
+            qid: q.id,
+            type: q.type || "multi",
+            userAnswer: ans?.answer ?? null,
+            correct: ans?.correct ?? false,
+            points: ans?.points ?? 0,
+            pointsMax: (q.pointsCorrect ?? 100) + (q.pointsSpeedBonus ?? 0),
+          };
+        });
+
+        const resultData = {
+          quizId: quiz.id,
+          quizTitle: quiz.title || "Quiz",
+          ownerId: uid,
+          studentName: p.name || "Sin nombre",
+          studentCourse: p.course || "Sin curso",
+          examDate: today,
+          mode: "live",
+          sessionCode: session.code || "",
+          answers: {},
+          gradeDetail,
+          correct: correctCount,
+          total: quiz.questions.length,
+          score: grade,
+          percent: maxPoints > 0 ? Math.round((score / maxPoints) * 100) : 0,
+          pointsEarned: score,
+          pointsMax: maxPoints,
+          submittedAt: Date.now(),
+        };
+
+        console.log(`[QuizSpark] Guardando resultado de ${p.name}...`);
+        const docRef = await window.QS.db.collection("results").add(resultData);
+        console.log(`[QuizSpark] ✓ Guardado: ${docRef.id} (${p.name})`);
+        saved++;
+      } catch (err) {
+        errors++;
+        const msg = `Error guardando ${p.name}: ${err.message}`;
+        console.error(`[QuizSpark] ❌ ${msg}`, err);
+        errorMessages.push(msg);
+      }
+    }
+
+    console.log(`[QuizSpark] === saveLiveResults TERMINADO: ${saved} guardados, ${errors} errores ===`);
+
+    if (errors > 0) {
+      console.error("[QuizSpark] Mensajes de error:", errorMessages);
+    }
+
+    return { saved, total: participants.length, errors };
   };
 
   const cancelSession = async () => {
