@@ -129,7 +129,13 @@ function HostLobby({ session, quiz, onStart, onCancel }) {
           </button>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(280px, 1fr) 2fr", gap: 24, alignItems: "start" }}>
+        <div style={{
+          display: "grid",
+          gridTemplateColumns: "clamp(260px, 30%, 360px) 1fr",
+          gap: 24, alignItems: "start",
+        }}
+          className="qs-lobby-grid"
+        >
           {/* Izquierda: código + URL */}
           <div className="qs-card" style={{ padding: 28, textAlign: "center" }}>
             <p style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 8, fontWeight: 600 }}>
@@ -301,7 +307,9 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
         </div>
 
         {/* Estado */}
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}
+          className="qs-host-bottom"
+        >
           <div className="qs-card" style={{ padding: 20, color: "var(--ink-900)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ fontWeight: 700 }}>Respuestas recibidas</span>
@@ -448,8 +456,9 @@ function HostFinal({ session, quiz, onFinish }) {
 
         {/* Podio */}
         {top3.length > 0 && (
-          <div style={{
-            display: "grid", gridTemplateColumns: "1fr 1fr 1fr",
+          <div className="qs-podio" style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1fr 1fr",
             gap: 12, marginBottom: 24, alignItems: "end",
           }}>
             {[1, 0, 2].map(idx => {
@@ -1421,7 +1430,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
       <div style={{
         minHeight: "100vh",
         background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
-        padding: 16, paddingBottom: 24,
+        padding: "12px 10px 80px",
       }}>
         <div style={{ maxWidth: 600, margin: "0 auto" }}>
           <div style={{

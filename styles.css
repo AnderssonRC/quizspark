@@ -130,3 +130,117 @@ button { font-family: inherit; }
   40%, 80% { transform: translateX(6px); }
 }
 .qs-shake { animation: qs-shake 0.4s ease both; }
+
+/* ============================================================
+   RESPONSIVO MÓVIL — Ajustes para pantallas < 640px
+   ============================================================ */
+
+/* Asegurar que nada desborde horizontalmente */
+* { box-sizing: border-box; }
+html, body { overflow-x: hidden; }
+
+#root { overflow-x: hidden; }
+
+/* Botones: texto más pequeño en móvil */
+@media (max-width: 640px) {
+  .qs-btn { padding: 8px 14px !important; font-size: 13px !important; }
+  .qs-btn--lg { padding: 12px 18px !important; font-size: 15px !important; }
+
+  /* Lobby del profe: apila las dos columnas */
+  .qs-lobby-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Pantalla de pregunta del profe: apila contador + botón */
+  .qs-host-bottom {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Podio final: apila las 3 columnas */
+  .qs-podio {
+    grid-template-columns: 1fr !important;
+    align-items: start !important;
+  }
+
+  /* Topnav del profe: ocultar textos largos, mostrar solo iconos */
+  .qs-nav-label-desktop { display: none !important; }
+
+  /* Cards más compactas */
+  .qs-card { border-radius: 12px !important; }
+
+  /* Input y textarea: fuente mínima 16px para evitar zoom en iOS */
+  input, textarea, select {
+    font-size: 16px !important;
+  }
+
+  /* Formulario de entrada al quiz (StudentJoinLive / StudentExam) */
+  .qs-join-form {
+    padding: 20px 16px !important;
+    margin: 8px !important;
+  }
+
+  /* Header del editor: apilar botones */
+  .qs-editor-toolbar {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+  }
+  .qs-editor-toolbar .qs-btn--sm {
+    font-size: 12px !important;
+    padding: 6px 10px !important;
+  }
+}
+
+/* Pantallas muy pequeñas (< 380px, ej. iPhone SE) */
+@media (max-width: 380px) {
+  .qs-btn { padding: 7px 10px !important; font-size: 12px !important; }
+  .qs-btn--lg { padding: 10px 14px !important; font-size: 14px !important; }
+}
+
+/* ---- TopNav responsivo ---- */
+@media (max-width: 640px) {
+  /* Ocultar el nav de pestañas: se mueve al menú del avatar */
+  .qs-nav-tabs { display: none !important; }
+  /* Mostrar navegación en menú del avatar */
+  .qs-menu-nav-mobile { display: block !important; }
+  /* Texto de los botones de acción: solo icono */
+  .qs-nav-btn-text { display: none !important; }
+  /* Logo: solo ícono en pantallas muy pequeñas */
+}
+@media (min-width: 641px) {
+  /* En desktop: ocultar navegación duplicada en el menú */
+  .qs-menu-nav-mobile { display: none !important; }
+  .qs-nav-btn-text { display: inline !important; }
+  .qs-nav-tabs { display: flex !important; }
+}
+
+/* ---- Dashboard: tarjetas de quiz ---- */
+@media (max-width: 480px) {
+  /* Forzar 1 columna en móvil pequeño */
+  .qs-dashboard-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* ---- Cards del flujo estudiante/sala ---- */
+@media (max-width: 480px) {
+  /* Reducir padding de cards grandes en móvil */
+  .qs-card {
+    padding: 16px !important;
+  }
+  /* Pero las cards que tienen su propio padding inline lo mantienen —
+     sobreescribimos con la clase específica */
+  .qs-student-card {
+    padding: 18px 14px !important;
+    margin: 0 4px !important;
+    border-radius: 14px !important;
+  }
+  /* Texto de preguntas: más pequeño en móvil */
+  .qs-question-text {
+    font-size: 18px !important;
+  }
+  /* Botones de opciones más compactos */
+  .qs-answer-btn {
+    padding: 14px 12px !important;
+    font-size: 15px !important;
+  }
+}

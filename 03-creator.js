@@ -12,69 +12,79 @@ function TopNav({ active, onNav, onLaunch, user, onLogout, onAdmin }) {
   return (
     <header style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "16px 32px", background: "var(--white)",
+      padding: "12px 16px", background: "var(--white)",
       borderBottom: "1px solid var(--ink-200)", position: "sticky", top: 0, zIndex: 50,
+      flexWrap: "nowrap", gap: 8,
     }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 28 }}>
-        <button onClick={() => onNav("dashboard")} style={{
-          display: "flex", alignItems: "center", gap: 10, fontFamily: "var(--font-display)",
-          fontWeight: 800, fontSize: 22, color: "var(--violet-700)",
-          background: "transparent", border: "none", cursor: "pointer", padding: 0,
+      {/* Logo */}
+      <button onClick={() => onNav("dashboard")} style={{
+        display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--font-display)",
+        fontWeight: 800, fontSize: 18, color: "var(--violet-700)", flexShrink: 0,
+        background: "transparent", border: "none", cursor: "pointer", padding: 0,
+      }}>
+        <span style={{
+          width: 32, height: 32, borderRadius: 8, flexShrink: 0,
+          background: "linear-gradient(135deg, var(--violet-500), var(--pink-500))",
+          display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff",
         }}>
-          <span style={{
-            width: 36, height: 36, borderRadius: 10,
-            background: "linear-gradient(135deg, var(--violet-500), var(--pink-500))",
-            display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff",
-          }}>
-            <I.spark size={20} stroke="#fff" sw={2.5} />
-          </span>
-          QuizSpark
+          <I.spark size={18} stroke="#fff" sw={2.5} />
+        </span>
+        <span className="qs-nav-logo-text">QuizSpark</span>
+      </button>
+
+      {/* Nav central — oculto en móvil pequeño */}
+      <nav className="qs-nav-tabs" style={{ display: "flex", gap: 2, flex: 1, justifyContent: "center" }}>
+        {[
+          { id: "dashboard", label: "Mis quizzes" },
+          { id: "results",   label: "Resultados" },
+          { id: "library",   label: "Biblioteca" },
+        ].map(item => (
+          <button key={item.id} onClick={() => onNav(item.id)} style={{
+            padding: "7px 11px", borderRadius: 999,
+            background: active === item.id ? "var(--violet-100)" : "transparent",
+            color: active === item.id ? "var(--violet-700)" : "var(--ink-500)",
+            fontWeight: 700, fontSize: 13,
+            border: "none", cursor: "pointer", whiteSpace: "nowrap",
+          }}>{item.label}</button>
+        ))}
+      </nav>
+
+      {/* Acciones */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, position: "relative" }}>
+        {/* "Unirme" solo ícono en móvil */}
+        <button className="qs-btn qs-btn--ghost qs-btn--sm qs-btn-join" onClick={() => onNav("join")}
+          title="Unirme a un quiz">
+          <I.users size={15} />
+          <span className="qs-nav-btn-text"> Unirme</span>
         </button>
-        <nav style={{ display: "flex", gap: 4 }}>
-          {[
-            { id: "dashboard", label: "Mis quizzes" },
-            { id: "results",   label: "Resultados" },
-            { id: "library",   label: "Biblioteca" },
-          ].map(item => (
-            <button key={item.id} onClick={() => onNav(item.id)} style={{
-              padding: "8px 14px", borderRadius: 999,
-              background: active === item.id ? "var(--violet-100)" : "transparent",
-              color: active === item.id ? "var(--violet-700)" : "var(--ink-500)",
-              fontWeight: 700, fontSize: 14,
-              border: "none", cursor: "pointer",
-            }}>{item.label}</button>
-          ))}
-        </nav>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12, position: "relative" }}>
-        <button className="qs-btn qs-btn--ghost qs-btn--sm" onClick={() => onNav("join")}>
-          <I.users size={16} /> Unirme a un quiz
+        {/* "Iniciar" solo ícono en móvil pequeño */}
+        <button className="qs-btn qs-btn--primary qs-btn--sm" onClick={onLaunch}
+          title="Iniciar sesión en vivo">
+          <I.play size={15} />
+          <span className="qs-nav-btn-text"> Iniciar</span>
         </button>
-        <button className="qs-btn qs-btn--primary" onClick={onLaunch}>
-          <I.play size={16} /> Iniciar sesión
-        </button>
+
+        {/* Avatar */}
         <button
           onClick={() => setShowMenu(!showMenu)}
           style={{
-            width: 38, height: 38, borderRadius: "50%",
+            width: 34, height: 34, borderRadius: "50%",
             background: "linear-gradient(135deg, var(--amber-400), var(--pink-500))",
             display: "grid", placeItems: "center", color: "#fff",
-            fontWeight: 800, fontFamily: "var(--font-display)",
-            border: "none", cursor: "pointer",
+            fontWeight: 800, fontFamily: "var(--font-display)", fontSize: 14,
+            border: "none", cursor: "pointer", flexShrink: 0,
           }}
           title={user?.name || user?.email}
         >{initial}</button>
 
         {showMenu && (
           <>
-            <div
-              onClick={() => setShowMenu(false)}
-              style={{ position: "fixed", inset: 0, zIndex: 60 }}
-            />
+            <div onClick={() => setShowMenu(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 60 }} />
             <div style={{
               position: "absolute", top: "100%", right: 0, marginTop: 8,
               background: "var(--white)", border: "1px solid var(--ink-200)",
-              borderRadius: 12, padding: 8, minWidth: 240, zIndex: 70,
+              borderRadius: 12, padding: 8, minWidth: 220, zIndex: 70,
               boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
             }}>
               <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--ink-100)", marginBottom: 4 }}>
@@ -84,24 +94,37 @@ function TopNav({ active, onNav, onLaunch, user, onLogout, onAdmin }) {
                   <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 2 }}>🏫 {user.institution}</div>
                 )}
               </div>
+              {/* En móvil, mostrar la navegación también en el menú */}
+              <div className="qs-menu-nav-mobile">
+                {[
+                  { id: "dashboard", label: "📋 Mis quizzes" },
+                  { id: "results", label: "📊 Resultados" },
+                  { id: "library", label: "📚 Biblioteca" },
+                ].map(item => (
+                  <button key={item.id}
+                    onClick={() => { setShowMenu(false); onNav(item.id); }}
+                    style={{
+                      width: "100%", textAlign: "left", padding: "9px 12px", borderRadius: 8,
+                      background: active === item.id ? "var(--violet-50)" : "transparent",
+                      color: active === item.id ? "var(--violet-700)" : "var(--ink-700)",
+                      border: "none", cursor: "pointer", fontSize: 14, fontWeight: active === item.id ? 700 : 400,
+                    }}
+                  >{item.label}</button>
+                ))}
+                <div style={{ borderTop: "1px solid var(--ink-100)", margin: "4px 0" }}/>
+              </div>
               {onAdmin && (
-                <button
-                  onClick={() => { setShowMenu(false); onAdmin(); }}
-                  style={{
-                    width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 8,
-                    background: "transparent", border: "none", cursor: "pointer", fontSize: 14,
-                    color: "var(--violet-700)", fontWeight: 600,
-                  }}
-                >🛡️ Panel de administración</button>
-              )}
-              <button
-                onClick={() => { setShowMenu(false); onLogout(); }}
-                style={{
+                <button onClick={() => { setShowMenu(false); onAdmin(); }} style={{
                   width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 8,
                   background: "transparent", border: "none", cursor: "pointer", fontSize: 14,
-                  color: "var(--red-500)", fontWeight: 600,
-                }}
-              >🚪 Cerrar sesión</button>
+                  color: "var(--violet-700)", fontWeight: 600,
+                }}>🛡️ Panel de administración</button>
+              )}
+              <button onClick={() => { setShowMenu(false); onLogout(); }} style={{
+                width: "100%", textAlign: "left", padding: "10px 12px", borderRadius: 8,
+                background: "transparent", border: "none", cursor: "pointer", fontSize: 14,
+                color: "var(--red-500)", fontWeight: 600,
+              }}>🚪 Cerrar sesión</button>
             </div>
           </>
         )}

@@ -617,7 +617,7 @@ function StudentExam({ examCode }) {
     <div style={{
       minHeight: "100vh",
       background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
-      padding: 20, paddingBottom: 100,
+      padding: "12px 10px 100px",
     }}>
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
         {/* Header con progreso */}
