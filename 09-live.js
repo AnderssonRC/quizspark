@@ -117,7 +117,7 @@ function checkAnswer(question, answer) {
 // ============================================================
 // HOST LOBBY — el profe espera que entren los estudiantes
 // ============================================================
-function HostLobby({ session, quiz, onStart, onCancel }) {
+function HostLobby({ session, quiz, onStart, onCancel, onKick }) {
   const participants = Object.values(session.participants || {})
     .sort((a, b) => (a.joinedAt || 0) - (b.joinedAt || 0));
   const baseUrl = window.location.origin + window.location.pathname;
@@ -214,6 +214,16 @@ function HostLobby({ session, quiz, onStart, onCancel }) {
                       <div style={{ fontWeight: 700, fontSize: 13, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{p.name}</div>
                       <div style={{ fontSize: 11, color: "var(--ink-500)" }}>{p.course}</div>
                     </div>
+                    {onKick && (
+                      <button
+                        onClick={() => onKick(p.id)}
+                        title="Sacar de la sala"
+                        style={{
+                          border: "none", background: "transparent", cursor: "pointer",
+                          color: "var(--ink-400)", fontSize: 16, lineHeight: 1, padding: 2,
+                        }}
+                      >✕</button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -241,25 +251,29 @@ function HostLobby({ session, quiz, onStart, onCancel }) {
 // ============================================================
 // HOST QUESTION — el profe mira la pregunta en curso
 // ============================================================
-function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants, onSkip, onReveal, onAddTime, onFinish }) {
+function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants, onSkip, onReveal, onAddTime, onFinish, onTogglePause, onRelaunch, onShowParticipants }) {
   const extraSeconds = session.extraSeconds || 0;
   const totalSeconds = (currentQ.timer || 20) + extraSeconds;
   const startedAt = session.questionStartedAt || Date.now();
+  const isPaused = !!session.pausedAt;
   const [secondsLeft, setSecondsLeft] = useStateL(totalSeconds);
 
   useEffectL(() => {
     const tick = () => {
-      const elapsed = (Date.now() - startedAt) / 1000;
+      // Si está en pausa, el tiempo se congela en el instante de la pausa
+      const now = isPaused ? session.pausedAt : Date.now();
+      const elapsed = (now - startedAt) / 1000;
       const left = Math.max(0, totalSeconds - elapsed);
       setSecondsLeft(left);
-      if (left <= 0) {
+      if (left <= 0 && !isPaused) {
         onReveal();
       }
     };
     tick();
+    if (isPaused) return; // no hace falta intervalo mientras está pausado
     const id = setInterval(tick, 200);
     return () => clearInterval(id);
-  }, [startedAt, totalSeconds]);
+  }, [startedAt, totalSeconds, isPaused, session.pausedAt]);
 
   const answeredCount = Object.keys(answersThisQ || {}).length;
   const progress = totalParticipants > 0 ? (answeredCount / totalParticipants) * 100 : 0;
@@ -296,6 +310,16 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
             transition: "width 0.2s linear",
           }} />
         </div>
+
+        {isPaused && (
+          <div style={{
+            background: "var(--amber-400)", color: "#7c2d12", fontWeight: 800,
+            padding: "10px 16px", borderRadius: 12, marginBottom: 16, textAlign: "center",
+            fontFamily: "var(--font-display)",
+          }}>
+            ⏸️ Pregunta en pausa — el tiempo está congelado para los estudiantes
+          </div>
+        )}
 
         {/* Pregunta */}
         <div className="qs-card" style={{ padding: 32, marginBottom: 20, color: "var(--ink-900)" }}>
@@ -350,6 +374,21 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
               }}>
                 ⏱️ +10s
               </button>
+              <button onClick={onTogglePause} className="qs-btn" style={{
+                background: isPaused ? "var(--emerald-500)" : "var(--amber-500)",
+                color: "white", fontWeight: 700,
+                boxShadow: isPaused ? "0 4px 0 var(--emerald-600)" : "0 4px 0 #b45309",
+              }}>
+                {isPaused ? "▶️ Reanudar" : "⏸️ Pausar"}
+              </button>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <button onClick={onRelaunch} className="qs-btn" style={{
+                background: "rgba(255,255,255,0.18)", color: "white", fontWeight: 700,
+                boxShadow: "0 0 0 2px rgba(255,255,255,.4) inset",
+              }}>
+                🔄 Re-lanzar
+              </button>
               <button onClick={onFinish} className="qs-btn" style={{
                 background: "var(--red-500)", color: "white", fontWeight: 700,
                 boxShadow: "0 4px 0 #991b1b",
@@ -357,6 +396,12 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                 🏁 Finalizar
               </button>
             </div>
+            <button onClick={onShowParticipants} className="qs-btn qs-btn--sm" style={{
+              background: "transparent", color: "white", fontWeight: 600,
+              border: "1px solid rgba(255,255,255,0.4)",
+            }}>
+              👥 Participantes ({totalParticipants})
+            </button>
           </div>
         </div>
       </div>
@@ -526,6 +571,56 @@ function HostFinal({ session, quiz, onFinish }) {
 }
 
 // ============================================================
+// PARTICIPANTS MODAL — lista con opción de expulsar
+// ============================================================
+function ParticipantsModal({ participants, onKick, onClose }) {
+  const list = Object.entries(participants)
+    .map(([pid, p]) => ({ pid, ...p }))
+    .sort((a, b) => (b.score || 0) - (a.score || 0));
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(15,23,42,0.6)",
+      display: "grid", placeItems: "center", padding: 20, zIndex: 50,
+    }}>
+      <div onClick={e => e.stopPropagation()} className="qs-card" style={{
+        padding: 24, maxWidth: 460, width: "100%", maxHeight: "80vh", overflowY: "auto",
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <h3 style={{ fontSize: 20 }}>Participantes ({list.length})</h3>
+          <button onClick={onClose} className="qs-btn qs-btn--ghost qs-btn--sm">Cerrar</button>
+        </div>
+        {list.length === 0 ? (
+          <p style={{ color: "var(--ink-500)", textAlign: "center", padding: 20 }}>
+            Aún no hay participantes.
+          </p>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {list.map(p => (
+              <div key={p.pid} style={{
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "10px 14px", background: "var(--ink-50)", borderRadius: 10,
+              }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>{p.name}</div>
+                  <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
+                    {p.course} · {p.score || 0} pts
+                  </div>
+                </div>
+                <button onClick={() => onKick(p.pid)} className="qs-btn qs-btn--sm" style={{
+                  background: "var(--red-500)", color: "white",
+                }}>
+                  Sacar
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
 // LIVE SESSION HOST — orquestador del lado del profesor
 // ============================================================
 function LiveSessionHost({ quizId, onExit }) {
@@ -533,6 +628,7 @@ function LiveSessionHost({ quizId, onExit }) {
   const [session, setSession] = useStateL(null);
   const [quiz, setQuiz] = useStateL(null);
   const [answersByQuestion, setAnswersByQuestion] = useStateL({});
+  const [showParticipants, setShowParticipants] = useStateL(false);
   const sessionIdRef = useRefL(null);
 
   // Crear sesión al montar
@@ -607,6 +703,7 @@ function LiveSessionHost({ quizId, onExit }) {
       questionStartedAt: Date.now(),
       startedAt: Date.now(),
       extraSeconds: 0,
+      pausedAt: null,
     });
   };
 
@@ -615,6 +712,74 @@ function LiveSessionHost({ quizId, onExit }) {
     await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
       extraSeconds: firebase.firestore.FieldValue.increment(seconds),
     });
+  };
+
+  // Pausar / reanudar la pregunta actual. Al reanudar, desplazamos
+  // questionStartedAt hacia adelante por el tiempo que estuvo pausada,
+  // para devolverle al estudiante exactamente los segundos que le quedaban.
+  const togglePause = async () => {
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    if (session.pausedAt) {
+      const pausedDuration = Date.now() - session.pausedAt;
+      const newStart = (session.questionStartedAt || Date.now()) + pausedDuration;
+      await ref.update({ pausedAt: null, questionStartedAt: newStart });
+    } else {
+      await ref.update({ pausedAt: Date.now() });
+    }
+  };
+
+  // Re-lanzar la pregunta actual: revierte puntos de quienes ya respondieron,
+  // borra sus respuestas y reinicia el cronómetro. Sube questionVersion para
+  // que el estudiante resetee su estado de "ya respondí".
+  const relaunchQuestion = async () => {
+    if (!confirm("¿Re-lanzar esta pregunta? Se borrarán las respuestas actuales y se reiniciará el tiempo.")) return;
+    const qIdx = session.currentQuestionIdx;
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    try {
+      // Leer respuestas de esta pregunta
+      const snap = await ref.collection("answers").where("questionIdx", "==", qIdx).get();
+      // Revertir puntaje y borrar cada respuesta
+      const batch = window.QS.db.batch();
+      const scoreReverts = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        const pts = data.points || 0;
+        if (pts !== 0) {
+          scoreReverts[data.participantId] = (scoreReverts[data.participantId] || 0) - pts;
+        }
+        batch.delete(d.ref);
+      });
+      await batch.commit();
+      // Aplicar reversión de puntajes
+      const updates = {
+        questionStartedAt: Date.now(),
+        extraSeconds: 0,
+        pausedAt: null,
+        questionVersion: (session.questionVersion || 0) + 1,
+        status: "playing",
+      };
+      Object.entries(scoreReverts).forEach(([pid, delta]) => {
+        updates[`participants.${pid}.score`] = firebase.firestore.FieldValue.increment(delta);
+      });
+      await ref.update(updates);
+    } catch (err) {
+      console.error("Error re-lanzando pregunta:", err);
+      alert("No se pudo re-lanzar la pregunta: " + err.message);
+    }
+  };
+
+  // Expulsar a un participante (conserva su registro en 'results' al final,
+  // pero lo saca del juego activo).
+  const kickParticipant = async (pid) => {
+    const p = session.participants?.[pid];
+    if (!confirm(`¿Sacar a ${p?.name || "este participante"} de la sala?`)) return;
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+        [`participants.${pid}`]: firebase.firestore.FieldValue.delete(),
+      });
+    } catch (err) {
+      console.error("Error expulsando participante:", err);
+    }
   };
 
   // Finalizar el quiz inmediatamente desde cualquier pregunta
@@ -635,6 +800,7 @@ function LiveSessionHost({ quizId, onExit }) {
     await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
       status: "showResults",
       revealedAt: Date.now(),
+      pausedAt: null,
     });
   };
 
@@ -658,6 +824,7 @@ function LiveSessionHost({ quizId, onExit }) {
         currentQuestionIdx: nextIdx,
         questionStartedAt: Date.now(),
         extraSeconds: 0,
+        pausedAt: null,
       });
     }
   };
@@ -761,19 +928,40 @@ function LiveSessionHost({ quizId, onExit }) {
   const answersThisQ = answersByQuestion[currentIdx] || {};
 
   if (session.status === "lobby") {
-    return <HostLobby session={session} quiz={quiz} onStart={startQuiz} onCancel={cancelSession} />;
+    return <HostLobby session={session} quiz={quiz} onStart={startQuiz} onCancel={cancelSession} onKick={kickParticipant} />;
   }
+
+  const participantsModal = showParticipants ? (
+    <ParticipantsModal
+      participants={session.participants || {}}
+      onKick={kickParticipant}
+      onClose={() => setShowParticipants(false)}
+    />
+  ) : null;
+
   if (session.status === "playing") {
-    return <HostQuestion
-      session={session} quiz={quiz} currentQ={currentQ}
-      answersThisQ={answersThisQ} totalParticipants={participants.length}
-      onReveal={revealCurrent} onSkip={revealCurrent}
-      onAddTime={() => addTime(10)} onFinish={finishNow}
-    />;
+    return (
+      <>
+        <HostQuestion
+          session={session} quiz={quiz} currentQ={currentQ}
+          answersThisQ={answersThisQ} totalParticipants={participants.length}
+          onReveal={revealCurrent} onSkip={revealCurrent}
+          onAddTime={() => addTime(10)} onFinish={finishNow}
+          onTogglePause={togglePause} onRelaunch={relaunchQuestion}
+          onShowParticipants={() => setShowParticipants(true)}
+        />
+        {participantsModal}
+      </>
+    );
   }
   if (session.status === "showResults") {
-    return <HostReveal session={session} quiz={quiz} currentQ={currentQ}
-      answersThisQ={answersThisQ} onNext={goNext} />;
+    return (
+      <>
+        <HostReveal session={session} quiz={quiz} currentQ={currentQ}
+          answersThisQ={answersThisQ} onNext={goNext} />
+        {participantsModal}
+      </>
+    );
   }
   if (session.status === "finished") {
     return <HostFinal session={session} quiz={quiz} onFinish={finishSession} />;
@@ -1068,13 +1256,16 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   const [myAciertos, setMyAciertos] = useStateL(null);
   const myScore = (session?.participants?.[participantId]?.score) || 0;
 
-  // Cuando la sala termina o se cancela, borrar la sesión guardada para que
-  // una futura sala con el mismo código no intente reconectar a esta.
+  // Cuando la sala termina/cancela, o si me expulsan, borrar la sesión
+  // guardada para que no intente reconectar a esta sala.
   useEffectL(() => {
-    if (session?.status === "finished" || session?.status === "cancelled") {
+    if (!session) return;
+    const kicked = session.participants && !session.participants[participantId]
+      && session.status !== "finished";
+    if (session.status === "finished" || session.status === "cancelled" || kicked) {
       if (session.code) clearLiveSession(session.code);
     }
-  }, [session?.status]);
+  }, [session?.status, session?.participants]);
 
   // Al terminar la sala, contar mis aciertos para mostrarlos
   useEffectL(() => {
@@ -1100,30 +1291,31 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     return () => unsub();
   }, [sessionId]);
 
-  // Reset al cambiar de pregunta
+  // Reset al cambiar de pregunta o al re-lanzar la actual (questionVersion)
   useEffectL(() => {
     if (!session) return;
-    if (session.currentQuestionIdx !== answeredAtIdx) {
-      setMyAnswer(null);
-      setMyResultThisQ(null);
-    }
-  }, [session?.currentQuestionIdx]);
+    setMyAnswer(null);
+    setMyResultThisQ(null);
+    setAnsweredAtIdx(-1);
+  }, [session?.currentQuestionIdx, session?.questionVersion]);
 
-  // Cronómetro
+  // Cronómetro (respeta la pausa del docente)
   useEffectL(() => {
     if (!session || session.status !== "playing") return;
     const currentQ = quiz.questions[session.currentQuestionIdx];
     if (!currentQ) return;
     const totalSec = (currentQ.timer || 20) + (session.extraSeconds || 0);
     const startedAt = session.questionStartedAt || Date.now();
+    const isPaused = !!session.pausedAt;
     const tick = () => {
-      const elapsed = (Date.now() - startedAt) / 1000;
-      setSecondsLeft(Math.max(0, totalSec - elapsed));
+      const now = isPaused ? session.pausedAt : Date.now();
+      setSecondsLeft(Math.max(0, totalSec - (now - startedAt) / 1000));
     };
     tick();
+    if (isPaused) return;
     const id = setInterval(tick, 200);
     return () => clearInterval(id);
-  }, [session?.questionStartedAt, session?.status, session?.extraSeconds]);
+  }, [session?.questionStartedAt, session?.status, session?.extraSeconds, session?.pausedAt]);
 
   // El resultado del reveal se calcula directamente en el render desde
   // myResultThisQ (guardado en memoria al responder). No usamos efecto ni
@@ -1131,6 +1323,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
 
   const submitAnswer = async (answer) => {
     if (!session || session.status !== "playing") return;
+    if (session.pausedAt) return; // no se puede responder en pausa
     if (answeredAtIdx === session.currentQuestionIdx) return;
     const qIdx = session.currentQuestionIdx;
     const currentQ = quiz.questions[qIdx];
@@ -1191,6 +1384,23 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
           <p style={{ fontSize: 32 }}>🚫</p>
           <p>El profesor canceló la sala.</p>
           <button onClick={onExit} className="qs-btn qs-btn--primary" style={{ marginTop: 12 }}>Salir</button>
+        </div>
+      </div>
+    );
+  }
+
+  // Expulsado: la sala sigue viva pero ya no estoy en la lista de participantes
+  const wasKicked = session.participants && !session.participants[participantId]
+    && session.status !== "finished";
+  if (wasKicked) {
+    return (
+      <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",
+        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", color: "white", padding: 20 }}>
+        <div className="qs-card" style={{ padding: 24, textAlign: "center", color: "var(--ink-900)", maxWidth: 380 }}>
+          <p style={{ fontSize: 40 }}>👋</p>
+          <h2 style={{ fontSize: 20, marginBottom: 8 }}>Saliste de la sala</h2>
+          <p style={{ color: "var(--ink-500)" }}>El profesor te sacó de esta sesión.</p>
+          <button onClick={onExit} className="qs-btn qs-btn--primary" style={{ marginTop: 16 }}>Salir</button>
         </div>
       </div>
     );
@@ -1395,11 +1605,11 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
                 borderRadius: 10, fontWeight: 700, fontSize: 14,
               }}>⭐ {myScore} pts</span>
               <span style={{
-                background: "white",
-                color: secondsLeft < 5 ? "var(--red-500)" : "var(--violet-700)",
+                background: session.pausedAt ? "var(--amber-400)" : "white",
+                color: session.pausedAt ? "#7c2d12" : (secondsLeft < 5 ? "var(--red-500)" : "var(--violet-700)"),
                 padding: "6px 14px",
                 borderRadius: 10, fontWeight: 800, fontFamily: "var(--font-display)",
-              }}>{Math.ceil(secondsLeft)}s</span>
+              }}>{session.pausedAt ? "⏸ Pausa" : Math.ceil(secondsLeft) + "s"}</span>
             </div>
           </div>
 
