@@ -76,6 +76,27 @@ function convertToGrade(points, maxPoints, scale) {
   return +(ratio * 5).toFixed(2);
 }
 
+// ---- Persistencia de sesión del estudiante (reconexión tras recarga) ----
+// Guardamos por código de sala para que, si el estudiante recarga o cierra
+// la pestaña, vuelva a su sitio sin re-registrarse ni duplicarse.
+function liveStorageKey(code) {
+  return "qs_live_" + code;
+}
+function saveLiveSession(code, data) {
+  try { localStorage.setItem(liveStorageKey(code), JSON.stringify(data)); }
+  catch (e) { /* localStorage no disponible: seguimos sin persistencia */ }
+}
+function loadLiveSession(code) {
+  try {
+    const raw = localStorage.getItem(liveStorageKey(code));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+function clearLiveSession(code) {
+  try { localStorage.removeItem(liveStorageKey(code)); }
+  catch (e) { /* no-op */ }
+}
+
 function checkAnswer(question, answer) {
   if (question.type === "multi" || question.type === "truefalse") {
     const correctOpt = (question.options || []).find(o => o.correct);
@@ -773,11 +794,63 @@ function StudentJoinLive({ initialCode, onCancel }) {
   const [participantId, setParticipantId] = useStateL(null);
   const [quiz, setQuiz] = useStateL(null);
 
-  // Si llega un código por URL, cargar la sesión automáticamente
+  // Intentar reconectar a una sala guardada (tras recarga / reapertura).
+  // Devuelve true si reconectó; false si no había nada válido que reconectar.
+  const tryReconnect = async (roomCode) => {
+    const saved = loadLiveSession(roomCode);
+    console.log("[QS reconectar] código:", roomCode, "guardado:", saved);
+    if (!saved || !saved.sessionId || !saved.participantId) {
+      console.log("[QS reconectar] no hay datos guardados para este código");
+      return false;
+    }
+    try {
+      const doc = await window.QS.db.collection("liveSessions").doc(saved.sessionId).get();
+      if (!doc.exists) {
+        console.log("[QS reconectar] la sesión guardada ya no existe en Firestore");
+        clearLiveSession(roomCode); return false;
+      }
+      const sessionData = { id: doc.id, ...doc.data() };
+      console.log("[QS reconectar] sesión encontrada, status:", sessionData.status);
+      // La sala debe seguir viva y el participante debe seguir registrado
+      if (sessionData.status === "cancelled" || sessionData.status === "finished") {
+        console.log("[QS reconectar] la sala ya terminó/canceló");
+        clearLiveSession(roomCode);
+        return false;
+      }
+      if (!sessionData.participants || !sessionData.participants[saved.participantId]) {
+        console.log("[QS reconectar] el participante ya no está en la sala:", saved.participantId);
+        clearLiveSession(roomCode);
+        return false;
+      }
+      // Cargar el quiz para entregárselo a StudentLive
+      const quizDoc = await window.QS.db.collection("quizzes").doc(sessionData.quizId).get();
+      if (!quizDoc.exists) {
+        console.log("[QS reconectar] el quiz asociado ya no existe");
+        clearLiveSession(roomCode); return false;
+      }
+      console.log("[QS reconectar] ✅ reconexión exitosa");
+      setSession(sessionData);
+      setParticipantId(saved.participantId);
+      setName(saved.name || "");
+      setCourse(saved.course || "");
+      setQuiz({ id: quizDoc.id, ...quizDoc.data() });
+      setStep("live");
+      return true;
+    } catch (e) {
+      console.error("[QS reconectar] error:", e);
+      return false;
+    }
+  };
+
+  // Si llega un código por URL: primero intentar reconectar; si no, flujo normal
   useEffectL(() => {
     if (!initialCode) return;
     let cancelled = false;
     const autoLoad = async () => {
+      // 1) Intento de reconexión a sesión guardada
+      const reconnected = await tryReconnect(initialCode);
+      if (cancelled || reconnected) return;
+      // 2) Flujo normal: buscar sala en lobby para unirse por primera vez
       try {
         const snap = await window.QS.db.collection("liveSessions")
           .where("code", "==", initialCode).where("status", "==", "lobby").limit(1).get();
@@ -807,6 +880,9 @@ function StudentJoinLive({ initialCode, onCancel }) {
       return;
     }
     try {
+      // Si ya estuvo en esta sala, reconectar directo
+      const reconnected = await tryReconnect(code);
+      if (reconnected) return;
       const snap = await window.QS.db.collection("liveSessions")
         .where("code", "==", code).where("status", "==", "lobby").limit(1).get();
       if (snap.empty) {
@@ -850,6 +926,15 @@ function StudentJoinLive({ initialCode, onCancel }) {
         [updateKey]: participantData,
       });
       setParticipantId(pid);
+
+      // Guardar para reconexión tras recarga/cierre de pestaña
+      console.log("[QS guardar] guardando sesión para código:", session.code, "pid:", pid);
+      saveLiveSession(session.code, {
+        sessionId: session.id,
+        participantId: pid,
+        name: name.trim(),
+        course: course.trim(),
+      });
 
       // Cargar quiz con manejo tolerante
       try {
@@ -983,6 +1068,14 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   const [myAciertos, setMyAciertos] = useStateL(null);
   const myScore = (session?.participants?.[participantId]?.score) || 0;
 
+  // Cuando la sala termina o se cancela, borrar la sesión guardada para que
+  // una futura sala con el mismo código no intente reconectar a esta.
+  useEffectL(() => {
+    if (session?.status === "finished" || session?.status === "cancelled") {
+      if (session.code) clearLiveSession(session.code);
+    }
+  }, [session?.status]);
+
   // Al terminar la sala, contar mis aciertos para mostrarlos
   useEffectL(() => {
     if (session?.status !== "finished") return;
@@ -1052,16 +1145,24 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     setMyResultThisQ({ correct: isCorrect, points });
 
     try {
-      // Guardar respuesta
+      // Si ya había respondido esta pregunta (p. ej. respondió, recargó y
+      // volvió a responder), no sumamos el puntaje otra vez.
       const docId = `${participantId}-${qIdx}`;
-      await window.QS.db.collection("liveSessions").doc(sessionId)
-        .collection("answers").doc(docId).set({
-          participantId, questionIdx: qIdx, answer,
-          correct: isCorrect, points,
-          secondsTaken, answeredAt: Date.now(),
-        });
-      // Actualizar puntaje del participante (permite valores negativos para penalizar)
-      if (points !== 0) {
+      const answerRef = window.QS.db.collection("liveSessions").doc(sessionId)
+        .collection("answers").doc(docId);
+      const existing = await answerRef.get();
+      const alreadyScored = existing.exists;
+
+      // Guardar (o sobrescribir) la respuesta
+      await answerRef.set({
+        participantId, questionIdx: qIdx, answer,
+        correct: isCorrect, points,
+        secondsTaken, answeredAt: Date.now(),
+      });
+
+      // Actualizar puntaje solo la primera vez que responde esta pregunta
+      // (permite valores negativos para penalizar)
+      if (!alreadyScored && points !== 0) {
         const scoreKey = `participants.${participantId}.score`;
         await window.QS.db.collection("liveSessions").doc(sessionId).update({
           [scoreKey]: firebase.firestore.FieldValue.increment(points),
