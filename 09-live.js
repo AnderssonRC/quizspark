@@ -986,37 +986,23 @@ function StudentJoinLive({ initialCode, onCancel }) {
   // Devuelve true si reconectó; false si no había nada válido que reconectar.
   const tryReconnect = async (roomCode) => {
     const saved = loadLiveSession(roomCode);
-    console.log("[QS reconectar] código:", roomCode, "guardado:", saved);
-    if (!saved || !saved.sessionId || !saved.participantId) {
-      console.log("[QS reconectar] no hay datos guardados para este código");
-      return false;
-    }
+    if (!saved || !saved.sessionId || !saved.participantId) return false;
     try {
       const doc = await window.QS.db.collection("liveSessions").doc(saved.sessionId).get();
-      if (!doc.exists) {
-        console.log("[QS reconectar] la sesión guardada ya no existe en Firestore");
-        clearLiveSession(roomCode); return false;
-      }
+      if (!doc.exists) { clearLiveSession(roomCode); return false; }
       const sessionData = { id: doc.id, ...doc.data() };
-      console.log("[QS reconectar] sesión encontrada, status:", sessionData.status);
       // La sala debe seguir viva y el participante debe seguir registrado
       if (sessionData.status === "cancelled" || sessionData.status === "finished") {
-        console.log("[QS reconectar] la sala ya terminó/canceló");
         clearLiveSession(roomCode);
         return false;
       }
       if (!sessionData.participants || !sessionData.participants[saved.participantId]) {
-        console.log("[QS reconectar] el participante ya no está en la sala:", saved.participantId);
         clearLiveSession(roomCode);
         return false;
       }
       // Cargar el quiz para entregárselo a StudentLive
       const quizDoc = await window.QS.db.collection("quizzes").doc(sessionData.quizId).get();
-      if (!quizDoc.exists) {
-        console.log("[QS reconectar] el quiz asociado ya no existe");
-        clearLiveSession(roomCode); return false;
-      }
-      console.log("[QS reconectar] ✅ reconexión exitosa");
+      if (!quizDoc.exists) { clearLiveSession(roomCode); return false; }
       setSession(sessionData);
       setParticipantId(saved.participantId);
       setName(saved.name || "");
@@ -1025,7 +1011,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
       setStep("live");
       return true;
     } catch (e) {
-      console.error("[QS reconectar] error:", e);
+      console.error("Error reconectando:", e);
       return false;
     }
   };
@@ -1116,7 +1102,6 @@ function StudentJoinLive({ initialCode, onCancel }) {
       setParticipantId(pid);
 
       // Guardar para reconexión tras recarga/cierre de pestaña
-      console.log("[QS guardar] guardando sesión para código:", session.code, "pid:", pid);
       saveLiveSession(session.code, {
         sessionId: session.id,
         participantId: pid,
