@@ -145,12 +145,24 @@ const QUESTION_TYPES = [
   { id: "text",      label: "Respuesta corta",   icon: "text",      desc: "Texto libre" },
 ];
 
+// Tipos de pregunta para el MODO ENCUESTA (sin respuesta correcta, no califica)
+const SURVEY_TYPES = [
+  { id: "poll",      label: "Opciones",          icon: "bar",   desc: "Vota una opción; se muestra la distribución" },
+  { id: "wordcloud", label: "Nube de palabras",  icon: "hash",  desc: "Respuesta libre; las más repetidas crecen" },
+  { id: "scale",     label: "Escala de acuerdo", icon: "list",  desc: "De muy en desacuerdo a muy de acuerdo" },
+];
+
+// Etiquetas por defecto para la escala de acuerdo (modo encuesta)
+const SCALE_LABELS = [
+  "Muy en desacuerdo", "En desacuerdo", "Neutral", "De acuerdo", "Muy de acuerdo",
+];
+
 const tileColor = (idx) => ["var(--tile-1)", "var(--tile-2)", "var(--tile-3)", "var(--tile-4)"][idx % 4];
 const tileShape = (idx) => ["▲", "◆", "●", "■"][idx % 4];
 
 // Make any of these globals
 Object.assign(window, {
   I, MOCK_QUIZ, MOCK_PARTICIPANTS, MOCK_RESULTS,
-  QUESTION_TYPES, tileColor, tileShape,
+  QUESTION_TYPES, SURVEY_TYPES, SCALE_LABELS, tileColor, tileShape,
   useState, useEffect, useRef, useMemo, useCallback,
 });

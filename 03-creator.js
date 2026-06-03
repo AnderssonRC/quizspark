@@ -137,6 +137,7 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
             color: data.color || "var(--violet-500)",
             isPublished: data.isPublished || false,
             publishCode: data.publishCode || null,
+            mode: data.mode || "quiz",
             updatedAt: data.updatedAt || 0,
           };
         });
@@ -291,6 +292,12 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
             <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "space-between" }}>
                 <div style={{ fontWeight: 700, fontSize: 15, fontFamily: "var(--font-display)", flex: 1 }}>{q.title}</div>
+                {q.mode === "survey" && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, padding: "2px 8px",
+                    borderRadius: 6, background: "var(--violet-100)", color: "var(--violet-700)", whiteSpace: "nowrap",
+                  }}>📊 ENCUESTA</span>
+                )}
                 {q.isPublished && (
                   <span style={{
                     fontSize: 10, fontWeight: 700, padding: "2px 8px",
@@ -335,6 +342,7 @@ function Editor({ quizId, onBack, onLaunch }) {
     ...MOCK_QUIZ,
     id: "new-" + Date.now(),
     title: "Nuevo quiz",
+    mode: "quiz", // "quiz" (con nota) | "survey" (encuesta, sin nota)
     questions: [{
       id: "qq-" + Date.now(),
       type: "multi",
@@ -370,6 +378,7 @@ function Editor({ quizId, onBack, onLaunch }) {
       .then(doc => {
         if (doc.exists) {
           const data = { id: doc.id, ...doc.data() };
+          if (!data.mode) data.mode = "quiz";
           if (!data.questions || data.questions.length === 0) {
             data.questions = [{
               id: "qq-" + Date.now(), type: "multi",
@@ -465,6 +474,13 @@ function Editor({ quizId, onBack, onLaunch }) {
       { id: "a", text: "", correct: false }, { id: "b", text: "", correct: false },
       { id: "c", text: "", correct: false }, { id: "d", text: "", correct: false },
     ]};
+    // ---- Tipos de ENCUESTA (sin respuesta correcta) ----
+    else if (type === "poll") q = { ...base, type, options: [
+      { id: "a", text: "", correct: false }, { id: "b", text: "", correct: false },
+      { id: "c", text: "", correct: false }, { id: "d", text: "", correct: false },
+    ]};
+    else if (type === "scale") q = { ...base, type, scaleLabels: [...SCALE_LABELS] };
+    else if (type === "wordcloud") q = { ...base, type };
     else q = { ...base, type: "text", acceptedAnswers: [] };
     setQuiz(qz => ({ ...qz, questions: [...qz.questions, q] }));
     setActiveIdx(quiz.questions.length);
@@ -508,9 +524,11 @@ function Editor({ quizId, onBack, onLaunch }) {
               borderRadius: 8, background: "#d1fae5", color: "#065f46",
             }}>🟢 Publicado</span>
           )}
-          <button onClick={() => setShowSettings(true)} className="qs-btn qs-btn--ghost qs-btn--sm">
-            <I.lock size={14}/> Calificación y reglas
-          </button>
+          {quiz.mode !== "survey" && (
+            <button onClick={() => setShowSettings(true)} className="qs-btn qs-btn--ghost qs-btn--sm">
+              <I.lock size={14}/> Calificación y reglas
+            </button>
+          )}
           <button onClick={handlePublishClick} className="qs-btn qs-btn--ghost qs-btn--sm">
             🌐 Publicar online
           </button>
@@ -579,10 +597,10 @@ function Editor({ quizId, onBack, onLaunch }) {
             })}
           </div>
           <div style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-500)", letterSpacing: ".05em", marginBottom: 8 }}>
-            AGREGAR PREGUNTA
+            AGREGAR {quiz.mode === "survey" ? "PREGUNTA DE ENCUESTA" : "PREGUNTA"}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
-            {QUESTION_TYPES.map(t => {
+            {(quiz.mode === "survey" ? SURVEY_TYPES : QUESTION_TYPES).map(t => {
               const Tico = I[t.icon];
               return (
                 <button key={t.id} onClick={() => addQuestion(t.id)} style={{
@@ -603,7 +621,7 @@ function Editor({ quizId, onBack, onLaunch }) {
           <div className="qs-card" style={{ padding: 28, maxWidth: 800, margin: "0 auto" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <span className="qs-chip">
-                {(()=>{const t=QUESTION_TYPES.find(t=>t.id===active.type);const Tico=I[t.icon];return <><Tico size={12}/> {t.label}</>;})()}
+                {(()=>{const all=[...QUESTION_TYPES,...SURVEY_TYPES];const t=all.find(t=>t.id===active.type)||all[0];const Tico=I[t.icon];return <><Tico size={12}/> {t.label}</>;})()}
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--ink-500)", fontSize: 13, fontWeight: 600 }}>
                 <I.clock size={14}/>
@@ -614,7 +632,8 @@ function Editor({ quizId, onBack, onLaunch }) {
               </span>
             </div>
 
-            {/* === Puntuación de la pregunta === */}
+            {/* === Puntuación de la pregunta (solo en modo quiz) === */}
+            {quiz.mode !== "survey" && (
             <div style={{
               background: "var(--violet-50)", border: "1px solid var(--violet-200)",
               borderRadius: 12, padding: 14, marginBottom: 16,
@@ -670,6 +689,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                 ℹ️ El bonus por velocidad solo aplica en modo <b>sala en vivo</b>. Puedes usar valores negativos en "Si falla" para penalizar respuestas incorrectas.
               </p>
             </div>
+            )}
 
             <textarea value={active.text}
               onChange={e => updateQuestion({ text: e.target.value })}
@@ -682,7 +702,44 @@ function Editor({ quizId, onBack, onLaunch }) {
               }}/>
 
             {/* Options */}
-            {active.type === "text" ? (
+            {active.type === "wordcloud" ? (
+              <div style={{
+                padding: 20, borderRadius: 14, background: "var(--violet-50)",
+                border: "1px dashed var(--violet-200)", textAlign: "center", color: "var(--violet-700)",
+              }}>
+                <div style={{ fontSize: 32, marginBottom: 8 }}>💭</div>
+                <div style={{ fontWeight: 700 }}>Nube de palabras</div>
+                <div style={{ fontSize: 13, color: "var(--ink-500)", marginTop: 4 }}>
+                  Los estudiantes escriben una respuesta libre. Al revelar, las palabras más repetidas se ven más grandes.
+                </div>
+              </div>
+            ) : active.type === "scale" ? (
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 8 }}>
+                  Etiquetas de la escala (de un extremo al otro)
+                </div>
+                <div style={{ display: "grid", gap: 8 }}>
+                  {(active.scaleLabels || SCALE_LABELS).map((lbl, i) => (
+                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{
+                        width: 26, height: 26, borderRadius: "50%", flexShrink: 0,
+                        background: "var(--violet-100)", color: "var(--violet-700)",
+                        display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13,
+                      }}>{i + 1}</span>
+                      <input className="qs-input" value={lbl}
+                        onChange={e => {
+                          const labels = [...(active.scaleLabels || SCALE_LABELS)];
+                          labels[i] = e.target.value;
+                          updateQuestion({ scaleLabels: labels });
+                        }}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-500)" }}>
+                  Los estudiantes eligen un punto de la escala. Al revelar verás cuántos votó cada nivel.
+                </div>
+              </div>
+            ) : active.type === "text" ? (
               <div>
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 8 }}>
                   Respuestas aceptadas (separadas por coma)
@@ -712,23 +769,27 @@ function Editor({ quizId, onBack, onLaunch }) {
                         border: 0, outline: 0, padding: "8px 12px", borderRadius: 10,
                         fontWeight: 600, fontSize: 15, minWidth: 0,
                       }}/>
-                    <button onClick={() => updateOption(o.id, { correct: !o.correct })}
-                      title={o.correct ? "Correcta" : "Marcar correcta"}
-                      style={{
-                        width: 32, height: 32, borderRadius: "50%",
-                        background: o.correct ? "#fff" : "rgba(255,255,255,.2)",
-                        color: o.correct ? "var(--emerald-600)" : "#fff",
-                        display: "grid", placeItems: "center", flexShrink: 0,
-                      }}>
-                      <I.check size={18} sw={3}/>
-                    </button>
+                    {/* La marca de "correcta" solo en modo quiz; en encuesta no hay correcta */}
+                    {quiz.mode !== "survey" && (
+                      <button onClick={() => updateOption(o.id, { correct: !o.correct })}
+                        title={o.correct ? "Correcta" : "Marcar correcta"}
+                        style={{
+                          width: 32, height: 32, borderRadius: "50%",
+                          background: o.correct ? "#fff" : "rgba(255,255,255,.2)",
+                          color: o.correct ? "var(--emerald-600)" : "#fff",
+                          display: "grid", placeItems: "center", flexShrink: 0,
+                        }}>
+                        <I.check size={18} sw={3}/>
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             )}
 
             <div style={{ marginTop: 16, fontSize: 12, color: "var(--ink-500)", textAlign: "center" }}>
-              {active.type === "checks" ? "💡 Marca todas las respuestas correctas" :
+              {quiz.mode === "survey" ? "💡 Modo encuesta: sin respuesta correcta, no se califica" :
+               active.type === "checks" ? "💡 Marca todas las respuestas correctas" :
                active.type === "multi"  ? "💡 Marca solo una respuesta correcta" :
                active.type === "truefalse" ? "💡 Selecciona si la afirmación es verdadera o falsa" :
                "💡 Acepta varias respuestas equivalentes"}
@@ -739,6 +800,37 @@ function Editor({ quizId, onBack, onLaunch }) {
         {/* Right: settings panel */}
         <aside className="qs-editor-config">
           <h3 style={{ fontSize: 15, marginBottom: 14 }}>Configuración del quiz</h3>
+
+          <Field label="Tipo de actividad">
+            <div style={{ display: "flex", gap: 6 }}>
+              {[
+                { id: "quiz", label: "🎯 Quiz (con nota)" },
+                { id: "survey", label: "📊 Encuesta" },
+              ].map(opt => {
+                const activeMode = (quiz.mode || "quiz") === opt.id;
+                return (
+                  <button key={opt.id} onClick={() => {
+                    if (opt.id === quiz.mode) return;
+                    if (!confirm(opt.id === "survey"
+                      ? "¿Cambiar a modo Encuesta? Las preguntas no tendrán respuesta correcta ni puntaje."
+                      : "¿Cambiar a modo Quiz? Podrás marcar respuestas correctas y asignar puntaje.")) return;
+                    setQuiz({ ...quiz, mode: opt.id });
+                  }}
+                    style={{
+                      flex: 1, padding: "10px 6px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+                      background: activeMode ? "var(--violet-100)" : "var(--ink-50)",
+                      color: activeMode ? "var(--violet-700)" : "var(--ink-500)",
+                      border: activeMode ? "1px solid var(--violet-400)" : "1px solid var(--ink-200)",
+                    }}>{opt.label}</button>
+                );
+              })}
+            </div>
+            {quiz.mode === "survey" && (
+              <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
+                En modo encuesta se recogen opiniones sin calificar. Útil para sondeos, votaciones y lluvia de ideas.
+              </p>
+            )}
+          </Field>
 
           <Field label="Acceso">
             <div style={{ display: "flex", gap: 6 }}>

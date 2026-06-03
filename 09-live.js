@@ -238,7 +238,7 @@ function HostLobby({ session, quiz, onStart, onCancel, onKick }) {
               >
                 {participants.length === 0
                   ? "Esperando estudiantes..."
-                  : `🚀 Iniciar quiz con ${participants.length} ${participants.length === 1 ? "estudiante" : "estudiantes"}`}
+                  : `🚀 Iniciar ${quiz.mode === "survey" ? "encuesta" : "quiz"} con ${participants.length} ${participants.length === 1 ? "estudiante" : "estudiantes"}`}
               </button>
             </div>
           </div>
@@ -326,6 +326,28 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
           <h1 style={{ fontSize: 32, textAlign: "center", marginBottom: 24, lineHeight: 1.3 }}>
             {currentQ.text}
           </h1>
+          {currentQ.type === "wordcloud" ? (
+            <div style={{ textAlign: "center", padding: 20, background: "var(--violet-50)", borderRadius: 14, color: "var(--violet-700)" }}>
+              <div style={{ fontSize: 36, marginBottom: 6 }}>💭</div>
+              <div style={{ fontWeight: 700 }}>Respuesta libre — los estudiantes escriben una palabra</div>
+            </div>
+          ) : currentQ.type === "scale" ? (
+            <div style={{ display: "grid", gap: 8 }}>
+              {(currentQ.scaleLabels || SCALE_LABELS).map((lbl, i, arr) => {
+                const ratio = arr.length > 1 ? i / (arr.length - 1) : 0.5;
+                const bg = `hsl(${Math.round(ratio * 130)}, 65%, 48%)`;
+                return (
+                  <div key={i} style={{
+                    padding: "14px 18px", borderRadius: 12, background: bg, color: "white",
+                    fontWeight: 700, display: "flex", alignItems: "center", gap: 10,
+                  }}>
+                    <span style={{ width: 26, height: 26, borderRadius: "50%", background: "rgba(255,255,255,0.25)", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13 }}>{i + 1}</span>
+                    {lbl}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
           <div style={{
             display: "grid",
             gridTemplateColumns: (currentQ.options || []).length > 2 ? "1fr 1fr" : "1fr 1fr",
@@ -342,6 +364,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
               );
             })}
           </div>
+          )}
         </div>
 
         {/* Estado */}
@@ -414,7 +437,36 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
 // ============================================================
 function HostReveal({ session, quiz, currentQ, answersThisQ, onNext }) {
   const totalAnswers = Object.keys(answersThisQ || {}).length;
-  // Conteo por opción
+  const isSurvey = quiz.mode === "survey";
+  const isLast = session.currentQuestionIdx >= quiz.questions.length - 1;
+  const colors = ["var(--tile-1)", "var(--tile-2)", "var(--tile-3)", "var(--tile-4)"];
+
+  // ---- Nube de palabras ----
+  const buildWordCloud = () => {
+    const freq = {};
+    Object.values(answersThisQ || {}).forEach(a => {
+      const raw = (a.answer == null ? "" : String(a.answer)).trim().toLowerCase();
+      if (!raw) return;
+      freq[raw] = (freq[raw] || 0) + 1;
+    });
+    return Object.entries(freq)
+      .map(([word, count]) => ({ word, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 40);
+  };
+
+  // ---- Conteo para escala ----
+  const buildScale = () => {
+    const labels = currentQ.scaleLabels || SCALE_LABELS;
+    const counts = labels.map(() => 0);
+    Object.values(answersThisQ || {}).forEach(a => {
+      const idx = typeof a.answer === "number" ? a.answer : parseInt(a.answer, 10);
+      if (!isNaN(idx) && idx >= 0 && idx < counts.length) counts[idx]++;
+    });
+    return { labels, counts };
+  };
+
+  // ---- Conteo por opción (poll / multi / truefalse / checks) ----
   const optionCounts = {};
   (currentQ.options || []).forEach(o => { optionCounts[o.id] = 0; });
   Object.values(answersThisQ || {}).forEach(a => {
@@ -425,9 +477,16 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext }) {
     }
   });
   const maxCount = Math.max(1, ...Object.values(optionCounts));
-  const isLast = session.currentQuestionIdx >= quiz.questions.length - 1;
 
-  return (
+  const nextButton = (
+    <button onClick={onNext} className="qs-btn qs-btn--lg" style={{
+      width: "100%", background: "white", color: "var(--violet-700)", fontWeight: 800, fontSize: 16,
+    }}>
+      {isLast ? (isSurvey ? "🏁 Finalizar encuesta" : "🏁 Ver ranking final") : "➡️ Siguiente pregunta"}
+    </button>
+  );
+
+  const shell = (inner) => (
     <div style={{
       minHeight: "100vh",
       background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
@@ -435,49 +494,107 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext }) {
     }}>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
         <div style={{ marginBottom: 20 }}>
-          <p style={{ opacity: 0.7, fontSize: 13 }}>Resultados — Pregunta {session.currentQuestionIdx + 1}</p>
+          <p style={{ opacity: 0.7, fontSize: 13 }}>
+            {isSurvey ? "Encuesta" : "Resultados"} — Pregunta {session.currentQuestionIdx + 1}
+          </p>
           <h2 style={{ fontSize: 26, marginTop: 4 }}>{currentQ.text}</h2>
         </div>
+        {inner}
+        <div style={{ marginTop: 4, marginBottom: 20, padding: 12, background: "rgba(255,255,255,0.15)", borderRadius: 10, textAlign: "center", fontSize: 13 }}>
+          <b>{totalAnswers}</b> respuestas totales
+        </div>
+        {nextButton}
+      </div>
+    </div>
+  );
 
-        <div className="qs-card" style={{ padding: 28, marginBottom: 20, color: "var(--ink-900)" }}>
-          <div style={{ display: "grid", gap: 12 }}>
-            {(currentQ.options || []).map((opt, i) => {
-              const colors = ["var(--tile-1)", "var(--tile-2)", "var(--tile-3)", "var(--tile-4)"];
-              const count = optionCounts[opt.id] || 0;
-              const widthPct = (count / maxCount) * 100;
+  // ===== Nube de palabras =====
+  if (currentQ.type === "wordcloud") {
+    const words = buildWordCloud();
+    const maxFreq = Math.max(1, ...words.map(w => w.count));
+    return shell(
+      <div className="qs-card" style={{ padding: 28, marginBottom: 20, color: "var(--ink-900)", minHeight: 200 }}>
+        {words.length === 0 ? (
+          <p style={{ textAlign: "center", color: "var(--ink-500)" }}>Aún no hay respuestas.</p>
+        ) : (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "10px 16px", justifyContent: "center", alignItems: "center" }}>
+            {words.map((w, i) => {
+              const size = 14 + (w.count / maxFreq) * 38; // 14px..52px
               return (
-                <div key={opt.id} className="qs-fade-in" style={{
-                  position: "relative", display: "flex", alignItems: "center",
-                  padding: 16, borderRadius: 12, background: opt.correct ? "var(--emerald-500)" : colors[i % 4],
-                  color: "white", overflow: "hidden",
-                  opacity: opt.correct || count > 0 ? 1 : 0.5,
+                <span key={w.word} style={{
+                  fontSize: size, fontWeight: 800, fontFamily: "var(--font-display)",
+                  color: colors[i % 4], lineHeight: 1.1,
                 }}>
-                  {/* Barra de fondo */}
-                  <div style={{
-                    position: "absolute", inset: 0, width: widthPct + "%",
-                    background: "rgba(255,255,255,0.15)", transition: "width 0.6s ease",
-                  }} />
-                  <div style={{ position: "relative", display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
-                    <div style={{ fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 10 }}>
-                      {opt.correct && <span style={{ fontSize: 22 }}>✓</span>}
-                      {opt.text}
-                    </div>
-                    <div style={{ fontWeight: 800, fontSize: 20 }}>{count}</div>
-                  </div>
-                </div>
+                  {w.word}{w.count > 1 ? <span style={{ fontSize: 12, color: "var(--ink-400)", fontWeight: 600 }}> ×{w.count}</span> : null}
+                </span>
               );
             })}
           </div>
-          <div style={{ marginTop: 16, padding: 12, background: "var(--ink-50)", borderRadius: 10, textAlign: "center", color: "var(--ink-700)", fontSize: 13 }}>
-            <b>{totalAnswers}</b> respuestas totales
-          </div>
-        </div>
+        )}
+      </div>
+    );
+  }
 
-        <button onClick={onNext} className="qs-btn qs-btn--lg" style={{
-          width: "100%", background: "white", color: "var(--violet-700)", fontWeight: 800, fontSize: 16,
-        }}>
-          {isLast ? "🏁 Ver ranking final" : "➡️ Siguiente pregunta"}
-        </button>
+  // ===== Escala de acuerdo =====
+  if (currentQ.type === "scale") {
+    const { labels, counts } = buildScale();
+    const maxScale = Math.max(1, ...counts);
+    return shell(
+      <div className="qs-card" style={{ padding: 28, marginBottom: 20, color: "var(--ink-900)" }}>
+        <div style={{ display: "grid", gap: 12 }}>
+          {labels.map((lbl, i) => {
+            const ratio = labels.length > 1 ? i / (labels.length - 1) : 0.5;
+            const bg = `hsl(${Math.round(ratio * 130)}, 65%, 48%)`;
+            const widthPct = (counts[i] / maxScale) * 100;
+            return (
+              <div key={i} className="qs-fade-in" style={{
+                position: "relative", display: "flex", alignItems: "center",
+                padding: 16, borderRadius: 12, background: bg, color: "white", overflow: "hidden",
+                opacity: counts[i] > 0 ? 1 : 0.55,
+              }}>
+                <div style={{ position: "absolute", inset: 0, width: widthPct + "%", background: "rgba(255,255,255,0.18)", transition: "width 0.6s ease" }} />
+                <div style={{ position: "relative", display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
+                  <div style={{ fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ width: 26, height: 26, borderRadius: "50%", background: "rgba(255,255,255,0.25)", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13 }}>{i + 1}</span>
+                    {lbl}
+                  </div>
+                  <div style={{ fontWeight: 800, fontSize: 20 }}>{counts[i]}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // ===== Opciones (poll / multi / truefalse / checks) =====
+  return shell(
+    <div className="qs-card" style={{ padding: 28, marginBottom: 20, color: "var(--ink-900)" }}>
+      <div style={{ display: "grid", gap: 12 }}>
+        {(currentQ.options || []).map((opt, i) => {
+          const count = optionCounts[opt.id] || 0;
+          const widthPct = (count / maxCount) * 100;
+          // En encuesta no hay opción correcta
+          const highlightCorrect = !isSurvey && opt.correct;
+          return (
+            <div key={opt.id} className="qs-fade-in" style={{
+              position: "relative", display: "flex", alignItems: "center",
+              padding: 16, borderRadius: 12, background: highlightCorrect ? "var(--emerald-500)" : colors[i % 4],
+              color: "white", overflow: "hidden",
+              opacity: highlightCorrect || count > 0 ? 1 : 0.5,
+            }}>
+              <div style={{ position: "absolute", inset: 0, width: widthPct + "%", background: "rgba(255,255,255,0.15)", transition: "width 0.6s ease" }} />
+              <div style={{ position: "relative", display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
+                <div style={{ fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 10 }}>
+                  {highlightCorrect && <span style={{ fontSize: 22 }}>✓</span>}
+                  {opt.text}
+                </div>
+                <div style={{ fontWeight: 800, fontSize: 20 }}>{count}</div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -487,11 +604,53 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext }) {
 // HOST FINAL — ranking final
 // ============================================================
 function HostFinal({ session, quiz, onFinish }) {
+  const isSurvey = quiz.mode === "survey";
   const participants = Object.values(session.participants || {})
     .map(p => ({ ...p, score: p.score || 0 }))
     .sort((a, b) => b.score - a.score);
   const top3 = participants.slice(0, 3);
   const rest = participants.slice(3);
+
+  // ===== Cierre de ENCUESTA (sin ranking ni puntajes) =====
+  if (isSurvey) {
+    return (
+      <div style={{
+        minHeight: "100vh",
+        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+        padding: 24, color: "white",
+      }}>
+        <div style={{ maxWidth: 700, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 32 }}>
+            <div style={{ fontSize: 56, marginBottom: 8 }}>📊</div>
+            <h1 style={{ fontSize: 32, marginBottom: 8 }}>¡Encuesta terminada!</h1>
+            <p style={{ opacity: 0.85 }}>{quiz.title}</p>
+          </div>
+          <div className="qs-card" style={{ padding: 20, color: "var(--ink-900)", marginBottom: 24, textAlign: "center" }}>
+            <p style={{ fontSize: 15 }}>
+              Participaron <b>{participants.length}</b> {participants.length === 1 ? "persona" : "personas"}.
+            </p>
+            <p style={{ fontSize: 13, color: "var(--ink-500)", marginTop: 6 }}>
+              Los resultados de cada pregunta se mostraron durante la sesión. Gracias por participar.
+            </p>
+          </div>
+          {participants.length > 0 && (
+            <div className="qs-card" style={{ padding: 16, color: "var(--ink-900)", marginBottom: 24 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {participants.map(p => (
+                  <span key={p.id} className="qs-chip">{p.name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+          <button onClick={onFinish} className="qs-btn qs-btn--lg" style={{
+            width: "100%", background: "white", color: "var(--violet-700)", fontWeight: 800,
+          }}>
+            ✓ Finalizar y volver al dashboard
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div style={{
@@ -833,6 +992,8 @@ function LiveSessionHost({ quizId, onExit }) {
   const saveLiveResults = async () => {
     const uid = window.QS.currentUser?.uid;
     if (!uid || !session || !quiz) return;
+    // En modo encuesta no se guardan resultados calificados.
+    if (quiz.mode === "survey") return;
     const participants = Object.values(session.participants || {});
     if (participants.length === 0) return;
 
@@ -1315,12 +1476,14 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     const totalSec = currentQ.timer || 20;
     const startedAt = session.questionStartedAt || Date.now();
     const secondsTaken = (Date.now() - startedAt) / 1000;
-    const isCorrect = checkAnswer(currentQ, answer);
-    const points = calculatePoints(currentQ, isCorrect, secondsTaken, totalSec);
+    const isSurvey = quiz.mode === "survey";
+    // En encuesta no hay respuesta correcta ni puntaje
+    const isCorrect = isSurvey ? null : checkAnswer(currentQ, answer);
+    const points = isSurvey ? 0 : calculatePoints(currentQ, isCorrect, secondsTaken, totalSec);
 
     setMyAnswer(answer);
     setAnsweredAtIdx(qIdx);
-    setMyResultThisQ({ correct: isCorrect, points });
+    setMyResultThisQ({ correct: isCorrect, points, survey: isSurvey });
 
     try {
       // Si ya había respondido esta pregunta (p. ej. respondió, recargó y
@@ -1338,9 +1501,8 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         secondsTaken, answeredAt: Date.now(),
       });
 
-      // Actualizar puntaje solo la primera vez que responde esta pregunta
-      // (permite valores negativos para penalizar)
-      if (!alreadyScored && points !== 0) {
+      // Actualizar puntaje solo en modo quiz y solo la primera vez
+      if (!isSurvey && !alreadyScored && points !== 0) {
         const scoreKey = `participants.${participantId}.score`;
         await window.QS.db.collection("liveSessions").doc(sessionId).update({
           [scoreKey]: firebase.firestore.FieldValue.increment(points),
@@ -1489,6 +1651,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   // === Mostrando respuesta correcta (el docente reveló) ===
   if (session.status === "showResults") {
     const isLast = session.currentQuestionIdx >= quiz.questions.length - 1;
+    const isSurvey = quiz.mode === "survey";
     // Resultado tomado directamente de memoria: respondió esta pregunta o no.
     const answeredThis = answeredAtIdx === session.currentQuestionIdx && myResultThisQ;
     const reveal = answeredThis ? myResultThisQ : { noAnswer: true };
@@ -1504,6 +1667,12 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
               <h2 style={{ fontSize: 22, marginBottom: 8 }}>Se acabó el tiempo</h2>
               <p style={{ color: "var(--ink-500)", marginBottom: 16 }}>No alcanzaste a responder</p>
             </>
+          ) : isSurvey ? (
+            <>
+              <div style={{ fontSize: 60, marginBottom: 8 }} className="qs-pop-in">🗳️</div>
+              <h2 style={{ fontSize: 24, color: "var(--violet-700)", marginBottom: 8 }}>¡Gracias por tu respuesta!</h2>
+              <p style={{ color: "var(--ink-500)", marginBottom: 4 }}>Mira la pantalla del profesor para ver los resultados de todo el grupo.</p>
+            </>
           ) : reveal.correct ? (
             <>
               <div style={{ fontSize: 64, marginBottom: 8 }} className="qs-pop-in">🎉</div>
@@ -1517,17 +1686,20 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
               <p style={{ color: "var(--ink-500)", marginBottom: 16 }}>¡Suerte en la siguiente!</p>
             </>
           )}
-          <div style={{
-            padding: 14, background: "var(--violet-50)", borderRadius: 10,
-            marginTop: 16,
-          }}>
-            <p style={{ fontSize: 12, color: "var(--violet-700)", fontWeight: 600 }}>TU PUNTAJE</p>
-            <p style={{ fontSize: 28, fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--violet-700)" }}>
-              {myScore} pts
-            </p>
-          </div>
+          {/* El puntaje solo se muestra en modo quiz */}
+          {!isSurvey && (
+            <div style={{
+              padding: 14, background: "var(--violet-50)", borderRadius: 10,
+              marginTop: 16,
+            }}>
+              <p style={{ fontSize: 12, color: "var(--violet-700)", fontWeight: 600 }}>TU PUNTAJE</p>
+              <p style={{ fontSize: 28, fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--violet-700)" }}>
+                {myScore} pts
+              </p>
+            </div>
+          )}
           <p style={{ fontSize: 13, color: "var(--ink-500)", marginTop: 16 }}>
-            {isLast ? "Esperando ranking final..." : "Esperando siguiente pregunta..."}
+            {isLast ? (isSurvey ? "Esperando el cierre..." : "Esperando ranking final...") : "Esperando siguiente pregunta..."}
           </p>
         </div>
       </div>
@@ -1558,14 +1730,16 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
                   {Math.ceil(secondsLeft)}s
                 </p>
               </div>
-              <div style={{
-                flex: 1, padding: 14, background: "var(--violet-50)", borderRadius: 10,
-              }}>
-                <p style={{ fontSize: 12, color: "var(--violet-700)", fontWeight: 600 }}>TU PUNTAJE</p>
-                <p style={{ fontSize: 24, fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--violet-700)" }}>
-                  {myScore} pts
-                </p>
-              </div>
+              {quiz.mode !== "survey" && (
+                <div style={{
+                  flex: 1, padding: 14, background: "var(--violet-50)", borderRadius: 10,
+                }}>
+                  <p style={{ fontSize: 12, color: "var(--violet-700)", fontWeight: 600 }}>TU PUNTAJE</p>
+                  <p style={{ fontSize: 24, fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--violet-700)" }}>
+                    {myScore} pts
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1585,10 +1759,12 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
           }}>
             <span style={{ fontWeight: 600 }}>Pregunta {session.currentQuestionIdx + 1} / {quiz.questions.length}</span>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{
-                background: "rgba(255,255,255,0.18)", color: "white", padding: "6px 12px",
-                borderRadius: 10, fontWeight: 700, fontSize: 14,
-              }}>⭐ {myScore} pts</span>
+              {quiz.mode !== "survey" && (
+                <span style={{
+                  background: "rgba(255,255,255,0.18)", color: "white", padding: "6px 12px",
+                  borderRadius: 10, fontWeight: 700, fontSize: 14,
+                }}>⭐ {myScore} pts</span>
+              )}
               <span style={{
                 background: session.pausedAt ? "var(--amber-400)" : "white",
                 color: session.pausedAt ? "#7c2d12" : (secondsLeft < 5 ? "var(--red-500)" : "var(--violet-700)"),
@@ -1602,7 +1778,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
             <h2 style={{ fontSize: 20, lineHeight: 1.4 }}>{currentQ.text}</h2>
           </div>
 
-          {(currentQ.type === "multi" || currentQ.type === "truefalse") && (
+          {(currentQ.type === "multi" || currentQ.type === "truefalse" || currentQ.type === "poll") && (
             <div style={{ display: "grid", gap: 10 }}>
               {(currentQ.options || []).map((opt, i) => (
                 <button key={opt.id}
@@ -1615,6 +1791,38 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
                 >{opt.text}</button>
               ))}
             </div>
+          )}
+
+          {currentQ.type === "scale" && (
+            <div style={{ display: "grid", gap: 8 }}>
+              {(currentQ.scaleLabels || SCALE_LABELS).map((lbl, i, arr) => {
+                // Degradado de rojo (desacuerdo) a verde (acuerdo)
+                const ratio = arr.length > 1 ? i / (arr.length - 1) : 0.5;
+                const bg = `hsl(${Math.round(ratio * 130)}, 65%, 48%)`;
+                return (
+                  <button key={i}
+                    onClick={() => submitAnswer(i)}
+                    style={{
+                      padding: "16px 20px", borderRadius: 14, background: bg,
+                      color: "white", fontSize: 16, fontWeight: 700, textAlign: "left",
+                      border: "none", cursor: "pointer", boxShadow: "var(--shadow-tile)",
+                      display: "flex", alignItems: "center", gap: 12,
+                    }}
+                  >
+                    <span style={{
+                      width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+                      background: "rgba(255,255,255,0.25)", display: "grid", placeItems: "center",
+                      fontWeight: 800,
+                    }}>{i + 1}</span>
+                    {lbl}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {currentQ.type === "wordcloud" && (
+            <TextAnswer onSubmit={(t) => submitAnswer(t)} placeholder="Escribe una palabra o frase corta..." />
           )}
 
           {currentQ.type === "checks" && (
@@ -1671,13 +1879,13 @@ function CheckSelector({ options, colors, onSubmit }) {
   );
 }
 
-function TextAnswer({ onSubmit }) {
+function TextAnswer({ onSubmit, placeholder = "Escribe tu respuesta..." }) {
   const [text, setText] = useStateL("");
   return (
     <>
       <input
         type="text" className="qs-input" autoFocus
-        placeholder="Escribe tu respuesta..."
+        placeholder={placeholder}
         value={text} onChange={e => setText(e.target.value)}
         onKeyDown={e => e.key === "Enter" && text.trim() && onSubmit(text)}
         style={{ fontSize: 18, padding: 16, marginBottom: 12 }}
