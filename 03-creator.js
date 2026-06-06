@@ -358,9 +358,9 @@ function Editor({ quizId, onBack, onLaunch }) {
         { id: "d", text: "", correct: false },
       ],
     }],
-    gradingScale: [
-      { from: 0,    to: 0,    grade: 1.0 },   // se calcula dinámicamente con setupDefaultScale
-    ],
+    // Sin escala: se usa conversión lineal 0-5 por defecto hasta que el
+    // docente configure una tabla en "Calificación y reglas".
+    gradingScale: [],
   }));
   const [activeIdx, setActiveIdx] = useStateC(0);
   const [showSettings, setShowSettings] = useStateC(false);

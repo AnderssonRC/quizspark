@@ -92,23 +92,26 @@ function gradeSubmission(quiz, answers) {
 
 // Convertir puntos obtenidos a nota según la tabla de conversión del quiz
 function convertPointsToGrade(points, maxPoints, scale) {
-  // Si hay tabla definida, usarla
-  if (scale && Array.isArray(scale) && scale.length > 0) {
-    // Buscar el rango donde caen los puntos
+  // La escala solo es utilizable si cubre un rango real (no algo como [{from:0,to:0}])
+  const scaleUsable = Array.isArray(scale) && scale.length > 0 &&
+    Math.max(...scale.map(r => r.to ?? 0)) > 0;
+
+  if (scaleUsable) {
     for (const range of scale) {
       if (points >= range.from && points <= range.to) {
         return +(+range.grade).toFixed(2);
       }
     }
-    // Si está por encima del último rango definido, dar la nota más alta
-    const lastGrade = Math.max(...scale.map(r => r.grade));
-    if (points > Math.max(...scale.map(r => r.to))) return +lastGrade.toFixed(2);
-    // Si está por debajo, dar la nota más baja
+    const maxTo = Math.max(...scale.map(r => r.to));
+    if (points > maxTo) {
+      const topGrade = scale.reduce((best, r) => r.to >= best.to ? r : best, scale[0]).grade;
+      return +(+topGrade).toFixed(2);
+    }
     const minGrade = Math.min(...scale.map(r => r.grade));
     return +minGrade.toFixed(2);
   }
-  // Por defecto: escala colombiana 0-5 lineal
-  if (maxPoints === 0) return 0;
+  // Por defecto (o escala inválida): escala colombiana 0-5 lineal
+  if (!maxPoints || maxPoints === 0) return 0;
   const ratio = Math.max(0, Math.min(1, points / maxPoints));
   return +(ratio * 5).toFixed(2);
 }

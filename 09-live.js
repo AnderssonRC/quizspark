@@ -59,19 +59,28 @@ function calculateMaxPoints(quiz) {
 
 // Convertir puntos a nota usando la tabla del quiz
 function convertToGrade(points, maxPoints, scale) {
-  if (scale && Array.isArray(scale) && scale.length > 0) {
+  // Validar que la escala sea utilizable: debe cubrir un rango real, no algo
+  // como [{from:0,to:0}] que dejaría todo en la nota mínima.
+  const scaleUsable = Array.isArray(scale) && scale.length > 0 &&
+    Math.max(...scale.map(r => r.to ?? 0)) > 0;
+
+  if (scaleUsable) {
     for (const range of scale) {
       if (points >= range.from && points <= range.to) {
         return +(+range.grade).toFixed(2);
       }
     }
-    const lastGrade = Math.max(...scale.map(r => r.grade));
-    if (points > Math.max(...scale.map(r => r.to))) return +lastGrade.toFixed(2);
+    const maxTo = Math.max(...scale.map(r => r.to));
+    if (points > maxTo) {
+      const topGrade = scale.reduce((best, r) => r.to >= best.to ? r : best, scale[0]).grade;
+      return +(+topGrade).toFixed(2);
+    }
     const minGrade = Math.min(...scale.map(r => r.grade));
     return +minGrade.toFixed(2);
   }
-  // Por defecto: escala colombiana 0-5 lineal
-  if (maxPoints === 0) return 0;
+
+  // Por defecto (o escala inválida): escala colombiana 0-5 lineal por porcentaje
+  if (!maxPoints || maxPoints === 0) return 0;
   const ratio = Math.max(0, Math.min(1, points / maxPoints));
   return +(ratio * 5).toFixed(2);
 }
