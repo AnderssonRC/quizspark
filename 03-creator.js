@@ -357,7 +357,7 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
                 >🔗 Copiar enlace ({q.publishCode})</button>
               )}
               <div style={{ display: "flex", gap: 6, marginTop: "auto" }}>
-                <button onClick={() => onOpenEditor(q.id)} className="qs-btn qs-btn--ghost qs-btn--sm" style={{ flex: 0.8 }}>
+                <button onClick={() => onOpenEditor(q.id)} className="qs-btn qs-btn--ghost qs-btn--sm" style={{ flex: 0.5 }}>
                   <I.edit size={14}/> Editar
                 </button>
                 <button onClick={() => duplicateQuiz(q.id)} className="qs-btn qs-btn--ghost qs-btn--sm" title="Duplicar quiz">
