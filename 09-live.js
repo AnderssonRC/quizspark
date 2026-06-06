@@ -279,6 +279,20 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
   const progress = totalParticipants > 0 ? (answeredCount / totalParticipants) * 100 : 0;
   const timeProgress = (secondsLeft / totalSeconds) * 100;
 
+  // Quién respondió (en orden de llegada) y quién falta
+  const allParticipants = session.participants || {};
+  const answeredList = Object.entries(answersThisQ || {})
+    .map(([pid, a]) => ({
+      pid,
+      name: allParticipants[pid]?.name || "Estudiante",
+      at: a.answeredAt || 0,
+    }))
+    .sort((a, b) => a.at - b.at);
+  const answeredIds = new Set(answeredList.map(a => a.pid));
+  const pendingList = Object.entries(allParticipants)
+    .filter(([pid]) => !answeredIds.has(pid))
+    .map(([pid, p]) => ({ pid, name: p?.name || "Estudiante" }));
+
   return (
     <div style={{
       minHeight: "100vh",
@@ -382,6 +396,47 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                 background: "linear-gradient(90deg, var(--violet-500), var(--pink-500))",
                 transition: "width 0.3s ease",
               }} />
+            </div>
+
+            {/* Quién respondió (en orden) y quién falta */}
+            <div style={{ marginTop: 14, maxHeight: 180, overflowY: "auto" }}>
+              {answeredList.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "var(--emerald-600)", letterSpacing: ".04em", marginBottom: 6 }}>
+                    ✓ YA RESPONDIERON ({answeredList.length})
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {answeredList.map((p, i) => (
+                      <span key={p.pid} style={{
+                        display: "inline-flex", alignItems: "center", gap: 6,
+                        padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600,
+                        background: "#d1fae5", color: "#065f46",
+                      }}>
+                        <span style={{
+                          width: 18, height: 18, borderRadius: "50%", background: "#065f46", color: "white",
+                          display: "grid", placeItems: "center", fontSize: 10, fontWeight: 800,
+                        }}>{i + 1}</span>
+                        {p.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {pendingList.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "var(--ink-400)", letterSpacing: ".04em", marginBottom: 6 }}>
+                    ⏳ FALTAN ({pendingList.length})
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                    {pendingList.map(p => (
+                      <span key={p.pid} style={{
+                        padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600,
+                        background: "var(--ink-100)", color: "var(--ink-500)",
+                      }}>{p.name}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
           <div style={{ display: "grid", gap: 10 }}>
@@ -992,7 +1047,9 @@ function LiveSessionHost({ quizId, onExit }) {
       const scoreReverts = {};
       snap.docs.forEach(d => {
         const data = d.data();
-        const pts = data.points || 0;
+        // Solo revertir lo que ya se sumó al marcador (applied). Los pendientes
+        // nunca se sumaron, así que no hay nada que revertir de ellos.
+        const pts = data.applied ? (data.points || 0) : 0;
         if (pts !== 0) {
           scoreReverts[data.participantId] = (scoreReverts[data.participantId] || 0) - pts;
         }
@@ -1034,19 +1091,65 @@ function LiveSessionHost({ quizId, onExit }) {
   // Finalizar el quiz inmediatamente desde cualquier pregunta
   const finishNow = async () => {
     if (!confirm("¿Finalizar el quiz ahora? Se guardarán los resultados con el puntaje actual.")) return;
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    try {
+      // Aplicar cualquier puntaje en espera que aún no se haya sumado
+      const snap = await ref.collection("answers").get();
+      const increments = {};
+      const batch = window.QS.db.batch();
+      let has = false;
+      snap.docs.forEach(d => {
+        const data = d.data();
+        const pend = data.pendingPoints || 0;
+        if (!data.applied && pend !== 0) {
+          increments[`participants.${data.participantId}.score`] =
+            firebase.firestore.FieldValue.increment(pend);
+          batch.update(d.ref, { applied: true });
+          has = true;
+        }
+      });
+      if (has) { await batch.commit(); await ref.update(increments); }
+    } catch (err) {
+      console.error("Error aplicando pendientes al finalizar:", err);
+    }
     try {
       await saveLiveResults();
     } catch (err) {
       console.error("Error guardando resultados:", err);
     }
-    await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+    await ref.update({
       status: "finished",
       finishedAt: Date.now(),
     });
   };
 
   const revealCurrent = async () => {
-    await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+    const qIdx = session.currentQuestionIdx;
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    try {
+      // Aplicar los puntos en espera de esta pregunta al marcador de cada quien
+      const snap = await ref.collection("answers").where("questionIdx", "==", qIdx).get();
+      const increments = {};
+      const batch = window.QS.db.batch();
+      let hasIncrements = false;
+      snap.docs.forEach(d => {
+        const data = d.data();
+        const pend = data.pendingPoints || 0;
+        if (!data.applied && pend !== 0) {
+          increments[`participants.${data.participantId}.score`] =
+            firebase.firestore.FieldValue.increment(pend);
+          batch.update(d.ref, { applied: true });
+          hasIncrements = true;
+        }
+      });
+      if (hasIncrements) {
+        await batch.commit();
+        await ref.update(increments);
+      }
+    } catch (err) {
+      console.error("Error aplicando puntajes al revelar:", err);
+    }
+    await ref.update({
       status: "showResults",
       revealedAt: Date.now(),
       pausedAt: null,
@@ -1143,7 +1246,9 @@ function LiveSessionHost({ quizId, onExit }) {
     for (const p of participants) {
       const myAnswers = answersByParticipant[p.id] || [];
       const correctCount = myAnswers.filter(a => a.correct).length;
-      const score = p.score || 0;
+      // Calcular el puntaje sumando los puntos de cada respuesta (fuente de verdad),
+      // para no depender del p.score que puede venir desactualizado del estado.
+      const score = myAnswers.reduce((s, a) => s + (a.points || 0), 0);
       const grade = convertToGrade(score, maxPoints, quiz.gradingScale);
 
       // Reconstruir gradeDetail compatible con el formato asincrónico
@@ -1642,29 +1747,21 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     setMyResultThisQ({ correct: isCorrect, points, survey: isSurvey, pendingGrade: isLiveGradedOpen });
 
     try {
-      // Si ya había respondido esta pregunta (p. ej. respondió, recargó y
-      // volvió a responder), no sumamos el puntaje otra vez.
       const docId = `${participantId}-${qIdx}`;
       const answerRef = window.QS.db.collection("liveSessions").doc(sessionId)
         .collection("answers").doc(docId);
-      const existing = await answerRef.get();
-      const alreadyScored = existing.exists;
 
-      // Guardar (o sobrescribir) la respuesta
+      // Guardar (o sobrescribir) la respuesta. El puntaje NO se suma aquí:
+      // queda como pendingPoints y el docente lo aplica al revelar, para que
+      // el marcador del estudiante no delate si acertó antes del reveal.
       await answerRef.set({
         participantId, questionIdx: qIdx, answer,
         correct: isCorrect, points,
-        graded: false, // las abiertas-en-vivo las califica el docente
+        pendingPoints: (!isSurvey && !isLiveGradedOpen) ? points : 0,
+        applied: false, // si ya se sumó al score
+        graded: false,  // las abiertas-en-vivo las califica el docente
         secondsTaken, answeredAt: Date.now(),
       });
-
-      // Actualizar puntaje solo en modo quiz, no en abiertas-en-vivo, y solo la primera vez
-      if (!isSurvey && !isLiveGradedOpen && !alreadyScored && points !== 0) {
-        const scoreKey = `participants.${participantId}.score`;
-        await window.QS.db.collection("liveSessions").doc(sessionId).update({
-          [scoreKey]: firebase.firestore.FieldValue.increment(points),
-        });
-      }
     } catch (err) {
       console.error("Error enviando respuesta:", err);
     }
@@ -1901,25 +1998,15 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
             <div style={{ fontSize: 56, marginBottom: 12 }} className="qs-bob">⏳</div>
             <h2 style={{ fontSize: 22, marginBottom: 8 }}>¡Respuesta enviada!</h2>
             <p style={{ color: "var(--ink-500)" }}>Esperando que terminen los demás...</p>
-            <div style={{ display: "flex", gap: 10, marginTop: 20 }}>
+            <div style={{ marginTop: 20 }}>
               <div style={{
-                flex: 1, padding: 14, background: "var(--ink-50)", borderRadius: 10,
+                padding: 14, background: "var(--ink-50)", borderRadius: 10,
               }}>
                 <p style={{ fontSize: 12, color: "var(--ink-500)", fontWeight: 600 }}>TIEMPO</p>
                 <p style={{ fontSize: 24, fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--ink-700)" }}>
                   {Math.ceil(secondsLeft)}s
                 </p>
               </div>
-              {quiz.mode !== "survey" && (
-                <div style={{
-                  flex: 1, padding: 14, background: "var(--violet-50)", borderRadius: 10,
-                }}>
-                  <p style={{ fontSize: 12, color: "var(--violet-700)", fontWeight: 600 }}>TU PUNTAJE</p>
-                  <p style={{ fontSize: 24, fontFamily: "var(--font-display)", fontWeight: 800, color: "var(--violet-700)" }}>
-                    {myScore} pts
-                  </p>
-                </div>
-              )}
             </div>
           </div>
         </div>
