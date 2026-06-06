@@ -346,9 +346,15 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
 
         {/* Pregunta */}
         <div className="qs-card" style={{ padding: 32, marginBottom: 20, color: "var(--ink-900)" }}>
-          <h1 style={{ fontSize: 32, textAlign: "center", marginBottom: 24, lineHeight: 1.3 }}>
+          <h1 style={{ fontSize: 32, textAlign: "center", marginBottom: currentQ.image ? 16 : 24, lineHeight: 1.3 }}>
             {currentQ.text}
           </h1>
+          {currentQ.image && (
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <img src={currentQ.image} alt=""
+                style={{ maxWidth: "100%", maxHeight: 340, borderRadius: 12, border: "1px solid var(--ink-200)" }}/>
+            </div>
+          )}
           {currentQ.type === "wordcloud" ? (
             <div style={{ textAlign: "center", padding: 20, background: "var(--violet-50)", borderRadius: 14, color: "var(--violet-700)" }}>
               <div style={{ fontSize: 36, marginBottom: 6 }}>💭</div>
@@ -562,6 +568,12 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
             {isSurvey ? "Encuesta" : "Resultados"} — Pregunta {session.currentQuestionIdx + 1}
           </p>
           <h2 style={{ fontSize: 26, marginTop: 4 }}>{currentQ.text}</h2>
+          {currentQ.image && (
+            <div style={{ marginTop: 12 }}>
+              <img src={currentQ.image} alt=""
+                style={{ maxWidth: "100%", maxHeight: 220, borderRadius: 10 }}/>
+            </div>
+          )}
         </div>
         {inner}
         <div style={{ marginTop: 4, marginBottom: 20, padding: 12, background: "rgba(255,255,255,0.15)", borderRadius: 10, textAlign: "center", fontSize: 13 }}>
@@ -2052,6 +2064,12 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
 
           <div className="qs-card" style={{ padding: 20, marginBottom: 16 }}>
             <h2 style={{ fontSize: 20, lineHeight: 1.4 }}>{currentQ.text}</h2>
+            {currentQ.image && (
+              <div style={{ textAlign: "center", marginTop: 12 }}>
+                <img src={currentQ.image} alt=""
+                  style={{ maxWidth: "100%", maxHeight: 240, borderRadius: 10, border: "1px solid var(--ink-200)" }}/>
+              </div>
+            )}
           </div>
 
           {(currentQ.type === "multi" || currentQ.type === "truefalse" || currentQ.type === "poll") && (

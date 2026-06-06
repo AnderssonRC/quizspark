@@ -654,9 +654,15 @@ function StudentExam({ examCode }) {
 
         {/* Pregunta */}
         <div className="qs-card qs-fade-in" key={q.id} style={{ padding: 28, marginBottom: 16 }}>
-          <h2 style={{ fontSize: 22, marginBottom: 20, lineHeight: 1.4 }}>
+          <h2 style={{ fontSize: 22, marginBottom: q.image ? 12 : 20, lineHeight: 1.4 }}>
             {q.text}
           </h2>
+          {q.image && (
+            <div style={{ textAlign: "center", marginBottom: 20 }}>
+              <img src={q.image} alt=""
+                style={{ maxWidth: "100%", maxHeight: 280, borderRadius: 10, border: "1px solid var(--ink-200)" }}/>
+            </div>
+          )}
 
           {/* Multi (una correcta) */}
           {q.type === "multi" && (

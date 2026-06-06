@@ -706,9 +706,40 @@ function Editor({ quizId, onBack, onLaunch }) {
               style={{
                 width: "100%", border: "2px dashed var(--ink-200)", borderRadius: 16,
                 padding: 20, fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)",
-                resize: "none", outline: "none", minHeight: 80, marginBottom: 20,
+                resize: "none", outline: "none", minHeight: 80, marginBottom: 16,
                 background: "var(--ink-50)", color: "var(--ink-900)",
               }}/>
+
+            {/* Imagen del enunciado (opcional, por URL) */}
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 6, display: "flex", alignItems: "center", gap: 6 }}>
+                🖼️ Imagen del enunciado (opcional)
+              </div>
+              <input className="qs-input"
+                placeholder="Pega el enlace directo de la imagen (termina en .jpg, .png, .webp...)"
+                value={active.image || ""}
+                onChange={e => updateQuestion({ image: e.target.value.trim() })}/>
+              <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 6, lineHeight: 1.5 }}>
+                Clic derecho sobre la imagen en su web → "Copiar dirección de la imagen". Debe ser el enlace directo, no el de la página.
+              </div>
+              {active.image && (
+                <div style={{ marginTop: 10 }}>
+                  <img src={active.image} alt="Vista previa"
+                    onError={(e) => { e.currentTarget.style.display = "none"; e.currentTarget.nextSibling.style.display = "block"; }}
+                    onLoad={(e) => { e.currentTarget.style.display = "block"; e.currentTarget.nextSibling.style.display = "none"; }}
+                    style={{
+                      maxWidth: "100%", maxHeight: 240, borderRadius: 12,
+                      border: "1px solid var(--ink-200)", display: "block",
+                    }}/>
+                  <div style={{
+                    display: "none", padding: 12, borderRadius: 10, background: "#fef3c7",
+                    color: "#92400e", fontSize: 13,
+                  }}>
+                    ⚠️ No se pudo cargar la imagen. Verifica que el enlace sea directo (que termine en .jpg, .png, etc.) y que sea público.
+                  </div>
+                </div>
+              )}
+            </div>
 
             {/* Options */}
             {active.type === "wordcloud" ? (
