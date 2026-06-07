@@ -364,7 +364,7 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
                   <I.bookCopy size={14}/>
                 </button>
                 <button onClick={() => onLaunch(q.id)} className="qs-btn qs-btn--primary qs-btn--sm" style={{ flex: 1 }}>
-                  🎮 En vivo 
+                  🕹️ En vivo 
                 </button>
               </div>
             </div>
@@ -574,7 +574,7 @@ function Editor({ quizId, onBack, onLaunch }) {
           )}
           {quiz.mode !== "survey" && (
             <button onClick={() => setShowSettings(true)} className="qs-btn qs-btn--ghost qs-btn--sm">
-              <I.lock size={14}/> Calificación y reglas
+              <I.lock size={14}/> Calificación y Reglas
             </button>
           )}
           <button onClick={handlePublishClick} className="qs-btn qs-btn--ghost qs-btn--sm">
@@ -734,7 +734,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                 </label>
               </div>
               <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
-                ℹ️ El bonus por velocidad solo aplica en modo <b>sala en vivo</b>. Puedes usar valores negativos en "Si falla" para penalizar respuestas incorrectas.
+                ℹ️ El bonus por velocidad solo aplica en modo <b>En vivo</b>. Puedes usar valores negativos en "Si falla" para penalizar respuestas incorrectas.
               </p>
             </div>
             )}
@@ -869,7 +869,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                 <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 8 }}>
                   Respuestas aceptadas (opcional, separadas por coma)
                 </div>
-                <input className="qs-input" placeholder="ej: colón, colones"
+                <input className="qs-input" placeholder="Ej. de Palabras: Verdad, justicia, privacidad"
                   value={(active.acceptedAnswers || []).join(", ")}
                   onChange={e => updateQuestion({ acceptedAnswers: e.target.value.split(",").map(s => s.trim()) })}/>
                 <div style={{ marginTop: 8, fontSize: 12, color: "var(--ink-500)" }}>
@@ -924,7 +924,7 @@ function Editor({ quizId, onBack, onLaunch }) {
 
         {/* Right: settings panel */}
         <aside className="qs-editor-config">
-          <h3 style={{ fontSize: 15, marginBottom: 14 }}>Configuración del quiz</h3>
+          <h3 style={{ fontSize: 15, marginBottom: 14 }}>Configuración del Quiz</h3>
 
           <Field label="Tipo de actividad">
             <div style={{ display: "flex", gap: 6 }}>
@@ -959,7 +959,7 @@ function Editor({ quizId, onBack, onLaunch }) {
 
           <Field label="Acceso">
             <div style={{ display: "flex", gap: 6 }}>
-              {["pública", "con contraseña"].map((opt, i) => (
+              {["Pública", "Con Contraseña"].map((opt, i) => (
                 <button key={opt} onClick={() => setQuiz({ ...quiz, access: i === 1 ? "password" : "public" })}
                   style={{
                     flex: 1, padding: "8px", borderRadius: 10, fontSize: 12, fontWeight: 700,
