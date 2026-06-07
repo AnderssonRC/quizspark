@@ -145,6 +145,7 @@ const QUESTION_TYPES = [
   { id: "checks",    label: "Selección múltiple",icon: "checks",    desc: "Varias correctas" },
   { id: "text",      label: "Respuesta corta",   icon: "text",      desc: "Texto libre" },
   { id: "order",     label: "Ordenar",           icon: "list",      desc: "Ordenar elementos en secuencia" },
+  { id: "slide",     label: "Diapositiva",       icon: "eye",       desc: "Solo informativa, no se califica" },
 ];
 
 // Tipos de pregunta para el MODO ENCUESTA (sin respuesta correcta, no califica)

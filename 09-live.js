@@ -51,6 +51,8 @@ function calculatePoints(q, isCorrect, secondsTaken, totalSeconds) {
 // Calcular el máximo posible de un quiz (suma de pointsCorrect + pointsSpeedBonus)
 function calculateMaxPoints(quiz) {
   return (quiz.questions || []).reduce((sum, q) => {
+    // Las diapositivas no califican
+    if (q.type === "slide") return sum;
     const correct = q.pointsCorrect ?? 100;
     const bonus = q.pointsSpeedBonus ?? 0;
     return sum + correct + bonus;
@@ -635,6 +637,69 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// HOST SLIDE — diapositiva del docente: explicar sin calificar
+// ============================================================
+function HostSlide({ session, quiz, currentQ, onNext, onFinish }) {
+  const isLast = session.currentQuestionIdx >= quiz.questions.length - 1;
+  return (
+    <div style={{
+      minHeight: "100vh",
+      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      padding: 24, color: "white",
+    }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <div style={{ marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ opacity: 0.8, fontSize: 13 }}>
+            Diapositiva · {session.currentQuestionIdx + 1} de {quiz.questions.length}
+          </span>
+          <button onClick={onFinish} style={{
+            background: "rgba(255,0,0,0.4)", color: "white", border: "1px solid rgba(255,255,255,0.3)",
+            borderRadius: 10, padding: "6px 14px", fontSize: 13, fontWeight: 600, cursor: "pointer",
+          }}>🏁 Finalizar</button>
+        </div>
+
+        <div className="qs-card" style={{ padding: 32, color: "var(--ink-900)", marginBottom: 20 }}>
+          {currentQ.slideTitle && (
+            <h1 style={{ fontSize: 30, marginBottom: 16, fontFamily: "var(--font-display)" }}>
+              {currentQ.slideTitle}
+            </h1>
+          )}
+          {currentQ.image && (
+            <div style={{ textAlign: "center", marginBottom: 16 }}>
+              <img src={currentQ.image} alt=""
+                style={{ maxWidth: "100%", maxHeight: 360, borderRadius: 12 }}/>
+            </div>
+          )}
+          {currentQ.video && youtubeId(currentQ.video) && (
+            <div style={{ marginBottom: 16, position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 12, overflow: "hidden" }}>
+              <iframe src={`https://www.youtube.com/embed/${youtubeId(currentQ.video)}`} title="Video"
+                style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
+                allowFullScreen/>
+            </div>
+          )}
+          {currentQ.slideBody && (
+            <div style={{ fontSize: 16, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+              {currentQ.slideBody}
+            </div>
+          )}
+          {!currentQ.slideTitle && !currentQ.slideBody && !currentQ.image && !currentQ.video && (
+            <p style={{ color: "var(--ink-400)", fontStyle: "italic", textAlign: "center" }}>
+              Esta diapositiva está vacía.
+            </p>
+          )}
+        </div>
+
+        <button onClick={onNext} className="qs-btn qs-btn--lg" style={{
+          width: "100%", background: "white", color: "var(--violet-700)", fontWeight: 800, fontSize: 16,
+        }}>
+          {isLast ? "🏁 Finalizar" : "➡️ Siguiente"}
+        </button>
       </div>
     </div>
   );
@@ -1460,22 +1525,26 @@ function LiveSessionHost({ quizId, onExit }) {
       const score = myAnswers.reduce((s, a) => s + (a.points || 0), 0);
       const grade = convertToGrade(score, maxPoints, quiz.gradingScale);
 
-      // Reconstruir gradeDetail compatible con el formato asincrónico
-      const gradeDetail = quiz.questions.map((q, qIdx) => {
-        const ans = myAnswers.find(a => a.questionIdx === qIdx);
-        const accepted = (q.acceptedAnswers || []).map(a => String(a).toLowerCase().trim()).filter(Boolean);
-        const needsReview = q.type === "text" && accepted.length === 0;
-        return {
-          qid: q.id,
-          type: q.type,
-          userAnswer: ans?.answer ?? null,
-          correct: ans?.correct ?? false,
-          points: ans?.points ?? 0,
-          pointsMax: (q.pointsCorrect ?? 100) + (q.pointsSpeedBonus ?? 0),
-          needsReview,
-          reviewed: false,
-        };
-      });
+      // Reconstruir gradeDetail compatible con el formato asincrónico (sin diapositivas)
+      const gradeDetail = quiz.questions
+        .filter(q => q.type !== "slide")
+        .map((q) => {
+          // El índice real en quiz.questions para localizar la respuesta
+          const realIdx = quiz.questions.findIndex(qq => qq.id === q.id);
+          const ans = myAnswers.find(a => a.questionIdx === realIdx);
+          const accepted = (q.acceptedAnswers || []).map(a => String(a).toLowerCase().trim()).filter(Boolean);
+          const needsReview = q.type === "text" && accepted.length === 0;
+          return {
+            qid: q.id,
+            type: q.type,
+            userAnswer: ans?.answer ?? null,
+            correct: ans?.correct ?? false,
+            points: ans?.points ?? 0,
+            pointsMax: (q.pointsCorrect ?? 100) + (q.pointsSpeedBonus ?? 0),
+            needsReview,
+            reviewed: false,
+          };
+        });
 
       const resultData = {
         quizId: quiz.id,
@@ -1489,7 +1558,7 @@ function LiveSessionHost({ quizId, onExit }) {
         answers: {},  // No tenemos formato exacto como asincrónico, dejamos vacío
         gradeDetail,
         correct: correctCount,
-        total: quiz.questions.length,
+        total: quiz.questions.filter(q => q.type !== "slide").length,
         score: grade,
         percent: maxPoints > 0 ? Math.round((score / maxPoints) * 100) : 0,
         pointsEarned: score,
@@ -1547,6 +1616,16 @@ function LiveSessionHost({ quizId, onExit }) {
   ) : null;
 
   if (session.status === "playing") {
+    // Si el elemento actual es una diapositiva: pantalla especial sin cronómetro
+    if (currentQ && currentQ.type === "slide") {
+      return (
+        <>
+          <HostSlide session={session} quiz={quiz} currentQ={currentQ}
+            onNext={goNext} onFinish={finishNow}/>
+          {participantsModal}
+        </>
+      );
+    }
     return (
       <>
         <HostQuestion
@@ -2205,6 +2284,48 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   if (session.status === "playing") {
     const haveAnswered = answeredAtIdx === session.currentQuestionIdx;
     const colors = ["var(--tile-1)", "var(--tile-2)", "var(--tile-3)", "var(--tile-4)"];
+
+    // Si el elemento actual es una diapositiva, el estudiante la ve y espera al docente
+    if (currentQ && currentQ.type === "slide") {
+      return (
+        <div style={{
+          minHeight: "100vh",
+          background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+          padding: 16, color: "white",
+        }}>
+          <div style={{ maxWidth: 640, margin: "0 auto" }}>
+            <div style={{ opacity: 0.85, fontSize: 12, marginBottom: 12, textAlign: "center" }}>
+              📋 Diapositiva · esperando al profesor
+            </div>
+            <div className="qs-card" style={{ padding: 20, color: "var(--ink-900)" }}>
+              {currentQ.slideTitle && (
+                <h2 style={{ fontSize: 22, marginBottom: 12, fontFamily: "var(--font-display)" }}>
+                  {currentQ.slideTitle}
+                </h2>
+              )}
+              {currentQ.image && (
+                <div style={{ textAlign: "center", marginBottom: 12 }}>
+                  <img src={currentQ.image} alt=""
+                    style={{ maxWidth: "100%", maxHeight: 280, borderRadius: 10 }}/>
+                </div>
+              )}
+              {currentQ.video && youtubeId(currentQ.video) && (
+                <div style={{ marginBottom: 12, position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 10, overflow: "hidden" }}>
+                  <iframe src={`https://www.youtube.com/embed/${youtubeId(currentQ.video)}`} title="Video"
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
+                    allowFullScreen/>
+                </div>
+              )}
+              {currentQ.slideBody && (
+                <div style={{ fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
+                  {currentQ.slideBody}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
 
     if (haveAnswered) {
       return (

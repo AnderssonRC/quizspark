@@ -37,6 +37,8 @@ function gradeSubmission(quiz, answers) {
   const detail = [];
 
   for (const q of quiz.questions) {
+    // Las diapositivas no se cuentan en la nota ni en el total de preguntas
+    if (q.type === "slide") continue;
     total++;
     const userAnswer = answers[q.id];
     let isCorrect = false;
@@ -620,9 +622,12 @@ function StudentExam({ examCode }) {
   const totalQ = questionsOrder.length;
   const progress = ((currentIdx + 1) / totalQ) * 100;
   const userAnswer = answers[q.id];
-  const isAnswered = q.type === "checks" || q.type === "order"
-    ? Array.isArray(userAnswer) && userAnswer.length > 0
-    : userAnswer !== undefined && userAnswer !== "";
+  // Las diapositivas no tienen respuesta: se consideran "vistas" automáticamente
+  const isAnswered = q.type === "slide"
+    ? true
+    : (q.type === "checks" || q.type === "order"
+        ? Array.isArray(userAnswer) && userAnswer.length > 0
+        : userAnswer !== undefined && userAnswer !== "");
 
   return (
     <div style={{
@@ -656,8 +661,47 @@ function StudentExam({ examCode }) {
           }} />
         </div>
 
-        {/* Pregunta */}
+        {/* Pregunta o Diapositiva */}
         <div className="qs-card qs-fade-in" key={q.id} style={{ padding: 28, marginBottom: 16 }}>
+          {q.type === "slide" ? (
+            <>
+              <div style={{ display: "inline-block", padding: "4px 10px", borderRadius: 10, background: "var(--violet-100)", color: "var(--violet-700)", fontSize: 12, fontWeight: 700, marginBottom: 14 }}>
+                📋 Diapositiva
+              </div>
+              {q.slideTitle && (
+                <h2 style={{ fontSize: 24, marginBottom: 14, fontFamily: "var(--font-display)" }}>
+                  {q.slideTitle}
+                </h2>
+              )}
+              {q.image && (
+                <div style={{ textAlign: "center", marginBottom: 14 }}>
+                  <img src={q.image} alt=""
+                    style={{ maxWidth: "100%", maxHeight: 320, borderRadius: 10, border: "1px solid var(--ink-200)" }}/>
+                </div>
+              )}
+              {q.video && youtubeId(q.video) && (
+                <div style={{ marginBottom: 14, position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 10, overflow: "hidden" }}>
+                  <iframe src={`https://www.youtube.com/embed/${youtubeId(q.video)}`} title="Video"
+                    style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
+                    allowFullScreen/>
+                </div>
+              )}
+              {q.slideBody && (
+                <div style={{ fontSize: 15, lineHeight: 1.7, whiteSpace: "pre-wrap", color: "var(--ink-800)" }}>
+                  {q.slideBody}
+                </div>
+              )}
+              {!q.slideTitle && !q.slideBody && !q.image && !q.video && (
+                <p style={{ color: "var(--ink-400)", fontStyle: "italic", textAlign: "center" }}>
+                  Esta diapositiva está vacía.
+                </p>
+              )}
+              <div style={{ marginTop: 16, padding: 10, background: "var(--ink-50)", borderRadius: 8, fontSize: 12, color: "var(--ink-500)", textAlign: "center" }}>
+                ℹ️ Esta diapositiva no se califica. Pulsa "Siguiente" para continuar.
+              </div>
+            </>
+          ) : (
+            <>
           <h2 style={{ fontSize: 22, marginBottom: (q.image || q.video) ? 12 : 20, lineHeight: 1.4 }}>
             {q.text}
           </h2>
@@ -830,6 +874,8 @@ function StudentExam({ examCode }) {
               </div>
             );
           })()}
+            </>
+          )}
         </div>
 
         {/* Navegación */}

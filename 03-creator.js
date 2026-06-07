@@ -537,6 +537,8 @@ function Editor({ quizId, onBack, onLaunch }) {
       { id: "i1", text: "" }, { id: "i2", text: "" },
       { id: "i3", text: "" }, { id: "i4", text: "" },
     ]};
+    // ---- Diapositiva: solo informativa, no se califica, sin cronómetro ----
+    else if (type === "slide") q = { id, type: "slide", slideTitle: "", slideBody: "", image: "", video: "" };
     else q = { ...base, type: "text", acceptedAnswers: [], gradeMode: "live" };
     setQuiz(qz => ({ ...qz, questions: [...qz.questions, q] }));
     setActiveIdx(quiz.questions.length);
@@ -678,6 +680,73 @@ function Editor({ quizId, onBack, onLaunch }) {
         {/* Center: question canvas */}
         <main className="qs-editor-canvas">
           <div className="qs-card" style={{ padding: 28, maxWidth: 800, margin: "0 auto" }}>
+          {active.type === "slide" ? (
+            <>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <span className="qs-chip" style={{ background: "var(--violet-100)", color: "var(--violet-700)" }}>
+                  <I.eye size={12}/> Diapositiva (no se califica)
+                </span>
+              </div>
+              <input value={active.slideTitle || ""}
+                onChange={e => updateQuestion({ slideTitle: e.target.value })}
+                placeholder="Título de la diapositiva (opcional)"
+                style={{
+                  width: "100%", border: "2px dashed var(--ink-200)", borderRadius: 16,
+                  padding: 16, fontSize: 22, fontWeight: 800, fontFamily: "var(--font-display)",
+                  outline: "none", marginBottom: 12, background: "var(--ink-50)", color: "var(--ink-900)",
+                }}/>
+              <textarea value={active.slideBody || ""}
+                onChange={e => updateQuestion({ slideBody: e.target.value })}
+                placeholder="Contenido o explicación (opcional)..."
+                style={{
+                  width: "100%", border: "1px solid var(--ink-200)", borderRadius: 12,
+                  padding: 14, fontSize: 15, fontFamily: "inherit",
+                  resize: "vertical", outline: "none", minHeight: 120, marginBottom: 16,
+                  background: "white", color: "var(--ink-900)", lineHeight: 1.6,
+                }}/>
+              {/* Imagen */}
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 6 }}>🖼️ Imagen (opcional)</div>
+              <input className="qs-input"
+                placeholder="Enlace directo de la imagen (.jpg, .png, .webp...)"
+                value={active.image || ""}
+                onChange={e => updateQuestion({ image: e.target.value.trim() })}/>
+              {active.image && (
+                <div style={{ marginTop: 10 }}>
+                  <img src={active.image} alt="Vista previa"
+                    onError={(e) => { e.currentTarget.style.display = "none"; e.currentTarget.nextSibling.style.display = "block"; }}
+                    onLoad={(e) => { e.currentTarget.style.display = "block"; e.currentTarget.nextSibling.style.display = "none"; }}
+                    style={{ maxWidth: "100%", maxHeight: 220, borderRadius: 12, border: "1px solid var(--ink-200)", display: "block" }}/>
+                  <div style={{ display: "none", padding: 12, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
+                    ⚠️ No se pudo cargar la imagen. Verifica que el enlace sea directo y público.
+                  </div>
+                </div>
+              )}
+              {/* Video YouTube */}
+              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginTop: 16, marginBottom: 6 }}>▶️ Video de YouTube (opcional)</div>
+              <input className="qs-input"
+                placeholder="Pega el enlace de YouTube"
+                value={active.video || ""}
+                onChange={e => updateQuestion({ video: e.target.value.trim() })}/>
+              {active.video && (() => {
+                const vid = youtubeId(active.video);
+                return vid ? (
+                  <div style={{ marginTop: 10, position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 12, overflow: "hidden" }}>
+                    <iframe src={`https://www.youtube.com/embed/${vid}`} title="Vista previa"
+                      style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
+                      allowFullScreen/>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
+                    ⚠️ No reconozco ese enlace de YouTube.
+                  </div>
+                );
+              })()}
+              <div style={{ marginTop: 18, padding: 12, borderRadius: 10, background: "var(--violet-50)", color: "var(--violet-700)", fontSize: 12, lineHeight: 1.5 }}>
+                💡 La diapositiva se muestra a los estudiantes y tú avanzas cuando quieras. No tiene cronómetro ni se califica.
+              </div>
+            </>
+          ) : (
+            <>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
               <span className="qs-chip">
                 {(()=>{const all=[...QUESTION_TYPES,...SURVEY_TYPES];const t=all.find(t=>t.id===active.type)||all[0];const Tico=I[t.icon];return <><Tico size={12}/> {t.label}</>;})()}
@@ -970,6 +1039,8 @@ function Editor({ quizId, onBack, onLaunch }) {
                 </div>
               )}
             </div>
+            </>
+          )}
           </div>
         </main>
 
