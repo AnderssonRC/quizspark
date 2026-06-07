@@ -28,24 +28,29 @@ function AuthShell({ children }) {
     <div style={{
       minHeight: "100vh",
       background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
-      display: "grid", placeItems: "center", padding: 20
+      display: "flex", flexDirection: "column", alignItems: "center", padding: 20
     }}>
-      <div style={{
-        background: "var(--white)", padding: 40, borderRadius: 20,
-        boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
-        width: "100%", maxWidth: 440
-      }}>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ fontSize: 40, marginBottom: 8 }}>⚡</div>
-          <h1 style={{
-            fontSize: 28, fontFamily: "var(--font-display)",
-            color: "var(--violet-700)", marginBottom: 4
-          }}>QuizSpark</h1>
-          <p style={{ color: "var(--ink-500)", fontSize: 14 }}>
-            Plataforma educativa de quizzes
-          </p>
+      <div style={{ flex: 1, display: "grid", placeItems: "center", width: "100%" }}>
+        <div style={{
+          background: "var(--white)", padding: 40, borderRadius: 20,
+          boxShadow: "0 20px 60px rgba(0,0,0,0.3)",
+          width: "100%", maxWidth: 440
+        }}>
+          <div style={{ textAlign: "center", marginBottom: 24 }}>
+            <div style={{ fontSize: 40, marginBottom: 8 }}>⚡</div>
+            <h1 style={{
+              fontSize: 28, fontFamily: "var(--font-display)",
+              color: "var(--violet-700)", marginBottom: 4
+            }}>QuizSpark</h1>
+            <p style={{ color: "var(--ink-500)", fontSize: 14 }}>
+              Plataforma educativa de quizzes
+            </p>
+          </div>
+          {children}
         </div>
-        {children}
+      </div>
+      <div style={{ textAlign: "center", color: "rgba(255,255,255,0.85)", fontSize: 12, marginTop: 20, fontWeight: 500 }}>
+        Creado por: Andersson Cortes y Res Cogitas · 2026 · Hecho en Bogotá
       </div>
     </div>
   );

@@ -165,6 +165,27 @@ const SCALE_LABELS = [
 const tileColor = (idx) => ["var(--tile-1)", "var(--tile-2)", "var(--tile-3)", "var(--tile-4)"][idx % 4];
 const tileShape = (idx) => ["▲", "◆", "●", "■"][idx % 4];
 
+// Lista de temas disponibles (debe coincidir con las clases del CSS)
+const THEMES = [
+  { id: "default",  label: "Naranja vibrante", swatch: "#ff5722" },
+  { id: "coral",    label: "Coral suave",      swatch: "#f57258" },
+  { id: "sky",      label: "Azul cielo",       swatch: "#3b9bcc" },
+  { id: "sage",     label: "Verde salvia",     swatch: "#4f9d70" },
+  { id: "lavender", label: "Lavanda suave",    swatch: "#7c6dd0" },
+  { id: "peach",    label: "Durazno",          swatch: "#ef7d56" },
+];
+
+// Aplica un tema poniendo/quitando la clase en <body>.
+// Si id es "default" o desconocido, queda con el tema base (naranja vibrante).
+function applyTheme(id) {
+  const body = document.body;
+  if (!body) return;
+  // Quitar cualquier tema anterior
+  THEMES.forEach(t => { if (t.id !== "default") body.classList.remove("theme-" + t.id); });
+  // Aplicar el nuevo (si no es default)
+  if (id && id !== "default") body.classList.add("theme-" + id);
+}
+
 // Extrae el ID de un enlace de YouTube (varias formas: watch?v=, youtu.be/, embed/, shorts/)
 function youtubeId(url) {
   if (!url) return null;
@@ -181,9 +202,24 @@ function youtubeId(url) {
   return null;
 }
 
+// Footer global con autoría — discreto, gris claro
+function Footer() {
+  return (
+    <footer style={{
+      width: "100%", padding: "12px 20px", textAlign: "center",
+      background: "var(--ink-50)", borderTop: "1px solid var(--ink-200)",
+      color: "var(--ink-500)", fontSize: 12, fontWeight: 500,
+      letterSpacing: "0.01em",
+    }}>
+      Creado por: Andersson Cortes y Res Cogitas · 2026 · Hecho en Bogotá
+    </footer>
+  );
+}
+
 // Make any of these globals
 Object.assign(window, {
   I, MOCK_QUIZ, MOCK_PARTICIPANTS, MOCK_RESULTS,
   QUESTION_TYPES, SURVEY_TYPES, SCALE_LABELS, tileColor, tileShape, youtubeId,
+  THEMES, applyTheme, Footer,
   useState, useEffect, useRef, useMemo, useCallback,
 });

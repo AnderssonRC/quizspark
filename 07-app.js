@@ -45,10 +45,13 @@ function App() {
             setUserData(data);
             window.QS.currentUser = fbUser;
             window.QS.currentUserData = data;
+            // Aplicar el tema guardado del usuario
+            applyTheme(data.theme || "default");
           } else {
             await window.QS.auth.signOut();
             setUser(null);
             setUserData(null);
+            applyTheme("default");
           }
         } catch (err) {
           console.error("Error obteniendo perfil:", err);
@@ -58,6 +61,7 @@ function App() {
         setUserData(null);
         window.QS.currentUser = null;
         window.QS.currentUserData = null;
+        applyTheme("default");
       }
       setAuthChecking(false);
     });
@@ -131,7 +135,7 @@ function App() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: "var(--ink-50)" }}>
+    <div style={{ minHeight: "100vh", background: "var(--ink-50)", display: "flex", flexDirection: "column" }}>
       <TopNav
         active={view}
         onNav={handleNav}
@@ -141,26 +145,29 @@ function App() {
         onAdmin={userData?.role === "admin" ? () => setShowAdmin(true) : null}
       />
 
-      {view === "dashboard" && (
-        <Dashboard
-          onOpenEditor={(id) => { setEditingId(id); setView("editor"); }}
-          onLaunch={startLiveSession}
-          onResults={() => setView("results")}
-        />
-      )}
-      {view === "editor" && (
-        <Editor
-          quizId={editingId}
-          onBack={() => setView("dashboard")}
-          onLaunch={startLiveSession}
-        />
-      )}
-      {view === "results" && (
-        <window.QS.OnlineResultsPanel onBack={() => setView("dashboard")}/>
-      )}
-      {view === "library" && (
-        <LibraryView onBack={() => setView("dashboard")}/>
-      )}
+      <div style={{ flex: 1 }}>
+        {view === "dashboard" && (
+          <Dashboard
+            onOpenEditor={(id) => { setEditingId(id); setView("editor"); }}
+            onLaunch={startLiveSession}
+            onResults={() => setView("results")}
+          />
+        )}
+        {view === "editor" && (
+          <Editor
+            quizId={editingId}
+            onBack={() => setView("dashboard")}
+            onLaunch={startLiveSession}
+          />
+        )}
+        {view === "results" && (
+          <window.QS.OnlineResultsPanel onBack={() => setView("dashboard")}/>
+        )}
+        {view === "library" && (
+          <LibraryView onBack={() => setView("dashboard")}/>
+        )}
+      </div>
+      <Footer />
     </div>
   );
 }
