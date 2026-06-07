@@ -36,9 +36,25 @@ function gradeSubmission(quiz, answers) {
   let pointsMax = 0;
   const detail = [];
 
+  // En modo encuesta no se califica nada: solo se recogen respuestas
+  const isSurvey = quiz.mode === "survey";
+
   for (const q of quiz.questions) {
     // Las diapositivas no se cuentan en la nota ni en el total de preguntas
     if (q.type === "slide") continue;
+    // En encuesta tampoco se cuentan para nota, pero las registramos en detail
+    if (isSurvey) {
+      detail.push({
+        qid: q.id,
+        type: q.type,
+        userAnswer: answers[q.id] ?? null,
+        correct: false,
+        points: 0,
+        pointsMax: 0,
+        survey: true,
+      });
+      continue;
+    }
     total++;
     const userAnswer = answers[q.id];
     let isCorrect = false;

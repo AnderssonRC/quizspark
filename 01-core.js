@@ -153,6 +153,8 @@ const SURVEY_TYPES = [
   { id: "poll",      label: "Opciones",          icon: "bar",   desc: "Vota una opción; se muestra la distribución" },
   { id: "wordcloud", label: "Nube de palabras",  icon: "hash",  desc: "Respuesta libre; las más repetidas crecen" },
   { id: "scale",     label: "Escala de acuerdo", icon: "list",  desc: "De muy en desacuerdo a muy de acuerdo" },
+  { id: "text",      label: "Respuesta abierta", icon: "text",  desc: "Cada estudiante escribe su propia respuesta" },
+  { id: "slide",     label: "Diapositiva",       icon: "eye",   desc: "Pantalla informativa (no se responde)" },
 ];
 
 // Etiquetas por defecto para la escala de acuerdo (modo encuesta)
