@@ -350,6 +350,9 @@ function StudentExam({ examCode }) {
   const [answers, setAnswers] = useStateO({});
   const [startedAt, setStartedAt] = useStateO(null);
   const [result, setResult] = useStateO(null);
+  // Cronómetro por pregunta: cuándo arrancó la pregunta actual y cuánto queda
+  const [questionStartedAt, setQuestionStartedAt] = useStateO(null);
+  const [secondsLeft, setSecondsLeft] = useStateO(null);
 
   // Cargar quiz al montar
   useEffectO(() => {
@@ -408,9 +411,45 @@ function StudentExam({ examCode }) {
     }
   };
 
-  const handlePrev = () => {
-    if (currentIdx > 0) setCurrentIdx(currentIdx - 1);
-  };
+  // Cronómetro por pregunta (solo en preguntas, no en diapositivas)
+  // Cuando entra una pregunta nueva, registramos cuándo arrancó.
+  useEffectO(() => {
+    if (phase !== "exam") return;
+    const q = questionsOrder[currentIdx];
+    if (!q) return;
+    // Las diapositivas no tienen cronómetro
+    if (q.type === "slide") {
+      setQuestionStartedAt(null);
+      setSecondsLeft(null);
+      return;
+    }
+    setQuestionStartedAt(Date.now());
+    setSecondsLeft(q.timer || 20);
+  }, [phase, currentIdx]);
+
+  // Tick del cronómetro: cada segundo descontamos. Si llega a 0, avanzamos.
+  useEffectO(() => {
+    if (phase !== "exam") return;
+    if (questionStartedAt == null) return; // diapositiva: sin cronómetro
+    const q = questionsOrder[currentIdx];
+    if (!q) return;
+    const totalSec = q.timer || 20;
+    const interval = setInterval(() => {
+      const elapsed = (Date.now() - questionStartedAt) / 1000;
+      const left = Math.max(0, totalSec - elapsed);
+      setSecondsLeft(left);
+      if (left <= 0) {
+        clearInterval(interval);
+        // Se acabó el tiempo: avanzar (la respuesta queda como está, sin marcar)
+        if (currentIdx < questionsOrder.length - 1) {
+          setCurrentIdx(currentIdx + 1);
+        } else {
+          handleSubmit();
+        }
+      }
+    }, 250);
+    return () => clearInterval(interval);
+  }, [phase, currentIdx, questionStartedAt]);
 
   const handleSubmit = async () => {
     setPhase("submitting");
@@ -645,8 +684,20 @@ function StudentExam({ examCode }) {
           <div style={{ fontWeight: 600 }}>
             {studentName} · {studentCourse}
           </div>
-          <div style={{ fontSize: 14 }}>
-            Pregunta {currentIdx + 1} de {totalQ}
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            {q.type !== "slide" && secondsLeft != null && (
+              <div style={{
+                background: secondsLeft <= 5 ? "var(--red-500)" : "rgba(0,0,0,0.25)",
+                padding: "4px 12px", borderRadius: 10, fontWeight: 800, fontSize: 16,
+                fontFamily: "var(--font-display)", minWidth: 56, textAlign: "center",
+                transition: "background 0.3s",
+              }}>
+                ⏱ {Math.ceil(secondsLeft)}s
+              </div>
+            )}
+            <div style={{ fontSize: 14 }}>
+              Pregunta {currentIdx + 1} de {totalQ}
+            </div>
           </div>
         </div>
 
@@ -878,23 +929,14 @@ function StudentExam({ examCode }) {
           )}
         </div>
 
-        {/* Navegación */}
+        {/* Navegación — solo botón Siguiente (no se puede volver atrás) */}
         <div style={{ display: "flex", gap: 10 }}>
-          <button
-            onClick={handlePrev}
-            disabled={currentIdx === 0}
-            className="qs-btn qs-btn--lg"
-            style={{
-              flex: 1, background: "rgba(255,255,255,0.2)", color: "white",
-              opacity: currentIdx === 0 ? 0.5 : 1,
-            }}
-          >← Anterior</button>
           <button
             onClick={handleNext}
             disabled={!isAnswered}
             className="qs-btn qs-btn--lg"
             style={{
-              flex: 2, background: "var(--white)", color: "var(--violet-700)",
+              flex: 1, background: "var(--white)", color: "var(--violet-700)",
               fontWeight: 700, opacity: !isAnswered ? 0.5 : 1,
             }}
           >
