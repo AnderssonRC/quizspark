@@ -28,6 +28,7 @@ function App() {
   const [liveQuizId, setLiveQuizId] = useStateA(null);
   const [showAdmin, setShowAdmin] = useStateA(false);
   const [showJoinFromNav, setShowJoinFromNav] = useStateA(false);
+  const [unauthedJoin, setUnauthedJoin] = useStateA(false); // estudiante uniéndose desde el login
 
   // ---- Listener de sesión Firebase (solo si NO estamos en modo estudiante por URL) ----
   useEffectA(() => {
@@ -89,10 +90,39 @@ function App() {
   if (authChecking) return <window.QS.AuthLoading message="Verificando sesión..." />;
 
   if (!user) {
+    // Si el estudiante optó por unirse desde la pantalla de login
+    if (unauthedJoin) {
+      return <window.QS.StudentJoinLive onCancel={() => setUnauthedJoin(false)} />;
+    }
     if (authView === "register") {
       return <window.QS.RegisterScreen onSwitchToLogin={() => setAuthView("login")} />;
     }
-    return <window.QS.LoginScreen onSwitchToRegister={() => setAuthView("register")} />;
+    // Banner permanente arriba del login con la salida para estudiantes
+    return (
+      <div>
+        <div style={{
+          background: "linear-gradient(135deg, var(--violet-600), var(--violet-700))",
+          color: "white", padding: "14px 20px",
+          display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "center",
+          gap: 12, textAlign: "center", fontSize: 14,
+        }}>
+          <span style={{ fontWeight: 600 }}>
+            🎓 ¿Eres estudiante? No necesitas crear cuenta.
+          </span>
+          <button
+            onClick={() => setUnauthedJoin(true)}
+            className="qs-btn qs-btn--sm"
+            style={{
+              background: "white", color: "var(--violet-700)",
+              fontWeight: 700, border: 0,
+            }}
+          >
+            Unirme con un código →
+          </button>
+        </div>
+        <window.QS.LoginScreen onSwitchToRegister={() => setAuthView("register")} />
+      </div>
+    );
   }
 
   if (userData?.status === "pending") {
