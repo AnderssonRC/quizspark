@@ -16,14 +16,14 @@
   --ink-700: #334155;
   --ink-900: #0f172a;
 
-  --violet-50:  #fff4ed;
-  --violet-100: #ffe6d4;
-  --violet-200: #ffcfb0;
-  --violet-400: #ff8a5b;
-  --violet-500: #ff6a35;
-  --violet-600: #ff5722;
-  --violet-700: #e84a18;
-  --violet-900: #aa3a14;
+  --violet-50:  #f5f3ff;
+  --violet-100: #ede9fe;
+  --violet-200: #ddd6fe;
+  --violet-400: #a78bfa;
+  --violet-500: #8b5cf6;
+  --violet-600: #7c3aed;
+  --violet-700: #6d28d9;
+  --violet-900: #4c1d95;
 
   --emerald-400: #34d399;
   --emerald-500: #10b981;
@@ -49,72 +49,6 @@
   --shadow-tile: 0 6px 0 rgba(0,0,0,0.18), 0 12px 24px rgba(0,0,0,0.10);
 }
 
-/* ============================================================
-   Temas de color: cada uno sobreescribe las variables --violet-*
-   Se aplican poniendo la clase en el <body>: theme-coral, theme-sky, etc.
-   Si no hay ninguna clase, queda el naranja vibrante por defecto.
-   ============================================================ */
-
-/* Coral — naranja suave (menos intenso que el default) */
-body.theme-coral {
-  --violet-50:  #fff7f3;
-  --violet-100: #ffebe0;
-  --violet-200: #fed7c2;
-  --violet-400: #ffa07a;
-  --violet-500: #ff8866;
-  --violet-600: #f57258;
-  --violet-700: #d85e48;
-  --violet-900: #9c4434;
-}
-
-/* Sky — azul cielo claro */
-body.theme-sky {
-  --violet-50:  #f0f9ff;
-  --violet-100: #e0f2fe;
-  --violet-200: #bae6fd;
-  --violet-400: #7dd3fc;
-  --violet-500: #5fb4e0;
-  --violet-600: #3b9bcc;
-  --violet-700: #2982b3;
-  --violet-900: #1c5d80;
-}
-
-/* Sage — verde salvia/pastel */
-body.theme-sage {
-  --violet-50:  #f3faf6;
-  --violet-100: #e3f3e9;
-  --violet-200: #c4e4d1;
-  --violet-400: #86c9a1;
-  --violet-500: #6bb88a;
-  --violet-600: #4f9d70;
-  --violet-700: #3e8459;
-  --violet-900: #2a5d3e;
-}
-
-/* Lavender — lavanda suave */
-body.theme-lavender {
-  --violet-50:  #f6f4ff;
-  --violet-100: #ece8ff;
-  --violet-200: #d5ccff;
-  --violet-400: #a99cf0;
-  --violet-500: #9486e0;
-  --violet-600: #7c6dd0;
-  --violet-700: #6557b0;
-  --violet-900: #443a7a;
-}
-
-/* Peach — durazno cálido */
-body.theme-peach {
-  --violet-50:  #fff5ef;
-  --violet-100: #ffe8da;
-  --violet-200: #ffd2b8;
-  --violet-400: #ffab85;
-  --violet-500: #ff9670;
-  --violet-600: #ef7d56;
-  --violet-700: #d36a45;
-  --violet-900: #9a4a30;
-}
-
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
 body {
@@ -123,6 +57,7 @@ body {
   background: var(--ink-50);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: hidden;
 }
 h1, h2, h3, h4 { font-family: var(--font-display); margin: 0; }
 button { font-family: inherit; }
@@ -198,8 +133,114 @@ button { font-family: inherit; }
 .qs-shake { animation: qs-shake 0.4s ease both; }
 
 /* ============================================================
-   TopNav responsive: en celular ocultamos los enlaces principales
-   y el botón "Unirme a un quiz", y mostramos un ícono hamburguesa.
+   Editor responsivo — apila las 3 columnas en móvil
+   ============================================================ */
+
+/* Layout de 3 columnas del editor (escritorio) */
+.qs-editor-grid {
+  display: grid;
+  grid-template-columns: 260px 1fr 320px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* Barra superior del editor (escritorio) */
+.qs-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 24px;
+  background: var(--white);
+  border-bottom: 1px solid var(--ink-200);
+  gap: 12px;
+}
+.qs-editor-title {
+  font-size: 18px;
+  font-weight: 700;
+  font-family: var(--font-display);
+  border: 0; outline: 0; background: transparent;
+  padding: 6px 10px; border-radius: 8px;
+  min-width: 320px; color: var(--ink-900);
+}
+.qs-editor-actions { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+
+/* Columnas internas */
+.qs-editor-list {
+  background: var(--white);
+  border-right: 1px solid var(--ink-200);
+  padding: 16px;
+  overflow-y: auto;
+}
+.qs-editor-canvas {
+  background: var(--ink-50);
+  padding: 32px 40px;
+  overflow-y: auto;
+}
+.qs-editor-config {
+  background: var(--white);
+  border-left: 1px solid var(--ink-200);
+  padding: 20px;
+  overflow-y: auto;
+}
+
+/* ---- Móvil / tablet angosta: una sola columna apilada ---- */
+@media (max-width: 920px) {
+  .qs-editor-grid {
+    grid-template-columns: 1fr;
+    flex: none;
+    min-height: auto;
+  }
+  .qs-editor-list,
+  .qs-editor-config {
+    border-right: none;
+    border-left: none;
+    border-bottom: 1px solid var(--ink-200);
+  }
+  .qs-editor-canvas {
+    padding: 20px 16px;
+  }
+  /* La tarjeta del editor nunca debe exceder el ancho de pantalla */
+  .qs-editor-canvas > .qs-card {
+    max-width: 100% !important;
+    width: 100%;
+  }
+  /* Evita que cualquier hijo fuerce scroll horizontal */
+  .qs-editor-list,
+  .qs-editor-canvas,
+  .qs-editor-config { min-width: 0; max-width: 100%; overflow-x: hidden; }
+  /* Opciones de respuesta en una sola columna en móvil */
+  .qs-options-grid { grid-template-columns: 1fr !important; }
+  /* El editor deja de tener altura fija para poder hacer scroll natural */
+  .qs-editor-root {
+    height: auto !important;
+    min-height: calc(100vh - 73px);
+  }
+  /* La barra superior envuelve y el título ocupa todo el ancho */
+  .qs-editor-header {
+    flex-wrap: wrap;
+    padding: 12px 16px;
+  }
+  .qs-editor-title {
+    min-width: 0;
+    width: 100%;
+    flex: 1 1 100%;
+  }
+  .qs-editor-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+  .qs-editor-actions .qs-btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* Pantallas muy estrechas: la lista de preguntas no ocupa demasiado alto */
+@media (max-width: 920px) {
+  .qs-editor-list { max-height: 40vh; }
+}
+
+/* ============================================================
+   TopNav responsivo (compatibilidad con clases existentes)
    ============================================================ */
 .qs-nav-desktop { display: flex; }
 .qs-nav-hamburger { display: none; }
@@ -209,7 +250,6 @@ button { font-family: inherit; }
   .qs-nav-desktop { display: none !important; }
   .qs-nav-hamburger { display: inline-flex !important; }
   .qs-join-desktop { display: none !important; }
-  /* El header se compacta en celular */
   header.qs-topnav { padding: 12px 16px !important; }
   header.qs-topnav .qs-topnav-logo { font-size: 18px !important; }
 }
