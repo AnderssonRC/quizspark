@@ -14,6 +14,23 @@
 const { useState: useStateL, useEffect: useEffectL, useRef: useRefL } = React;
 
 // ---------- Helpers ----------
+
+// ---- Tema de color por quiz (elegido en la carátula del editor) ----
+// Convierte el color de la carátula en el gradiente de fondo que ven
+// estudiantes y proyección durante el quiz. Si no hay color: violeta.
+const QUIZ_BG_COLORS = {
+  "var(--violet-500)":  ["#7c3aed", "#4c1d95"],
+  "var(--emerald-500)": ["#059669", "#064e3b"],
+  "var(--sky-500)":     ["#0284c7", "#0c4a6e"],
+  "var(--amber-500)":   ["#d97706", "#78350f"],
+  "var(--pink-500)":    ["#db2777", "#831843"],
+  "var(--red-500)":     ["#dc2626", "#7f1d1d"],
+};
+function quizBg(color) {
+  const pair = QUIZ_BG_COLORS[color] || QUIZ_BG_COLORS["var(--violet-500)"];
+  return `linear-gradient(135deg, ${pair[0]}, ${pair[1]})`;
+}
+
 function generateRoomCode() {
   // 6 dígitos numéricos, fácil de dictar
   let code = "";
@@ -163,7 +180,7 @@ function ProjectionView({ session, quiz, joinUrl, participants, onClose }) {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      background: quizBg(quiz?.color),
       color: "white", padding: "32px 24px",
       display: "flex", flexDirection: "column", alignItems: "center",
     }}>
@@ -247,7 +264,7 @@ function HostLobby({ session, quiz, onStart, onCancel, onKick }) {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      background: quizBg(quiz?.color),
       padding: 24,
     }}>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -418,7 +435,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      background: quizBg(quiz?.color),
       padding: 24, color: "white",
     }}>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
@@ -652,7 +669,7 @@ function HostSlide({ session, quiz, currentQ, onNext, onFinish }) {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      background: quizBg(quiz?.color),
       padding: 24, color: "white",
     }}>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
@@ -764,7 +781,7 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
   const shell = (inner) => (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      background: quizBg(quiz?.color),
       padding: 24, color: "white",
     }}>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
@@ -1037,7 +1054,7 @@ function HostFinal({ session, quiz, onFinish }) {
     return (
       <div style={{
         minHeight: "100vh",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+        background: quizBg(quiz?.color),
         padding: 24, color: "white",
       }}>
         <div style={{ maxWidth: 700, margin: "0 auto" }}>
@@ -1076,7 +1093,7 @@ function HostFinal({ session, quiz, onFinish }) {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      background: quizBg(quiz?.color),
       padding: 24, color: "white",
     }}>
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
@@ -1595,7 +1612,7 @@ function LiveSessionHost({ quizId, onExit }) {
   if (loading || !session || !quiz) {
     return (
       <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", color: "white" }}>
+        background: quizBg(quiz?.color), color: "white" }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 40 }}>⚡</div>
           <p>Creando sala...</p>
@@ -1851,7 +1868,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      background: quizBg(quiz?.color),
       display: "grid", placeItems: "center", padding: 20,
     }}>
       <div className="qs-card" style={{ padding: 32, maxWidth: 440, width: "100%" }}>
@@ -2087,7 +2104,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   if (!session) {
     return (
       <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", color: "white" }}>
+        background: quizBg(quiz?.color), color: "white" }}>
         <p>Conectando...</p>
       </div>
     );
@@ -2096,7 +2113,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   if (session.status === "cancelled") {
     return (
       <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", color: "white", padding: 20 }}>
+        background: quizBg(quiz?.color), color: "white", padding: 20 }}>
         <div className="qs-card" style={{ padding: 24, textAlign: "center", color: "var(--ink-900)" }}>
           <p style={{ fontSize: 32 }}>🚫</p>
           <p>El profesor canceló la sala.</p>
@@ -2112,7 +2129,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   if (wasKicked) {
     return (
       <div style={{ minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", color: "white", padding: 20 }}>
+        background: quizBg(quiz?.color), color: "white", padding: 20 }}>
         <div className="qs-card" style={{ padding: 24, textAlign: "center", color: "var(--ink-900)", maxWidth: 380 }}>
           <p style={{ fontSize: 40 }}>👋</p>
           <h2 style={{ fontSize: 20, marginBottom: 8 }}>Saliste de la sala</h2>
@@ -2128,7 +2145,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     return (
       <div style={{
         minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", color: "white", padding: 20,
+        background: quizBg(quiz?.color), color: "white", padding: 20,
       }}>
         <div className="qs-card" style={{ padding: 32, textAlign: "center", maxWidth: 400, color: "var(--ink-900)" }}>
           <div style={{ fontSize: 48, marginBottom: 12 }} className="qs-bob">🎉</div>
@@ -2163,7 +2180,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     return (
       <div style={{
         minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", padding: 20,
+        background: quizBg(quiz?.color), padding: 20,
       }}>
         <div className="qs-card" style={{ padding: 28, textAlign: "center", maxWidth: 440, width: "100%" }}>
           <div style={{ fontSize: 48, marginBottom: 8 }}>
@@ -2228,7 +2245,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     return (
       <div style={{
         minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", padding: 20,
+        background: quizBg(quiz?.color), padding: 20,
       }}>
         <div className="qs-card" style={{ padding: 28, textAlign: "center", maxWidth: 420, width: "100%" }}>
           {reveal.noAnswer ? (
@@ -2318,7 +2335,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
       return (
         <div style={{
           minHeight: "100vh",
-          background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+          background: quizBg(quiz?.color),
           padding: 16, color: "white",
         }}>
           <div style={{ maxWidth: 640, margin: "0 auto" }}>
@@ -2359,7 +2376,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
       return (
         <div style={{
           minHeight: "100vh", display: "grid", placeItems: "center",
-          background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", padding: 20,
+          background: quizBg(quiz?.color), padding: 20,
         }}>
           <div className="qs-card" style={{ padding: 32, textAlign: "center", maxWidth: 380 }}>
             <div style={{ fontSize: 56, marginBottom: 12 }} className="qs-bob">⏳</div>
@@ -2383,7 +2400,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     return (
       <div style={{
         minHeight: "100vh",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+        background: quizBg(quiz?.color),
         padding: 16, paddingBottom: 24,
       }}>
         <div style={{ maxWidth: 600, margin: "0 auto" }}>

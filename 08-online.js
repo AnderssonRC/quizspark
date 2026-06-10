@@ -9,6 +9,23 @@
 const { useState: useStateO, useEffect: useEffectO } = React;
 
 // ---------- Helpers ----------
+
+// ---- Tema de color por quiz (elegido en la carátula del editor) ----
+// Convierte el color de la carátula en el gradiente de fondo que ven
+// estudiantes y proyección durante el quiz. Si no hay color: violeta.
+const QUIZ_BG_COLORS = {
+  "var(--violet-500)":  ["#7c3aed", "#4c1d95"],
+  "var(--emerald-500)": ["#059669", "#064e3b"],
+  "var(--sky-500)":     ["#0284c7", "#0c4a6e"],
+  "var(--amber-500)":   ["#d97706", "#78350f"],
+  "var(--pink-500)":    ["#db2777", "#831843"],
+  "var(--red-500)":     ["#dc2626", "#7f1d1d"],
+};
+function quizBg(color) {
+  const pair = QUIZ_BG_COLORS[color] || QUIZ_BG_COLORS["var(--violet-500)"];
+  return `linear-gradient(135deg, ${pair[0]}, ${pair[1]})`;
+}
+
 function generateShortCode() {
   // Código de 6 caracteres alfanuméricos en mayúsculas
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sin O, 0, I, 1 para evitar confusión
@@ -508,7 +525,7 @@ function StudentExam({ examCode }) {
     return (
       <div style={{
         minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", color: "white",
+        background: quizBg(quiz?.color), color: "white",
       }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 40 }}>⚡</div>
@@ -522,7 +539,7 @@ function StudentExam({ examCode }) {
     return (
       <div style={{
         minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", padding: 20,
+        background: quizBg(quiz?.color), padding: 20,
       }}>
         <div className="qs-card" style={{ padding: 32, maxWidth: 440, textAlign: "center" }}>
           <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
@@ -540,7 +557,7 @@ function StudentExam({ examCode }) {
     return (
       <div style={{
         minHeight: "100vh",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+        background: quizBg(quiz?.color),
         display: "grid", placeItems: "center", padding: 20,
       }}>
         <div className="qs-card" style={{ padding: 32, maxWidth: 460, width: "100%" }}>
@@ -604,7 +621,7 @@ function StudentExam({ examCode }) {
     return (
       <div style={{
         minHeight: "100vh", display: "grid", placeItems: "center",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))", color: "white",
+        background: quizBg(quiz?.color), color: "white",
       }}>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 40 }}>📤</div>
@@ -619,7 +636,7 @@ function StudentExam({ examCode }) {
     return (
       <div style={{
         minHeight: "100vh",
-        background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+        background: quizBg(quiz?.color),
         display: "grid", placeItems: "center", padding: 20,
       }}>
         <div className="qs-card" style={{ padding: 32, maxWidth: 460, width: "100%", textAlign: "center" }}>
@@ -688,7 +705,7 @@ function StudentExam({ examCode }) {
   return (
     <div style={{
       minHeight: "100vh",
-      background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
+      background: quizBg(quiz?.color),
       padding: 20, paddingBottom: 100,
     }}>
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
