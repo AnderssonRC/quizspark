@@ -453,7 +453,8 @@ function StudentExam({ examCode }) {
     const interval = setInterval(() => {
       const elapsed = (Date.now() - questionStartedAt) / 1000;
       const left = Math.max(0, totalSec - elapsed);
-      setSecondsLeft(left);
+      // Solo re-renderizar cuando cambia el segundo visible
+      setSecondsLeft(prev => (prev != null && Math.ceil(left) === Math.ceil(prev) ? prev : left));
       if (left <= 0) {
         clearInterval(interval);
         // Se acabó el tiempo: avanzar (la respuesta queda como está, sin marcar)
