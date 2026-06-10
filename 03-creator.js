@@ -771,7 +771,8 @@ function Editor({ quizId, onBack, onLaunch }) {
                   }}>{i + 1}</div>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-900)",
-                      overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical", wordBreak: "break-word", lineHeight: 1.35 }}>
                       {q.text || <span style={{ color: "var(--ink-400)", fontStyle: "italic" }}>Sin título</span>}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2,
@@ -908,15 +909,129 @@ function Editor({ quizId, onBack, onLaunch }) {
               </span>
             </div>
 
-            <textarea value={active.text}
+            {/* Accesos rápidos: Multimedia y Corrección siempre a la vista */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+              <button onClick={() => { setShowMedia(v => !v); setShowCorrection(false); }}
+                className="qs-btn qs-btn--sm"
+                style={{
+                  background: showMedia ? "var(--violet-600)" : ((active.image || active.video) ? "var(--violet-100)" : "var(--ink-100)"),
+                  color: showMedia ? "#fff" : ((active.image || active.video) ? "var(--violet-700)" : "var(--ink-700)"),
+                  border: "1px solid " + (showMedia ? "var(--violet-600)" : "var(--ink-200)"),
+                }}>
+                🖼️ Multimedia{(active.image || active.video) ? " ✓" : ""}
+              </button>
+              <button onClick={() => { setShowCorrection(v => !v); setShowMedia(false); }}
+                className="qs-btn qs-btn--sm"
+                style={{
+                  background: showCorrection ? "var(--violet-600)" : (active.feedback ? "var(--violet-100)" : "var(--ink-100)"),
+                  color: showCorrection ? "#fff" : (active.feedback ? "var(--violet-700)" : "var(--ink-700)"),
+                  border: "1px solid " + (showCorrection ? "var(--violet-600)" : "var(--ink-200)"),
+                }}>
+                💬 Corrección{active.feedback ? " ✓" : ""}
+              </button>
+            </div>
+
+            {/* Panel: MULTIMEDIA (los enlaces; la vista previa va junto a la pregunta) */}
+            {showMedia && (
+              <div className="qs-fade-in" style={{
+                border: "1px solid var(--violet-200)", background: "var(--violet-50)",
+                borderRadius: 14, padding: 14, marginBottom: 16,
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 6 }}>🖼️ Imagen (enlace directo)</div>
+                <input className="qs-input"
+                  placeholder="Enlace directo de la imagen (.jpg, .png, .webp...)"
+                  value={active.image || ""}
+                  onChange={e => updateQuestion({ image: e.target.value.trim() })}/>
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginTop: 14, marginBottom: 6 }}>▶️ Video de YouTube</div>
+                <input className="qs-input"
+                  placeholder="Pega el enlace de YouTube (https://www.youtube.com/watch?v=...)"
+                  value={active.video || ""}
+                  onChange={e => updateQuestion({ video: e.target.value.trim() })}/>
+                {active.video && !youtubeId(active.video) && (
+                  <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
+                    ⚠️ No reconozco ese enlace de YouTube. Debe ser como https://www.youtube.com/watch?v=XXXX o https://youtu.be/XXXX
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 8 }}>
+                  La vista previa aparece arriba, junto a la pregunta — tal como la verán los estudiantes.
+                </div>
+              </div>
+            )}
+
+            {/* Panel: CORRECCIÓN (modo de calificación + retroalimentación) */}
+            {showCorrection && (
+              <div className="qs-fade-in" style={{
+                border: "1px solid var(--violet-200)", background: "var(--violet-50)",
+                borderRadius: 14, padding: 14, marginBottom: 16,
+              }}>
+                {active.type === "text" && quiz.mode !== "survey" && (
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 8 }}>
+                      ¿Cómo calificar esta respuesta abierta?
+                    </div>
+                    <div style={{ display: "grid", gap: 8 }}>
+                      {[
+                        { id: "live", title: "✍️ Calificar en vivo", desc: "Marcas correcto/parcial/incorrecto a cada estudiante antes de pasar." },
+                        { id: "end",  title: "📋 Solo recoger respuestas", desc: "No se asigna nota automática; solo verás las respuestas." },
+                      ].map(opt => {
+                        const on = (active.gradeMode || "live") === opt.id;
+                        return (
+                          <button key={opt.id} onClick={() => updateQuestion({ gradeMode: opt.id })}
+                            style={{
+                              textAlign: "left", padding: "10px 14px", borderRadius: 12,
+                              border: on ? "2px solid var(--violet-500)" : "1px solid var(--ink-200)",
+                              background: on ? "var(--violet-100)" : "var(--white)", cursor: "pointer",
+                            }}>
+                            <div style={{ fontWeight: 700, fontSize: 14, color: on ? "var(--violet-700)" : "var(--ink-900)" }}>{opt.title}</div>
+                            <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 2 }}>{opt.desc}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 6 }}>💬 Retroalimentación</div>
+                <textarea value={active.feedback || ""}
+                  onChange={e => updateQuestion({ feedback: e.target.value })}
+                  placeholder="Explica por qué esta es la respuesta. Se mostrará al estudiante al revelar."
+                  style={{ width: "100%", border: "1px solid var(--ink-200)", borderRadius: 10, padding: "10px 14px", fontSize: 14, fontFamily: "inherit", resize: "vertical", outline: "none", minHeight: 60, color: "var(--ink-900)", background: "var(--white)" }}/>
+                <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 6 }}>
+                  Si lo dejas vacío, no se muestra nada.
+                </div>
+              </div>
+            )}
+
+            <textarea value={active.text} key={active.id}
               onChange={e => updateQuestion({ text: e.target.value })}
+              ref={el => { if (el) { el.style.height = "auto"; el.style.height = Math.max(80, el.scrollHeight) + "px"; } }}
+              onInput={e => { e.target.style.height = "auto"; e.target.style.height = Math.max(80, e.target.scrollHeight) + "px"; }}
               placeholder="Escribe tu pregunta aquí..."
               style={{
                 width: "100%", border: "2px dashed var(--ink-200)", borderRadius: 16,
                 padding: 20, fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)",
                 resize: "none", outline: "none", minHeight: 80, marginBottom: 16,
-                background: "var(--ink-50)", color: "var(--ink-900)",
+                background: "var(--ink-50)", color: "var(--ink-900)", overflow: "hidden",
               }}/>
+
+            {/* Vista previa de multimedia, junto a la pregunta (como la verán los estudiantes) */}
+            {active.image && (
+              <div style={{ marginBottom: 16 }}>
+                <img src={active.image} alt="Imagen de la pregunta"
+                  onError={(e) => { e.currentTarget.style.display = "none"; e.currentTarget.nextSibling.style.display = "block"; }}
+                  onLoad={(e) => { e.currentTarget.style.display = "block"; e.currentTarget.nextSibling.style.display = "none"; }}
+                  style={{ maxWidth: "100%", maxHeight: 280, borderRadius: 14, border: "1px solid var(--ink-200)", display: "block", margin: "0 auto", background: "var(--white)" }}/>
+                <div style={{ display: "none", padding: 12, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
+                  ⚠️ No se pudo cargar la imagen. Verifica que el enlace sea directo y público.
+                </div>
+              </div>
+            )}
+            {active.video && youtubeId(active.video) && (
+              <div style={{ marginBottom: 16, position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 14, overflow: "hidden" }}>
+                <iframe src={`https://www.youtube.com/embed/${youtubeId(active.video)}`} title="Video de la pregunta"
+                  style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
+                  allowFullScreen/>
+              </div>
+            )}
 
             {/* Options */}
             {active.type === "wordcloud" ? (
@@ -1028,12 +1143,16 @@ function Editor({ quizId, onBack, onLaunch }) {
                     {/* La marca de "correcta" solo en modo quiz; en encuesta no hay correcta */}
                     {quiz.mode !== "survey" && (
                       <button onClick={() => updateOption(o.id, { correct: !o.correct })}
-                        title={o.correct ? "Correcta" : "Marcar correcta"}
+                        title={o.correct ? "Correcta ✓ (clic para desmarcar)" : "Marcar como correcta"}
                         style={{
-                          width: 32, height: 32, borderRadius: "50%",
-                          background: o.correct ? "#fff" : "rgba(255,255,255,.2)",
-                          color: o.correct ? "var(--emerald-600)" : "#fff",
+                          width: 34, height: 34, borderRadius: "50%", cursor: "pointer",
+                          border: o.correct ? "2px solid #fff" : "2px dashed rgba(255,255,255,.65)",
+                          background: o.correct ? "#fff" : "transparent",
+                          color: o.correct ? "var(--emerald-600)" : "rgba(255,255,255,.55)",
                           display: "grid", placeItems: "center", flexShrink: 0,
+                          boxShadow: o.correct ? "0 2px 8px rgba(0,0,0,.28)" : "none",
+                          transform: o.correct ? "scale(1.06)" : "scale(1)",
+                          transition: "transform .12s ease, background .15s ease, border .15s ease",
                         }}>
                         <I.check size={18} sw={3}/>
                       </button>
@@ -1087,106 +1206,6 @@ function Editor({ quizId, onBack, onLaunch }) {
             </div>
             )}
 
-            {/* === Panel desplegable: MULTIMEDIA (imagen + video) === */}
-            <div style={{ marginTop: 12 }}>
-              <button onClick={() => setShowMedia(v => !v)}
-                className="qs-btn qs-btn--ghost qs-btn--sm"
-                style={{ width: "100%", justifyContent: "space-between" }}>
-                <span>🖼️ Multimedia {(active.image || active.video) ? "✓" : "(opcional)"}</span>
-                <span>{showMedia ? "▲" : "▼"}</span>
-              </button>
-              {showMedia && (
-                <div style={{ padding: "14px 4px 4px" }}>
-                  {/* Imagen */}
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 6 }}>🖼️ Imagen (enlace directo)</div>
-                  <input className="qs-input"
-                    placeholder="Enlace directo de la imagen (.jpg, .png, .webp...)"
-                    value={active.image || ""}
-                    onChange={e => updateQuestion({ image: e.target.value.trim() })}/>
-                  {active.image && (
-                    <div style={{ marginTop: 10 }}>
-                      <img src={active.image} alt="Vista previa"
-                        onError={(e) => { e.currentTarget.style.display = "none"; e.currentTarget.nextSibling.style.display = "block"; }}
-                        onLoad={(e) => { e.currentTarget.style.display = "block"; e.currentTarget.nextSibling.style.display = "none"; }}
-                        style={{ maxWidth: "100%", maxHeight: 200, borderRadius: 12, border: "1px solid var(--ink-200)", display: "block" }}/>
-                      <div style={{ display: "none", padding: 12, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
-                        ⚠️ No se pudo cargar la imagen. Verifica que el enlace sea directo y público.
-                      </div>
-                    </div>
-                  )}
-                  {/* Video YouTube */}
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginTop: 16, marginBottom: 6 }}>▶️ Video de YouTube</div>
-                  <input className="qs-input"
-                    placeholder="Pega el enlace de YouTube (https://www.youtube.com/watch?v=...)"
-                    value={active.video || ""}
-                    onChange={e => updateQuestion({ video: e.target.value.trim() })}/>
-                  {active.video && (() => {
-                    const vid = youtubeId(active.video);
-                    return vid ? (
-                      <div style={{ marginTop: 10, position: "relative", paddingBottom: "56.25%", height: 0, borderRadius: 12, overflow: "hidden" }}>
-                        <iframe src={`https://www.youtube.com/embed/${vid}`} title="Vista previa"
-                          style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }}
-                          allowFullScreen/>
-                      </div>
-                    ) : (
-                      <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
-                        ⚠️ No reconozco ese enlace de YouTube. Debe ser como https://www.youtube.com/watch?v=XXXX o https://youtu.be/XXXX
-                      </div>
-                    );
-                  })()}
-                </div>
-              )}
-            </div>
-
-            {/* === Panel desplegable: CORRECCIÓN (retro + modo de calificación) === */}
-            <div style={{ marginTop: 8 }}>
-              <button onClick={() => setShowCorrection(v => !v)}
-                className="qs-btn qs-btn--ghost qs-btn--sm"
-                style={{ width: "100%", justifyContent: "space-between" }}>
-                <span>💬 Corrección y retroalimentación {active.feedback ? "✓" : "(opcional)"}</span>
-                <span>{showCorrection ? "▲" : "▼"}</span>
-              </button>
-              {showCorrection && (
-                <div style={{ padding: "14px 4px 4px" }}>
-                  {/* Modo de calificación: solo para respuesta abierta en modo quiz */}
-                  {active.type === "text" && quiz.mode !== "survey" && (
-                    <div style={{ marginBottom: 16 }}>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 8 }}>
-                        ¿Cómo calificar esta respuesta abierta?
-                      </div>
-                      <div style={{ display: "grid", gap: 8 }}>
-                        {[
-                          { id: "live", title: "✍️ Calificar en vivo", desc: "Marcas correcto/parcial/incorrecto a cada estudiante antes de pasar." },
-                          { id: "end",  title: "📋 Solo recoger respuestas", desc: "No se asigna nota automática; solo verás las respuestas." },
-                        ].map(opt => {
-                          const on = (active.gradeMode || "live") === opt.id;
-                          return (
-                            <button key={opt.id} onClick={() => updateQuestion({ gradeMode: opt.id })}
-                              style={{
-                                textAlign: "left", padding: "10px 14px", borderRadius: 12,
-                                border: on ? "2px solid var(--violet-500)" : "1px solid var(--ink-200)",
-                                background: on ? "var(--violet-50)" : "var(--white)", cursor: "pointer",
-                              }}>
-                              <div style={{ fontWeight: 700, fontSize: 14, color: on ? "var(--violet-700)" : "var(--ink-900)" }}>{opt.title}</div>
-                              <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 2 }}>{opt.desc}</div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {/* Retroalimentación */}
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 6 }}>💬 Retroalimentación</div>
-                  <textarea value={active.feedback || ""}
-                    onChange={e => updateQuestion({ feedback: e.target.value })}
-                    placeholder="Explica por qué esta es la respuesta. Se mostrará al estudiante al revelar."
-                    style={{ width: "100%", border: "1px solid var(--ink-200)", borderRadius: 10, padding: "10px 14px", fontSize: 14, fontFamily: "inherit", resize: "vertical", outline: "none", minHeight: 60, color: "var(--ink-900)" }}/>
-                  <div style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 6 }}>
-                    Si lo dejas vacío, no se muestra nada.
-                  </div>
-                </div>
-              )}
-            </div>
             </>
           )}
           </div>
