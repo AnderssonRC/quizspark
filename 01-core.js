@@ -205,15 +205,72 @@ function youtubeId(url) {
 
 // Footer global con autoría — discreto, gris claro
 function Footer() {
+  const [showAbout, setShowAbout] = useState(false);
   return (
-    <footer style={{
-      width: "100%", padding: "12px 20px", textAlign: "center",
-      background: "var(--ink-50)", borderTop: "1px solid var(--ink-200)",
-      color: "var(--ink-500)", fontSize: 12, fontWeight: 500,
-      letterSpacing: "0.01em",
-    }}>
-      Creado por: Andersson Cortes y Res Cogitas · 2026 · Hecho en Bogotá
-    </footer>
+    <>
+      <footer style={{
+        width: "100%", padding: "12px 20px", textAlign: "center",
+        background: "var(--ink-50)", borderTop: "1px solid var(--ink-200)",
+        color: "var(--ink-500)", fontSize: 12, fontWeight: 500,
+        letterSpacing: "0.01em",
+      }}>
+        <button onClick={() => setShowAbout(true)} style={{
+          background: "none", border: 0, padding: 0, cursor: "pointer",
+          color: "var(--ink-500)", fontSize: 12, fontWeight: 500,
+          fontFamily: "inherit", letterSpacing: "0.01em",
+          textDecoration: "underline", textDecorationStyle: "dotted",
+          textUnderlineOffset: 3,
+        }}
+          title="Conoce Res Cogitas">
+          Creado por: Andersson Cortes y Res Cogitas · 2026 · Hecho en Bogotá
+        </button>
+      </footer>
+
+      {showAbout && (
+        <div onClick={() => setShowAbout(false)} style={{
+          position: "fixed", inset: 0, background: "rgba(15,23,42,.55)",
+          zIndex: 1000, display: "grid", placeItems: "center", padding: 16,
+        }}>
+          <div onClick={e => e.stopPropagation()} className="qs-card qs-pop-in" style={{
+            maxWidth: 560, width: "100%", padding: "32px 28px",
+            maxHeight: "90vh", overflowY: "auto", textAlign: "center",
+          }}>
+            {/* Logos */}
+            <div style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              gap: 20, flexWrap: "wrap", marginBottom: 20,
+            }}>
+              <img src="logo-a-cogitas.png" alt="Monograma Res Cogitas"
+                style={{ height: 110, width: "auto" }}/>
+              <img src="logo-res-cogitas.png" alt="Res Cogitas"
+                style={{ maxWidth: 280, width: "60%", height: "auto" }}/>
+            </div>
+
+            <p style={{
+              fontSize: 15, lineHeight: 1.75, color: "var(--ink-700)",
+              textAlign: "left", margin: "0 0 16px",
+            }}>
+              <strong>Res Cogitas</strong> es un proyecto que busca reivindicar el arte
+              creador de los docentes, pues son artesanos en su enseñar. Por esa razón,
+              y sin descanso, se busca crear herramientas digitales, físicas y epistémicas
+              que permitan al docente reivindicarse en su hacer, mostrándose como un
+              sabedor, autorizado a ejercer bajo su razón intelectual y sus años de
+              experiencia, pues nadie más que él sabe lo complejo del Arte de Enseñar...
+            </p>
+            <p style={{
+              fontSize: 14, fontStyle: "italic", color: "var(--ink-500)",
+              textAlign: "right", margin: "0 0 24px",
+            }}>
+              Att: Andersson Cortes
+            </p>
+
+            <button onClick={() => setShowAbout(false)} className="qs-btn qs-btn--primary">
+              Cerrar
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
