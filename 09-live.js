@@ -1696,9 +1696,6 @@ function StudentJoinLive({ initialCode, onCancel }) {
       ]);
       if (gaveUp || !doc) return false;
       if (!doc.exists) { clearLiveSession(roomCode); return false; }
-    try {
-      const doc = await window.QS.db.collection("liveSessions").doc(saved.sessionId).get();
-      if (!doc.exists) { clearLiveSession(roomCode); return false; }
       const sessionData = { id: doc.id, ...doc.data() };
       // La sala debe seguir viva y el participante debe seguir registrado
       if (sessionData.status === "cancelled" || sessionData.status === "finished") {
@@ -1709,7 +1706,6 @@ function StudentJoinLive({ initialCode, onCancel }) {
         clearLiveSession(roomCode);
         return false;
       }
-      // Cargar el quiz para entregárselo a StudentLive
       // Cargar el quiz para entregárselo a StudentLive (también con timeout)
       const quizDoc = await Promise.race([
         window.QS.db.collection("quizzes").doc(sessionData.quizId).get(),
