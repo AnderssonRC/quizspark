@@ -221,8 +221,8 @@ function Footer() {
           textDecoration: "underline", textDecorationStyle: "dotted",
           textUnderlineOffset: 3,
         }}
-          title="Conoce Res Cogitas">
-          Creado por: Andersson Cortes y Res Cogitas · 2026 · Hecho en Bogotá
+          title="Conoce Res Cogitans">
+          Creado por: Andersson Cortes y Res Cogitans · 2026 · Hecho en Bogotá
         </button>
       </footer>
 
@@ -250,18 +250,18 @@ function Footer() {
               fontSize: 15, lineHeight: 1.75, color: "var(--ink-700)",
               textAlign: "left", margin: "0 0 16px",
             }}>
-              <strong>Res Cogitas</strong> es un proyecto que busca reivindicar el arte
+              <strong>Res Cogitans</strong> es un proyecto que busca reivindicar el arte
               creador de los docentes, pues son artesanos en su enseñar. Por esa razón,
               y sin descanso, se busca crear herramientas digitales, físicas y epistémicas
               que permitan al docente reivindicarse en su hacer, mostrándose como un
-              sabedor, autorizado a ejercer bajo su razón intelectual y sus años de
+              sabedor que está autorizado a ejercer bajo su razón intelectual y sus años de
               experiencia, pues nadie más que él sabe lo complejo del Arte de Enseñar...
             </p>
             <p style={{
               fontSize: 14, fontStyle: "italic", color: "var(--ink-500)",
               textAlign: "right", margin: "0 0 24px",
             }}>
-              Att: Andersson Cortes
+              Att: Andersson Cortes, que siga la lucha...
             </p>
 
             <button onClick={() => setShowAbout(false)} className="qs-btn qs-btn--primary">
