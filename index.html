@@ -8,23 +8,57 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <!-- Preconexión temprana a los CDNs de scripts: ahorra el handshake TLS -->
+  <link rel="preconnect" href="https://unpkg.com" crossorigin />
+  <link rel="preconnect" href="https://www.gstatic.com" />
+  <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin />
+
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="styles.css" />
 
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!--
+    Versiones EXACTAS: unpkg resuelve "react@18" con una redirección 302
+    extra por archivo. Fijar la versión elimina ese viaje de ida y vuelta.
+    "defer": descarga en paralelo sin bloquear el parseo del HTML,
+    manteniendo el orden de ejecución entre scripts.
+  -->
+  <script defer crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script defer crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script defer src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
   <!-- Generador de códigos QR (para el modo proyección de la sala en vivo) -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <style>
+    /* Splash de carga: visible al instante mientras Babel compila la app.
+       React lo reemplaza automáticamente al montar en #root. */
+    .qs-splash {
+      min-height: 100vh; display: grid; place-items: center;
+      background: #f8fafc; font-family: "Segoe UI", system-ui, sans-serif;
+    }
+    .qs-splash-inner { text-align: center; color: #64748b; }
+    .qs-splash-spinner {
+      width: 44px; height: 44px; margin: 0 auto 14px;
+      border: 4px solid #ede9fe; border-top-color: #7c3aed;
+      border-radius: 50%; animation: qs-spin 0.8s linear infinite;
+    }
+    @keyframes qs-spin { to { transform: rotate(360deg); } }
+  </style>
 </head>
 <body>
-  <div id="root"></div>
+  <div id="root">
+    <div class="qs-splash">
+      <div class="qs-splash-inner">
+        <div class="qs-splash-spinner"></div>
+        <p style="font-weight:600;margin:0;">Cargando QuizSpark…</p>
+      </div>
+    </div>
+  </div>
   <noscript>
     <p style="text-align:center;padding:2rem;font-family:sans-serif;">
       Esta aplicación requiere JavaScript habilitado.
@@ -32,7 +66,7 @@
   </noscript>
 
   <!-- Configuración + auth -->
-  <script src="00-firebase.js"></script>
+  <script defer src="00-firebase.js"></script>
   <script type="text/babel" data-presets="react" src="00b-auth.js"></script>
 
   <!-- Núcleo -->
