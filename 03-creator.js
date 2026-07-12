@@ -30,14 +30,9 @@ function TopNav({ active, onNav, onLaunch, user, onLogout, onAdmin }) {
           fontWeight: 800, fontSize: 22, color: "var(--violet-700)",
           background: "transparent", border: "none", cursor: "pointer", padding: 0,
         }}>
-          <span style={{
-            width: 36, height: 36, borderRadius: 10,
-            background: "linear-gradient(135deg, var(--violet-500), var(--pink-500))",
-            display: "inline-flex", alignItems: "center", justifyContent: "center", color: "#fff",
-          }}>
-            <I.spark size={20} stroke="#fff" sw={2.5} />
-          </span>
-          QuizSpark
+          <img src="apple-touch-icon.png" alt="Desafíate"
+            style={{ width: 36, height: 36, borderRadius: 10, display: "block" }} />
+          Desafíate
         </button>
         <nav className="qs-nav-desktop" style={{ gap: 4 }}>
           {navItems.map(item => (
