@@ -14,8 +14,9 @@ function AuthLoading({ message = "Cargando..." }) {
       color: "var(--white)", fontFamily: "var(--font-display)"
     }}>
       <div style={{ textAlign: "center" }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>⚡</div>
-        <h1 style={{ fontSize: 32, marginBottom: 8 }}>QuizSpark</h1>
+        <img src="apple-touch-icon.png" alt="Desafíate"
+          style={{ width: 72, height: 72, borderRadius: 18, marginBottom: 16 }} />
+        <h1 style={{ fontSize: 32, marginBottom: 8 }}>Desafíate</h1>
         <p style={{ opacity: 0.8 }}>{message}</p>
       </div>
     </div>
@@ -37,11 +38,12 @@ function AuthShell({ children }) {
           width: "100%", maxWidth: 440
         }}>
           <div style={{ textAlign: "center", marginBottom: 24 }}>
-            <div style={{ fontSize: 40, marginBottom: 8 }}>⚡</div>
+            <img src="apple-touch-icon.png" alt="Desafíate"
+              style={{ width: 64, height: 64, borderRadius: 16, marginBottom: 8 }} />
             <h1 style={{
               fontSize: 28, fontFamily: "var(--font-display)",
               color: "var(--violet-700)", marginBottom: 4
-            }}>QuizSpark</h1>
+            }}>Desafíate</h1>
             <p style={{ color: "var(--ink-500)", fontSize: 14 }}>
               Plataforma Educativa de Quices en Vivo 
             </p>
