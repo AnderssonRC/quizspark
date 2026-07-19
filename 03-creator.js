@@ -413,7 +413,7 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
                 {q.isPublished && (
                   <span style={{
                     fontSize: 10, fontWeight: 700, padding: "2px 8px",
-                    borderRadius: 6, background: "#d1fae5", color: "#065f46", whiteSpace: "nowrap",
+                    borderRadius: 6, background: "rgba(0, 224, 140, 0.16)", color: "#3dffab", whiteSpace: "nowrap",
                   }}>🟢 ONLINE</span>
                 )}
               </div>
@@ -678,7 +678,7 @@ function Editor({ quizId, onBack, onLaunch }) {
           {quiz.isPublished && (
             <span style={{
               fontSize: 12, fontWeight: 700, padding: "4px 10px",
-              borderRadius: 8, background: "#d1fae5", color: "#065f46",
+              borderRadius: 8, background: "rgba(0, 224, 140, 0.16)", color: "#3dffab",
             }}>🟢 Publicado</span>
           )}
           {quiz.mode !== "survey" && (
@@ -821,7 +821,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                   width: "100%", border: "1px solid var(--ink-200)", borderRadius: 12,
                   padding: 14, fontSize: 15, fontFamily: "inherit",
                   resize: "vertical", outline: "none", minHeight: 120, marginBottom: 16,
-                  background: "white", color: "var(--ink-900)", lineHeight: 1.6,
+                  background: "var(--ink-50)", color: "var(--ink-900)", lineHeight: 1.6,
                 }}/>
               {/* Imagen */}
               <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 6 }}>🖼️ Imagen (opcional)</div>
@@ -835,7 +835,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                     onError={(e) => { e.currentTarget.style.display = "none"; e.currentTarget.nextSibling.style.display = "block"; }}
                     onLoad={(e) => { e.currentTarget.style.display = "block"; e.currentTarget.nextSibling.style.display = "none"; }}
                     style={{ maxWidth: "100%", maxHeight: 220, borderRadius: 12, border: "1px solid var(--ink-200)", display: "block" }}/>
-                  <div style={{ display: "none", padding: 12, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
+                  <div style={{ display: "none", padding: 12, borderRadius: 10, background: "rgba(255, 190, 31, 0.14)", color: "#ffd94d", fontSize: 13 }}>
                     ⚠️ No se pudo cargar la imagen. Verifica que el enlace sea directo y público.
                   </div>
                 </div>
@@ -855,7 +855,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                       allowFullScreen/>
                   </div>
                 ) : (
-                  <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
+                  <div style={{ marginTop: 10, padding: 12, borderRadius: 10, background: "rgba(255, 190, 31, 0.14)", color: "#ffd94d", fontSize: 13 }}>
                     ⚠️ No reconozco ese enlace de YouTube.
                   </div>
                 );
@@ -918,7 +918,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                   value={active.video || ""}
                   onChange={e => updateQuestion({ video: e.target.value.trim() })}/>
                 {active.video && !youtubeId(active.video) && (
-                  <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
+                  <div style={{ marginTop: 8, padding: 10, borderRadius: 10, background: "rgba(255, 190, 31, 0.14)", color: "#ffd94d", fontSize: 13 }}>
                     ⚠️ No reconozco ese enlace de YouTube. Debe ser como https://www.youtube.com/watch?v=XXXX o https://youtu.be/XXXX
                   </div>
                 )}
@@ -990,7 +990,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                   onError={(e) => { e.currentTarget.style.display = "none"; e.currentTarget.nextSibling.style.display = "block"; }}
                   onLoad={(e) => { e.currentTarget.style.display = "block"; e.currentTarget.nextSibling.style.display = "none"; }}
                   style={{ maxWidth: "100%", maxHeight: 280, borderRadius: 14, border: "1px solid var(--ink-200)", display: "block", margin: "0 auto", background: "var(--white)" }}/>
-                <div style={{ display: "none", padding: 12, borderRadius: 10, background: "#fef3c7", color: "#92400e", fontSize: 13 }}>
+                <div style={{ display: "none", padding: 12, borderRadius: 10, background: "rgba(255, 190, 31, 0.14)", color: "#ffd94d", fontSize: 13 }}>
                   ⚠️ No se pudo cargar la imagen. Verifica que el enlace sea directo y público.
                 </div>
               </div>
