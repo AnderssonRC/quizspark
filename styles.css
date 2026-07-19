@@ -271,3 +271,12 @@ button { font-family: inherit; }
 ::-webkit-scrollbar-track { background: var(--ink-50); }
 ::-webkit-scrollbar-thumb { background: var(--violet-200); border-radius: 999px; border: 2px solid var(--ink-50); }
 ::-webkit-scrollbar-thumb:hover { background: var(--violet-500); }
+
+/* ============================================================
+   Sala en vivo (docente) responsiva
+   ============================================================ */
+/* En pantallas angostas, el panel de estado y los controles se
+   apilan en una sola columna para que nada desborde el ancho */
+@media (max-width: 920px) {
+  .qs-live-panel { grid-template-columns: 1fr !important; }
+}
