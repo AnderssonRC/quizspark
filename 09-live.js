@@ -549,7 +549,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
       padding: 24, color: "white",
     }}>
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, flexWrap: "wrap", gap: 12 }}>
           <div>
             <p style={{ opacity: 0.7, fontSize: 13 }}>Pregunta {session.currentQuestionIdx + 1} de {quiz.questions.length}</p>
             <h2 style={{ fontSize: 24, marginTop: 4 }}>{quiz.title}</h2>
@@ -666,7 +666,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
         </div>
 
         {/* Estado */}
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
+        <div className="qs-live-panel" style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
           <div className="qs-card" style={{ padding: 20, color: "var(--ink-900)" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ fontWeight: 700 }}>Respuestas recibidas</span>
@@ -759,7 +759,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                 background: "rgba(255,255,255,0.18)", color: "white", fontWeight: 700,
                 boxShadow: "0 0 0 2px rgba(255,255,255,.4) inset",
               }}>
-                ⏱️ +10s
+                ⏱️ +30s
               </button>
               <button onClick={onTogglePause} className="qs-btn" style={{
                 background: isPaused ? "var(--emerald-500)" : "var(--amber-500)",
@@ -1791,7 +1791,7 @@ function LiveSessionHost({ quizId, onExit }) {
           session={session} quiz={quiz} currentQ={currentQ}
           answersThisQ={answersThisQ} totalParticipants={participants.length}
           onReveal={revealCurrent} onSkip={revealCurrent}
-          onAddTime={() => addTime(10)} onFinish={finishNow}
+          onAddTime={() => addTime(30)} onFinish={finishNow}
           onTogglePause={togglePause} onRelaunch={relaunchQuestion}
           onShowParticipants={() => setShowParticipants(true)}
         />
