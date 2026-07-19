@@ -11,7 +11,7 @@ function AuthLoading({ message = "Cargando..." }) {
     <div style={{
       minHeight: "100vh", display: "grid", placeItems: "center",
       background: "linear-gradient(135deg, var(--violet-600), var(--violet-900))",
-      color: "var(--white)", fontFamily: "var(--font-display)"
+      color: "var(#ffffff)", fontFamily: "var(--font-display)"
     }}>
       <div style={{ textAlign: "center" }}>
         <img src="apple-touch-icon.png" alt="Desafíate"
