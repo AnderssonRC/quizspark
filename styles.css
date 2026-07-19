@@ -6,47 +6,47 @@
   --font-display: "Poppins", "Segoe UI", system-ui, sans-serif;
   --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
 
-  --white: #ffffff;
-  --ink-50:  #f8fafc;
-  --ink-100: #f1f5f9;
-  --ink-200: #e2e8f0;
-  --ink-300: #cbd5e1;
-  --ink-400: #94a3b8;
-  --ink-500: #64748b;
-  --ink-700: #334155;
-  --ink-900: #0f172a;
+  --white: #221046;
+  --ink-50:  #140833;
+  --ink-100: #2b1657;
+  --ink-200: #3b2178;
+  --ink-300: #4f2f9c;
+  --ink-400: #8d78c9;
+  --ink-500: #b4a3e8;
+  --ink-700: #ddd2fa;
+  --ink-900: #f7f3ff;
 
-  --violet-50:  #f5f3ff;
-  --violet-100: #ede9fe;
-  --violet-200: #ddd6fe;
-  --violet-400: #a78bfa;
-  --violet-500: #8b5cf6;
-  --violet-600: #7c3aed;
-  --violet-700: #6d28d9;
-  --violet-900: #4c1d95;
+  --violet-50:  #2c1363;
+  --violet-100: #3a1b7e;
+  --violet-200: #5c33bb;
+  --violet-400: #c07cff;
+  --violet-500: #a53bff;
+  --violet-600: #9313e3;
+  --violet-700: #b02ef7;
+  --violet-900: #45087f;
 
-  --emerald-400: #34d399;
-  --emerald-500: #10b981;
-  --emerald-600: #059669;
+  --emerald-400: #3dffab;
+  --emerald-500: #00e08c;
+  --emerald-600: #00a869;
 
-  --amber-300: #fcd34d;
-  --amber-400: #fbbf24;
-  --amber-500: #f59e0b;
+  --amber-300: #ffd94d;
+  --amber-400: #ffbe1f;
+  --amber-500: #ff9f0a;
 
-  --pink-500: #ec4899;
-  --pink-600: #db2777;
+  --pink-500: #fc2495;
+  --pink-600: #d90f78;
 
-  --sky-400: #38bdf8;
-  --sky-500: #0ea5e9;
+  --sky-400: #45c8ff;
+  --sky-500: #00aaff;
 
-  --red-500: #ef4444;
+  --red-500: #ff4d67;
 
-  --tile-1: #ef4444;
-  --tile-2: #3b82f6;
-  --tile-3: #f59e0b;
-  --tile-4: #10b981;
+  --tile-1: #ff3d5e;
+  --tile-2: #2f8bff;
+  --tile-3: #ffb300;
+  --tile-4: #00d97a;
 
-  --shadow-tile: 0 6px 0 rgba(0,0,0,0.18), 0 12px 24px rgba(0,0,0,0.10);
+  --shadow-tile: 0 6px 0 rgba(0,0,0,0.45), 0 12px 28px rgba(147,19,227,0.30);
 }
 
 * { box-sizing: border-box; }
@@ -73,38 +73,38 @@ button { font-family: inherit; }
 .qs-btn:active { transform: translateY(0); }
 .qs-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-.qs-btn--primary { background: var(--violet-600); color: var(--white); box-shadow: 0 4px 0 var(--violet-900); }
-.qs-btn--primary:hover { background: var(--violet-700); }
+.qs-btn--primary { background: var(--violet-600); color: #fff; box-shadow: 0 4px 0 var(--violet-900), 0 0 18px rgba(165, 59, 255, 0.40); }
+.qs-btn--primary:hover { background: var(--violet-700); box-shadow: 0 4px 0 var(--violet-900), 0 0 26px rgba(176, 46, 247, 0.55); }
 
-.qs-btn--success { background: var(--emerald-500); color: var(--white); box-shadow: 0 4px 0 var(--emerald-600); }
+.qs-btn--success { background: var(--emerald-500); color: #05231a; box-shadow: 0 4px 0 var(--emerald-600), 0 0 16px rgba(0, 224, 140, 0.35); }
 
 .qs-btn--ghost { background: transparent; color: var(--ink-700); border-color: var(--ink-200); }
-.qs-btn--ghost:hover { background: var(--ink-100); }
+.qs-btn--ghost:hover { background: var(--ink-100); border-color: var(--violet-500); }
 
 .qs-btn--sm { padding: 6px 12px; font-size: 13px; border-radius: 10px; }
 .qs-btn--lg { padding: 14px 24px; font-size: 16px; border-radius: 14px; }
 
 .qs-card {
   background: var(--white); border-radius: 16px; border: 1px solid var(--ink-200);
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 12px rgba(15, 23, 42, 0.04);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(10, 4, 28, 0.55);
   transition: box-shadow 0.15s ease, transform 0.15s ease;
 }
-.qs-card:hover { box-shadow: 0 4px 8px rgba(15, 23, 42, 0.06), 0 12px 24px rgba(15, 23, 42, 0.08); }
+.qs-card:hover { border-color: rgba(165, 59, 255, 0.60); box-shadow: 0 0 0 1px rgba(165, 59, 255, 0.35), 0 12px 30px rgba(147, 19, 227, 0.30); }
 
 .qs-chip {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: 999px;
-  background: var(--violet-50); color: var(--violet-700);
+  background: var(--violet-50); color: var(--violet-400);
   font-size: 12px; font-weight: 600; border: 1px solid var(--violet-100);
 }
 
 .qs-input {
   width: 100%; padding: 10px 14px; border-radius: 10px;
-  border: 1px solid var(--ink-200); background: var(--white);
+  border: 1px solid var(--ink-200); background: var(--ink-50);
   font-family: inherit; font-size: 14px; color: var(--ink-900); outline: none;
   transition: border 0.15s ease, box-shadow 0.15s ease;
 }
-.qs-input:focus { border-color: var(--violet-500); box-shadow: 0 0 0 3px var(--violet-100); }
+.qs-input:focus { border-color: var(--violet-500); box-shadow: 0 0 0 3px rgba(165, 59, 255, 0.30), 0 0 14px rgba(252, 36, 149, 0.15); }
 
 @keyframes qs-fade-in {
   from { opacity: 0; transform: translateY(6px); }
@@ -253,3 +253,21 @@ button { font-family: inherit; }
   header.qs-topnav { padding: 12px 16px !important; }
   header.qs-topnav .qs-topnav-logo { font-size: 18px !important; }
 }
+
+/* ============================================================
+   Tema neón "Desafíate" — detalles adicionales
+   ============================================================ */
+.qs-input::placeholder { color: var(--ink-400); }
+
+/* Brillo del logo en la barra superior */
+.qs-topnav-logo { text-shadow: 0 0 16px rgba(176, 46, 247, 0.55); }
+
+/* Selección de texto y foco de teclado en tono neón */
+::selection { background: rgba(252, 36, 149, 0.45); color: #fff; }
+:focus-visible { outline: 2px solid var(--pink-500); outline-offset: 2px; }
+
+/* Barras de desplazamiento a juego con el tema oscuro */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: var(--ink-50); }
+::-webkit-scrollbar-thumb { background: var(--violet-200); border-radius: 999px; border: 2px solid var(--ink-50); }
+::-webkit-scrollbar-thumb:hover { background: var(--violet-500); }
