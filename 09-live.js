@@ -216,7 +216,7 @@ function ProjectionView({ session, quiz, joinUrl, participants, onClose }) {
           background: "white", padding: 20, borderRadius: 20, textAlign: "center",
         }}>
           <QRBox text={joinUrl} size={240} />
-          <p style={{ color: "var(--ink-700)", fontSize: 14, fontWeight: 600, marginTop: 10 }}>
+          <p style={{ color: "#334155", fontSize: 14, fontWeight: 600, marginTop: 10 }}>
             Escanea para entrar
           </p>
         </div>
@@ -719,10 +719,10 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                       <span key={p.pid} style={{
                         display: "inline-flex", alignItems: "center", gap: 6,
                         padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600,
-                        background: "#d1fae5", color: "#065f46",
+                        background: "rgba(0, 224, 140, 0.16)", color: "#3dffab",
                       }}>
                         <span style={{
-                          width: 18, height: 18, borderRadius: "50%", background: "#065f46", color: "white",
+                          width: 18, height: 18, borderRadius: "50%", background: "#00a869", color: "white",
                           display: "grid", placeItems: "center", fontSize: 10, fontWeight: 800,
                         }}>{i + 1}</span>
                         {p.name}
