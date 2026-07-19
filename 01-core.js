@@ -250,12 +250,13 @@ function Footer() {
               fontSize: 15, lineHeight: 1.75, color: "var(--ink-700)",
               textAlign: "left", margin: "0 0 16px",
             }}>
-              <strong>Res Cogitans</strong> es un proyecto que busca reivindicar el arte
-              creador de los docentes, pues son artesanos en su enseñar. Por esa razón,
-              y sin descanso, se busca crear herramientas digitales, físicas y epistémicas
-              que permitan al docente reivindicarse en su hacer, mostrándose como un
-              sabedor que está autorizado a ejercer bajo su razón intelectual y sus años de
-              experiencia, pues nadie más que él sabe lo complejo del Arte de Enseñar...
+              <strong>Res Cogitans</strong> Res Cogitans es un proyecto que busca reivindicar el arte 
+              creador de los docentes, pues son Artesanos en su enseñar. Por esa razón, y sin descanso, 
+              se busca crear herramientas digitales, físicas y epistémicas que permitan al docente 
+              reivindicarse en su hacer social y político, mostrándose como un sabedor que une intelecto y 
+              materialidad (producción real), además de estar autorizado a ejercer bajo su razón intelectual y 
+              sus años de experiencia, cualquier tipo de transformación y decisión. Esto revindica al docente 
+              como experto de la enseñanza, pues nadie más que él sabe el complejo Arte de Educar.
             </p>
             <p style={{
               fontSize: 14, fontStyle: "italic", color: "var(--ink-500)",
