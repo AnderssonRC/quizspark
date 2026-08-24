@@ -1253,6 +1253,14 @@ function Editor({ quizId, onBack, onLaunch }) {
             )}
           </Field>
 
+          <Field label="Modo parejas">
+            <Toggle label="👥 Trabajo en parejas" value={!!quiz.pairMode}
+              onChange={(v) => setQuiz({ ...quiz, pairMode: v })} />
+            <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
+              Al ingresar (sala en vivo o evaluación online), el estudiante podrá anotar el nombre de su compañero de equipo.
+            </p>
+          </Field>
+
           <Field label="Acceso">
             <div style={{ display: "flex", gap: 6 }}>
               {["Pública", "Con Contraseña"].map((opt, i) => (
@@ -1335,21 +1343,26 @@ function Field({ label, children }) {
   );
 }
 
-function Toggle({ label, defaultOn }) {
+function Toggle({ label, defaultOn, value, onChange }) {
+  // Controlado si viene 'value'/'onChange'; si no, mantiene su propio estado
+  // (compatibilidad con los usos de demostración que no reportan cambios).
+  const controlled = value !== undefined;
   const [on, setOn] = useStateC(!!defaultOn);
+  const checked = controlled ? value : on;
+  const toggle = () => (controlled ? onChange(!checked) : setOn(!on));
   return (
-    <div onClick={() => setOn(!on)} style={{
+    <div onClick={toggle} style={{
       display: "flex", alignItems: "center", justifyContent: "space-between",
       padding: "8px 0", cursor: "pointer", fontSize: 13,
     }}>
       <span style={{ fontWeight: 600 }}>{label}</span>
       <div style={{
         width: 36, height: 20, borderRadius: 999, padding: 2, position: "relative",
-        background: on ? "var(--violet-500)" : "var(--ink-200)", transition: "background .15s",
+        background: checked ? "var(--violet-500)" : "var(--ink-200)", transition: "background .15s",
       }}>
         <div style={{
           width: 16, height: 16, borderRadius: "50%", background: "#fff",
-          transform: `translateX(${on ? 16 : 0}px)`, transition: "transform .15s",
+          transform: `translateX(${checked ? 16 : 0}px)`, transition: "transform .15s",
         }}/>
       </div>
     </div>

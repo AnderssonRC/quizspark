@@ -377,6 +377,7 @@ function StudentExam({ examCode }) {
   const [quiz, setQuiz] = useStateO(null);
   const [studentName, setStudentName] = useStateO("");
   const [studentCourse, setStudentCourse] = useStateO("");
+  const [partnerName, setPartnerName] = useStateO("");
   const [examDate, setExamDate] = useStateO(new Date().toISOString().slice(0, 10));
   const [questionsOrder, setQuestionsOrder] = useStateO([]); // preguntas (posiblemente mezcladas)
   const [currentIdx, setCurrentIdx] = useStateO(0);
@@ -496,6 +497,7 @@ function StudentExam({ examCode }) {
         ownerId: quiz.ownerId,
         studentName: studentName.trim(),
         studentCourse: studentCourse.trim(),
+        partnerName: partnerName.trim() || null,
         examDate,
         answers,
         gradeDetail: grade.detail,
@@ -593,6 +595,20 @@ function StudentExam({ examCode }) {
               onChange={e => setStudentCourse(e.target.value)}
             />
           </div>
+
+          {quiz.pairMode && (
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
+                👥 Nombre de tu compañero (opcional)
+              </label>
+              <input
+                type="text" className="qs-input"
+                placeholder="Ej: Juan Pérez"
+                value={partnerName}
+                onChange={e => setPartnerName(e.target.value)}
+              />
+            </div>
+          )}
 
           <div style={{ marginBottom: 20 }}>
             <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
@@ -1065,7 +1081,7 @@ function OnlineResultsPanel({ onBack }) {
       return;
     }
     // Construimos CSV (compatible con Excel y Google Sheets)
-    const header = ["Nombre", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Enviado"];
+    const header = ["Nombre", "Compañero", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Enviado"];
     selectedQuiz.questions.forEach((q, i) => {
       header.push(`P${i+1}: ${q.text.substring(0, 50)}`);
       header.push(`P${i+1} ¿correcto?`);
@@ -1074,6 +1090,7 @@ function OnlineResultsPanel({ onBack }) {
     const rows = filtered.map(s => {
       const row = [
         s.studentName,
+        s.partnerName || "",
         s.studentCourse,
         s.examDate,
         (s.score || 0).toFixed(2),
@@ -1253,6 +1270,7 @@ function OnlineResultsPanel({ onBack }) {
                       <thead>
                         <tr style={{ background: "var(--ink-50)", textAlign: "left" }}>
                           <th style={{ padding: 12, fontSize: 12 }}>Estudiante</th>
+                          <th style={{ padding: 12, fontSize: 12 }}>Compañero</th>
                           <th style={{ padding: 12, fontSize: 12 }}>Curso</th>
                           <th style={{ padding: 12, fontSize: 12 }}>Fecha</th>
                           <th style={{ padding: 12, fontSize: 12 }}>Nota</th>
@@ -1270,6 +1288,7 @@ function OnlineResultsPanel({ onBack }) {
                             style={{ borderTop: "1px solid var(--ink-100)", cursor: "pointer" }}
                             title="Clic para ver respuestas">
                             <td style={{ padding: 12, fontWeight: 600 }}>{s.studentName}</td>
+                            <td style={{ padding: 12, color: "var(--ink-500)" }}>{s.partnerName || "—"}</td>
                             <td style={{ padding: 12 }}>{s.studentCourse}</td>
                             <td style={{ padding: 12 }}>{s.examDate}</td>
                             <td style={{ padding: 12 }}>
@@ -1338,6 +1357,7 @@ function ReviewModal({ submission, quiz, onClose }) {
             <h3 style={{ fontSize: 20 }}>{submission.studentName}</h3>
             <p style={{ fontSize: 13, color: "var(--ink-500)" }}>
               {submission.studentCourse} · {submission.examDate}
+              {submission.partnerName ? <><br/>👥 Con {submission.partnerName}</> : null}
             </p>
           </div>
           <div style={{ textAlign: "right" }}>

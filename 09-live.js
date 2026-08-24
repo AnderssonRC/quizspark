@@ -349,7 +349,9 @@ function HostLobby({ session, quiz, onStart, onCancel, onKick }) {
                     }}>{(p.name || "?").charAt(0).toUpperCase()}</div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 700, fontSize: 13, textOverflow: "ellipsis", overflow: "hidden", whiteSpace: "nowrap" }}>{p.name}</div>
-                      <div style={{ fontSize: 11, color: "var(--ink-500)" }}>{p.course}</div>
+                      <div style={{ fontSize: 11, color: "var(--ink-500)" }}>
+                        {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
+                      </div>
                     </div>
                     {onKick && (
                       <button
@@ -1259,7 +1261,9 @@ function HostFinal({ session, quiz, onFinish }) {
                     background: bg[idx],
                   }}>
                     <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>{p.name}</div>
-                    <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>{p.course}</div>
+                    <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
+                      {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
+                    </div>
                     <div style={{ fontSize: 24, fontFamily: "var(--font-display)", fontWeight: 800 }}>
                       {p.score} pts
                     </div>
@@ -1284,7 +1288,9 @@ function HostFinal({ session, quiz, onFinish }) {
                 }}>{i + 4}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700 }}>{p.name}</div>
-                  <div style={{ fontSize: 12, color: "var(--ink-500)" }}>{p.course}</div>
+                  <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
+                    {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
+                  </div>
                 </div>
                 <div style={{ fontWeight: 700, color: "var(--violet-700)" }}>{p.score} pts</div>
               </div>
@@ -1335,7 +1341,7 @@ function ParticipantsModal({ participants, onKick, onClose }) {
                 <div>
                   <div style={{ fontWeight: 700 }}>{p.name}</div>
                   <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
-                    {p.course} · {p.score || 0} pts
+                    {p.course} · {p.score || 0} pts{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
                   </div>
                 </div>
                 <button onClick={() => onKick(p.pid)} className="qs-btn qs-btn--sm" style={{
@@ -1383,6 +1389,7 @@ function LiveSessionHost({ quizId, onExit }) {
           code,
           quizId: quizData.id,
           quizTitle: quizData.title || "Quiz",
+          pairMode: quizData.pairMode || false,
           ownerId: uid,
           status: "lobby",
           currentQuestionIdx: -1,
@@ -1711,6 +1718,7 @@ function LiveSessionHost({ quizId, onExit }) {
         ownerId: uid,
         studentName: p.name || "Sin nombre",
         studentCourse: p.course || "Sin curso",
+        partnerName: p.partnerName || null,
         examDate: today,
         mode: "live",  // distintivo
         sessionCode: session.code,
@@ -1821,6 +1829,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
   const [code, setCode] = useStateL(initialCode || "");
   const [name, setName] = useStateL("");
   const [course, setCourse] = useStateL("");
+  const [partnerName, setPartnerName] = useStateL("");
   const [step, setStep] = useStateL(initialCode ? "checking" : "code"); // code | checking | identify | joining | live
   const [error, setError] = useStateL("");
   const [session, setSession] = useStateL(null);
@@ -1955,6 +1964,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
         id: pid,
         name: name.trim(),
         course: course.trim(),
+        partnerName: (session.pairMode && partnerName.trim()) ? partnerName.trim() : null,
         joinedAt: Date.now(),
         score: 0,
       };
@@ -2065,8 +2075,20 @@ function StudentJoinLive({ initialCode, onCancel }) {
             <input
               type="text" className="qs-input" placeholder="Ej: 10A"
               value={course} onChange={e => setCourse(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && handleJoin()}
+              style={{ marginBottom: session?.pairMode ? 14 : 0 }}
             />
+            {session?.pairMode && (
+              <>
+                <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
+                  👥 Nombre de tu compañero (opcional)
+                </label>
+                <input
+                  type="text" className="qs-input" placeholder="Ej: Juan Pérez"
+                  value={partnerName} onChange={e => setPartnerName(e.target.value)}
+                  onKeyDown={e => e.key === "Enter" && handleJoin()}
+                />
+              </>
+            )}
             {error && <p style={{ color: "var(--red-500)", fontSize: 13, marginTop: 8 }}>{error}</p>}
             <button onClick={handleJoin} className="qs-btn qs-btn--success qs-btn--lg" style={{ width: "100%", marginTop: 16 }}>
               🚀 Entrar al quiz
@@ -2288,6 +2310,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
           <h2 style={{ fontSize: 22, marginBottom: 8 }}>¡Estás dentro!</h2>
           <p style={{ marginBottom: 16, color: "var(--ink-500)" }}>
             <b>{me?.name}</b> · {me?.course}
+            {me?.partnerName ? <><br/>👥 Con {me.partnerName}</> : null}
           </p>
           <div style={{ padding: 14, background: "var(--violet-50)", borderRadius: 10, marginBottom: 16 }}>
             <p style={{ fontSize: 14, color: "var(--violet-700)", fontWeight: 600 }}>
@@ -2856,7 +2879,7 @@ function LiveHistoryPanel({ onBack }) {
     if (!detail || detail.sessionId !== s.id) return;
     const { quiz, answers } = detail;
     const qs = quiz.questions.map((q, i) => ({ q, realIdx: i })).filter(x => x.q.type !== "slide");
-    const header = ["Nombre", "Curso"];
+    const header = ["Nombre", "Compañero", "Curso"];
     qs.forEach((x, i) => header.push(`P${i + 1}: ${String(x.q.text || "").substring(0, 60)}`));
     const escapeCsv = (val) => {
       const str = String(val == null ? "" : val);
@@ -2864,7 +2887,7 @@ function LiveHistoryPanel({ onBack }) {
         ? '"' + str.replace(/"/g, '""') + '"' : str;
     };
     const rows = Object.values(s.participants || {}).map(p => {
-      const row = [p.name || "Sin nombre", p.course || ""];
+      const row = [p.name || "Sin nombre", p.partnerName || "", p.course || ""];
       qs.forEach(x => {
         const ans = answers.find(a => a.participantId === p.id && a.questionIdx === x.realIdx);
         row.push(answerToText(x.q, ans ? ans.answer : null));
@@ -2947,6 +2970,7 @@ function LiveHistoryPanel({ onBack }) {
           ownerId: uid,
           studentName: p.name || "Sin nombre",
           studentCourse: p.course || "Sin curso",
+          partnerName: p.partnerName || null,
           examDate: today,
           mode: "live",
           sessionCode: s.code,
@@ -3117,6 +3141,7 @@ function LiveHistoryPanel({ onBack }) {
                           <span style={{ fontWeight: 800, color: "var(--violet-700)", marginRight: 8 }}>{i + 1}.</span>
                           {p.avatar ? p.avatar + " " : ""}{p.name || "Sin nombre"}
                           {p.course ? <span style={{ color: "var(--ink-400)", fontSize: 12 }}> · {p.course}</span> : null}
+                          {p.partnerName ? <span style={{ color: "var(--ink-400)", fontSize: 12 }}> · 👥 {p.partnerName}</span> : null}
                         </div>
                         <div style={{ fontWeight: 800, color: "var(--ink-700)", flexShrink: 0 }}>{p.score} pts</div>
                       </div>
