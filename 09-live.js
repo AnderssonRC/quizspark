@@ -1260,7 +1260,9 @@ function HostFinal({ session, quiz, onFinish }) {
                     height: heights[idx], display: "flex", flexDirection: "column", justifyContent: "center",
                     background: bg[idx],
                   }}>
-                    <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>{p.name}</div>
+                    <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>
+                      {p.name}{p.lateJoin ? " 🕐" : ""}
+                    </div>
                     <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
                       {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
                     </div>
@@ -1287,7 +1289,9 @@ function HostFinal({ session, quiz, onFinish }) {
                   color: "var(--violet-700)", display: "grid", placeItems: "center", fontWeight: 700,
                 }}>{i + 4}</div>
                 <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 700 }}>{p.name}</div>
+                  <div style={{ fontWeight: 700 }}>
+                    {p.name}{p.lateJoin ? " 🕐" : ""}
+                  </div>
                   <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
                     {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
                   </div>
@@ -1339,7 +1343,16 @@ function ParticipantsModal({ participants, onKick, onClose }) {
                 padding: "10px 14px", background: "var(--ink-50)", borderRadius: 10,
               }}>
                 <div>
-                  <div style={{ fontWeight: 700 }}>{p.name}</div>
+                  <div style={{ fontWeight: 700 }}>
+                    {p.name}
+                    {p.lateJoin && (
+                      <span style={{
+                        marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 7px",
+                        borderRadius: 999, background: "var(--amber-400)", color: "#7c2d12",
+                        verticalAlign: "middle",
+                      }}>🕐 tarde</span>
+                    )}
+                  </div>
                   <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
                     {p.course} · {p.score || 0} pts{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
                   </div>
@@ -1359,6 +1372,49 @@ function ParticipantsModal({ participants, onKick, onClose }) {
 }
 
 // ============================================================
+// JOIN REQUESTS BANNER — ingresos tardíos esperando aprobación del docente
+// ============================================================
+function JoinRequestsBanner({ requests, onApprove, onReject }) {
+  const [busyId, setBusyId] = useStateL(null);
+  const act = async (fn, req) => {
+    setBusyId(req.id);
+    try { await fn(req); } finally { setBusyId(null); }
+  };
+  return (
+    <div style={{
+      position: "fixed", left: 16, right: 16, bottom: 16, zIndex: 200,
+      display: "flex", flexDirection: "column", gap: 8, maxWidth: 480, margin: "0 auto",
+    }}>
+      {requests.map(req => (
+        <div key={req.id} className="qs-card qs-pop-in" style={{
+          padding: 14, display: "flex", alignItems: "center", gap: 12,
+          border: "2px solid var(--amber-400)", flexWrap: "wrap",
+        }}>
+          <div style={{ fontSize: 24 }}>🙋</div>
+          <div style={{ flex: 1, minWidth: 140 }}>
+            <div style={{ fontWeight: 700, fontSize: 14 }}>{req.name}</div>
+            <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
+              {req.course}{req.partnerName ? ` · 👥 ${req.partnerName}` : ""} · quiere unirse — el quiz ya empezó
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              onClick={() => act(onReject, req)} disabled={busyId === req.id}
+              className="qs-btn qs-btn--ghost qs-btn--sm"
+              style={{ color: "var(--red-500)", borderColor: "var(--red-500)" }}
+            >Rechazar</button>
+            <button
+              onClick={() => act(onApprove, req)} disabled={busyId === req.id}
+              className="qs-btn qs-btn--success qs-btn--sm"
+            >Aprobar</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================
 // LIVE SESSION HOST — orquestador del lado del profesor
 // ============================================================
 function LiveSessionHost({ quizId, onExit }) {
@@ -1367,6 +1423,7 @@ function LiveSessionHost({ quizId, onExit }) {
   const [quiz, setQuiz] = useStateL(null);
   const [answersByQuestion, setAnswersByQuestion] = useStateL({});
   const [showParticipants, setShowParticipants] = useStateL(false);
+  const [pendingJoinRequests, setPendingJoinRequests] = useStateL([]);
     // El id de sesión como ESTADO (no solo ref): garantiza que la suscripción
   // a Firestore se active apenas exista la sesión.
   const [sessionId, setSessionId] = useStateL(null);
@@ -1437,6 +1494,60 @@ function LiveSessionHost({ quizId, onExit }) {
       });
     return () => unsub();
   }, [sessionId, session?.currentQuestionIdx]);
+
+  // Suscripción a solicitudes de ingreso tardío pendientes (estudiantes que
+  // intentan unirse cuando la sala ya no está en el lobby y esperan que el
+  // docente decida si entran o no).
+  useEffectL(() => {
+    if (!sessionId) return;
+    const unsub = window.QS.db.collection("liveSessions").doc(sessionId)
+      .collection("joinRequests").where("status", "==", "pending")
+      .onSnapshot(snap => {
+        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => (a.requestedAt || 0) - (b.requestedAt || 0));
+        setPendingJoinRequests(list);
+      }, err => console.error("Error escuchando solicitudes de ingreso:", err));
+    return () => unsub();
+  }, [sessionId]);
+
+  // Aprobar una solicitud: crea el participante con puntaje en 0 (no recibe
+  // los puntos de preguntas ya jugadas) y suma su cupo de ingresos (máx. 2).
+  const approveJoinRequest = async (req) => {
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    try {
+      const pid = "p-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+      await ref.update({
+        [`participants.${pid}`]: {
+          id: pid,
+          name: req.name,
+          course: req.course,
+          partnerName: req.partnerName || null,
+          joinedAt: Date.now(),
+          score: 0,
+          lateJoin: true,
+          joinedAtQuestionIdx: session.currentQuestionIdx,
+        },
+        [`joinCounts.${req.identityKey}`]: firebase.firestore.FieldValue.increment(1),
+      });
+      await ref.collection("joinRequests").doc(req.id).update({
+        status: "approved", participantId: pid, resolvedAt: Date.now(),
+      });
+    } catch (err) {
+      console.error("Error aprobando ingreso:", err);
+      alert("No se pudo aprobar el ingreso: " + err.message);
+    }
+  };
+
+  const rejectJoinRequest = async (req) => {
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current)
+        .collection("joinRequests").doc(req.id)
+        .update({ status: "rejected", resolvedAt: Date.now() });
+    } catch (err) {
+      console.error("Error rechazando ingreso:", err);
+      alert("No se pudo rechazar la solicitud: " + err.message);
+    }
+  };
 
   // ---- Acciones ----
   const startQuiz = async () => {
@@ -1719,6 +1830,7 @@ function LiveSessionHost({ quizId, onExit }) {
         studentName: p.name || "Sin nombre",
         studentCourse: p.course || "Sin curso",
         partnerName: p.partnerName || null,
+        lateJoin: p.lateJoin || false,
         examDate: today,
         mode: "live",  // distintivo
         sessionCode: session.code,
@@ -1782,6 +1894,14 @@ function LiveSessionHost({ quizId, onExit }) {
     />
   ) : null;
 
+  const joinRequestsBanner = pendingJoinRequests.length > 0 ? (
+    <JoinRequestsBanner
+      requests={pendingJoinRequests}
+      onApprove={approveJoinRequest}
+      onReject={rejectJoinRequest}
+    />
+  ) : null;
+
   if (session.status === "playing") {
     // Si el elemento actual es una diapositiva: pantalla especial sin cronómetro
     if (currentQ && currentQ.type === "slide") {
@@ -1790,6 +1910,7 @@ function LiveSessionHost({ quizId, onExit }) {
           <HostSlide session={session} quiz={quiz} currentQ={currentQ}
             onNext={goNext} onFinish={finishNow}/>
           {participantsModal}
+          {joinRequestsBanner}
         </>
       );
     }
@@ -1804,6 +1925,7 @@ function LiveSessionHost({ quizId, onExit }) {
           onShowParticipants={() => setShowParticipants(true)}
         />
         {participantsModal}
+        {joinRequestsBanner}
       </>
     );
   }
@@ -1813,6 +1935,7 @@ function LiveSessionHost({ quizId, onExit }) {
         <HostReveal session={session} quiz={quiz} currentQ={currentQ}
           answersThisQ={answersThisQ} onNext={goNext} onGradeLive={gradeLiveAnswer} />
         {participantsModal}
+        {joinRequestsBanner}
       </>
     );
   }
@@ -1830,11 +1953,27 @@ function StudentJoinLive({ initialCode, onCancel }) {
   const [name, setName] = useStateL("");
   const [course, setCourse] = useStateL("");
   const [partnerName, setPartnerName] = useStateL("");
-  const [step, setStep] = useStateL(initialCode ? "checking" : "code"); // code | checking | identify | joining | live
+  // code | checking | identify | joining | requesting | waitingApproval | rejected | live
+  const [step, setStep] = useStateL(initialCode ? "checking" : "code");
   const [error, setError] = useStateL("");
   const [session, setSession] = useStateL(null);
   const [participantId, setParticipantId] = useStateL(null);
   const [quiz, setQuiz] = useStateL(null);
+  const [requestId, setRequestId] = useStateL(null);
+
+  // Busca la sesión activa (no finalizada/cancelada) para un código, sin
+  // exigir que siga en el lobby: así un estudiante puede pedir unirse aunque
+  // el quiz ya haya empezado. Se filtra en memoria (no por Firestore) porque
+  // los códigos de sala son numéricos y se reciclan entre sesiones distintas.
+  const findActiveSessionByCode = async (roomCode) => {
+    const snap = await window.QS.db.collection("liveSessions")
+      .where("code", "==", roomCode).get();
+    const candidates = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(s => s.status !== "finished" && s.status !== "cancelled")
+      .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+    return candidates[0] || null;
+  };
 
   // Intentar reconectar a una sala guardada (tras recarga / reapertura).
   // Devuelve true si reconectó; false si no había nada válido que reconectar.
@@ -1896,18 +2035,16 @@ function StudentJoinLive({ initialCode, onCancel }) {
       // 1) Intento de reconexión a sesión guardada
       const reconnected = await tryReconnect(initialCode);
       if (cancelled || reconnected) return;
-      // 2) Flujo normal: buscar sala en lobby para unirse por primera vez
+      // 2) Flujo normal: buscar la sala activa (esté en lobby o ya jugando)
       try {
-        const snap = await window.QS.db.collection("liveSessions")
-          .where("code", "==", initialCode).where("status", "==", "lobby").limit(1).get();
+        const found = await findActiveSessionByCode(initialCode);
         if (cancelled) return;
-        if (snap.empty) {
-          setError("Código no encontrado o la sala ya empezó.");
+        if (!found) {
+          setError("Código no encontrado o la sala ya terminó.");
           setStep("code");
           return;
         }
-        const doc = snap.docs[0];
-        setSession({ id: doc.id, ...doc.data() });
+        setSession(found);
         setStep("identify");
       } catch (err) {
         if (cancelled) return;
@@ -1919,6 +2056,82 @@ function StudentJoinLive({ initialCode, onCancel }) {
     return () => { cancelled = true; };
   }, [initialCode]);
 
+  // Mantener la sesión al día mientras el estudiante decide/espera (estado,
+  // joinCounts, pairMode). Al llegar a "live", StudentLive toma su propia
+  // suscripción, así que esta se apaga.
+  useEffectL(() => {
+    if (!session?.id || step === "live") return;
+    const unsub = window.QS.db.collection("liveSessions").doc(session.id)
+      .onSnapshot(doc => {
+        if (doc.exists) setSession(s => ({ ...s, id: doc.id, ...doc.data() }));
+      });
+    return () => unsub();
+  }, [session?.id, step]);
+
+  // Si la sala termina o se cancela mientras se espera aprobación, avisar
+  // en vez de dejar al estudiante esperando para siempre.
+  useEffectL(() => {
+    if ((step === "requesting" || step === "waitingApproval") &&
+        (session?.status === "finished" || session?.status === "cancelled")) {
+      setError("La sala terminó antes de que se aprobara tu ingreso.");
+      setStep("code");
+      setRequestId(null);
+    }
+  }, [session?.status, step]);
+
+  // Escuchar la resolución de la solicitud de ingreso tardío (el docente
+  // aprueba o rechaza desde su pantalla).
+  useEffectL(() => {
+    if (step !== "waitingApproval" || !requestId || !session?.id) return;
+    const reqRef = window.QS.db.collection("liveSessions").doc(session.id)
+      .collection("joinRequests").doc(requestId);
+    const unsub = reqRef.onSnapshot(async (doc) => {
+      if (!doc.exists) return;
+      const d = doc.data();
+      if (d.status === "approved" && d.participantId) {
+        setParticipantId(d.participantId);
+        saveLiveSession(session.code, {
+          sessionId: session.id,
+          participantId: d.participantId,
+          name: name.trim(),
+          course: course.trim(),
+          savedAt: Date.now(),
+        });
+        try {
+          const quizDoc = await window.QS.db.collection("quizzes").doc(session.quizId).get();
+          if (quizDoc.exists) {
+            setQuiz({ id: quizDoc.id, ...quizDoc.data() });
+            setStep("live");
+          } else {
+            setError("El quiz asociado a esta sala ya no existe.");
+            setStep("identify");
+          }
+        } catch (err) {
+          setError("Error cargando el quiz: " + err.message);
+          setStep("identify");
+        }
+      } else if (d.status === "rejected") {
+        setStep("rejected");
+      }
+    });
+    return () => unsub();
+  }, [step, requestId, session?.id]);
+
+  // Cancelar una solicitud de ingreso tardío mientras se espera respuesta
+  const cancelJoinRequest = async () => {
+    try {
+      if (session?.id && requestId) {
+        await window.QS.db.collection("liveSessions").doc(session.id)
+          .collection("joinRequests").doc(requestId)
+          .update({ status: "cancelled", resolvedAt: Date.now() });
+      }
+    } catch (err) {
+      console.error("Error cancelando solicitud:", err);
+    }
+    setRequestId(null);
+    setStep("identify");
+  };
+
   const handleCheckCode = async () => {
     setError("");
     if (code.length !== 6) {
@@ -1929,14 +2142,12 @@ function StudentJoinLive({ initialCode, onCancel }) {
       // Si ya estuvo en esta sala, reconectar directo
       const reconnected = await tryReconnect(code);
       if (reconnected) return;
-      const snap = await window.QS.db.collection("liveSessions")
-        .where("code", "==", code).where("status", "==", "lobby").limit(1).get();
-      if (snap.empty) {
-        setError("Código no encontrado o la sala ya empezó.");
+      const found = await findActiveSessionByCode(code);
+      if (!found) {
+        setError("Código no encontrado o la sala ya terminó.");
         return;
       }
-      const doc = snap.docs[0];
-      setSession({ id: doc.id, ...doc.data() });
+      setSession(found);
       setStep("identify");
     } catch (err) {
       setError("Error: " + err.message);
@@ -1957,52 +2168,90 @@ function StudentJoinLive({ initialCode, onCancel }) {
       setError("La sala no tiene quiz asociado. Pídele al profesor que cree una nueva sala.");
       return;
     }
-    setStep("joining");
-    try {
-      const pid = "p-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
-      const participantData = {
-        id: pid,
-        name: name.trim(),
-        course: course.trim(),
-        partnerName: (session.pairMode && partnerName.trim()) ? partnerName.trim() : null,
-        joinedAt: Date.now(),
-        score: 0,
-      };
-      const updateKey = `participants.${pid}`;
-      await window.QS.db.collection("liveSessions").doc(session.id).update({
-        [updateKey]: participantData,
-      });
-      setParticipantId(pid);
 
-      // Guardar para reconexión tras recarga/cierre de pestaña
-      saveLiveSession(session.code, {
-        sessionId: session.id,
-        participantId: pid,
-        name: name.trim(),
-        course: course.trim(),
-        savedAt: Date.now(),
-      });
+    // Tope de ingresos por estudiante (mismo nombre + curso), cuenta tanto la
+    // entrada normal por el lobby como los ingresos tardíos ya aprobados.
+    const identityKey = (name.trim() + "|" + course.trim()).toLowerCase();
+    const priorEntries = (session.joinCounts && session.joinCounts[identityKey]) || 0;
+    if (priorEntries >= 2) {
+      setError("Ya ingresaste el máximo de veces permitido a esta sala (2).");
+      return;
+    }
 
-      // Cargar quiz con manejo tolerante
+    const partnerToSave = (session.pairMode && partnerName.trim()) ? partnerName.trim() : null;
+
+    // La sala sigue en el lobby: entra directo, sin aprobación.
+    if (session.status === "lobby") {
+      setStep("joining");
       try {
-        const quizDoc = await window.QS.db.collection("quizzes").doc(session.quizId).get();
-        if (quizDoc.exists) {
-          const quizData = { id: quizDoc.id, ...quizDoc.data() };
-          setQuiz(quizData);
-          setStep("live");
-        } else {
-          console.error("Quiz no existe en Firestore. quizId:", session.quizId);
-          setError("El quiz asociado a esta sala no existe.");
+        const pid = "p-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
+        const participantData = {
+          id: pid,
+          name: name.trim(),
+          course: course.trim(),
+          partnerName: partnerToSave,
+          joinedAt: Date.now(),
+          score: 0,
+        };
+        await window.QS.db.collection("liveSessions").doc(session.id).update({
+          [`participants.${pid}`]: participantData,
+          [`joinCounts.${identityKey}`]: firebase.firestore.FieldValue.increment(1),
+        });
+        setParticipantId(pid);
+
+        // Guardar para reconexión tras recarga/cierre de pestaña
+        saveLiveSession(session.code, {
+          sessionId: session.id,
+          participantId: pid,
+          name: name.trim(),
+          course: course.trim(),
+          savedAt: Date.now(),
+        });
+
+        // Cargar quiz con manejo tolerante
+        try {
+          const quizDoc = await window.QS.db.collection("quizzes").doc(session.quizId).get();
+          if (quizDoc.exists) {
+            const quizData = { id: quizDoc.id, ...quizDoc.data() };
+            setQuiz(quizData);
+            setStep("live");
+          } else {
+            console.error("Quiz no existe en Firestore. quizId:", session.quizId);
+            setError("El quiz asociado a esta sala no existe.");
+            setStep("identify");
+          }
+        } catch (quizErr) {
+          console.error("Error leyendo quiz:", quizErr);
+          setError("Permiso denegado al leer el quiz. Detalle: " + quizErr.message);
           setStep("identify");
         }
-      } catch (quizErr) {
-        console.error("Error leyendo quiz:", quizErr);
-        setError("Permiso denegado al leer el quiz. Detalle: " + quizErr.message);
+      } catch (err) {
+        console.error("Error al unirse:", err);
+        setError("Error al unirse: " + err.message);
         setStep("identify");
       }
+      return;
+    }
+
+    // El quiz ya empezó: se crea una solicitud y el docente decide si entra.
+    // No hay puntos retroactivos — al aprobarse, el participante arranca
+    // en 0 y solo puede responder desde la pregunta que esté en curso.
+    setStep("requesting");
+    try {
+      const reqRef = await window.QS.db.collection("liveSessions").doc(session.id)
+        .collection("joinRequests").add({
+          name: name.trim(),
+          course: course.trim(),
+          partnerName: partnerToSave,
+          identityKey,
+          status: "pending",
+          requestedAt: Date.now(),
+        });
+      setRequestId(reqRef.id);
+      setStep("waitingApproval");
     } catch (err) {
-      console.error("Error al unirse:", err);
-      setError("Error al unirse: " + err.message);
+      console.error("Error solicitando ingreso:", err);
+      setError("Error al enviar la solicitud: " + err.message);
       setStep("identify");
     }
   };
@@ -2061,6 +2310,15 @@ function StudentJoinLive({ initialCode, onCancel }) {
               </p>
               <p style={{ fontSize: 16, fontWeight: 700 }}>{session?.quizTitle}</p>
             </div>
+            {session?.status !== "lobby" && (
+              <div style={{
+                marginBottom: 16, padding: 12, background: "#fef3c7",
+                borderRadius: 10, fontSize: 13, color: "#92400e", lineHeight: 1.5,
+              }}>
+                ⏳ El quiz ya empezó. Puedes pedir unirte, pero tu profesor debe
+                aprobarlo y no recibirás los puntos de las preguntas ya jugadas.
+              </div>
+            )}
             <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
               Tu nombre completo
             </label>
@@ -2091,7 +2349,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
             )}
             {error && <p style={{ color: "var(--red-500)", fontSize: 13, marginTop: 8 }}>{error}</p>}
             <button onClick={handleJoin} className="qs-btn qs-btn--success qs-btn--lg" style={{ width: "100%", marginTop: 16 }}>
-              🚀 Entrar al quiz
+              {session?.status !== "lobby" ? "📨 Solicitar ingreso" : "🚀 Entrar al quiz"}
             </button>
           </>
         )}
@@ -2100,6 +2358,49 @@ function StudentJoinLive({ initialCode, onCancel }) {
           <div style={{ textAlign: "center", padding: 20 }}>
             <div style={{ fontSize: 32 }}>🔍</div>
             <p>Verificando código de sala...</p>
+          </div>
+        )}
+
+        {step === "requesting" && (
+          <div style={{ textAlign: "center", padding: 20 }}>
+            <div style={{ fontSize: 32 }}>📨</div>
+            <p>Enviando tu solicitud...</p>
+          </div>
+        )}
+
+        {step === "waitingApproval" && (
+          <div style={{ textAlign: "center", padding: 20 }}>
+            <div style={{ fontSize: 32 }} className="qs-bob">⏳</div>
+            <p style={{ fontWeight: 700, marginTop: 8, marginBottom: 6 }}>
+              Esperando aprobación del profesor...
+            </p>
+            <p style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 16 }}>
+              El quiz ya empezó — tu profesor debe autorizar tu ingreso.
+            </p>
+            <button onClick={cancelJoinRequest} className="qs-btn qs-btn--ghost qs-btn--sm">
+              Cancelar solicitud
+            </button>
+          </div>
+        )}
+
+        {step === "rejected" && (
+          <div style={{ textAlign: "center", padding: 20 }}>
+            <div style={{ fontSize: 32 }}>🚫</div>
+            <p style={{ fontWeight: 700, marginTop: 8, marginBottom: 6 }}>
+              Tu profesor no aprobó el ingreso
+            </p>
+            <p style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 16 }}>
+              Puedes intentarlo de nuevo si crees que fue un error.
+            </p>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+              <button
+                onClick={() => { setRequestId(null); setStep("identify"); }}
+                className="qs-btn qs-btn--primary qs-btn--sm"
+              >Reintentar</button>
+              {onCancel && (
+                <button onClick={onCancel} className="qs-btn qs-btn--ghost qs-btn--sm">Salir</button>
+              )}
+            </div>
           </div>
         )}
 
@@ -2708,14 +3009,34 @@ function CheckSelector({ options, colors, onSubmit }) {
 
 function TextAnswer({ onSubmit, placeholder = "Escribe tu respuesta..." }) {
   const [text, setText] = useStateL("");
+  // Textarea vertical que crece hacia abajo con el contenido (en vez del
+  // input de una sola línea horizontal, difícil de leer en respuestas largas).
+  // El envío ya NO ocurre con Enter (permite escribir varias líneas):
+  // solo el botón "Enviar respuesta" confirma.
+  const taRef = useRefL(null);
+  // Recalcular el alto SOLO cuando cambia el texto (no en cada render): el
+  // padre re-renderiza cada ~200ms por el cronómetro de la pregunta, y si el
+  // ajuste de altura corriera en cada uno de esos renders, el navegador
+  // reinterpretaba el textarea (con foco) como "recién movido" y hacía scroll
+  // automático hacia él — justo cuando el estudiante bajaba a pulsar el botón.
+  useEffectL(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.max(90, el.scrollHeight) + "px";
+  }, [text]);
   return (
     <>
-      <input
-        type="text" className="qs-input" autoFocus
+      <textarea
+        className="qs-input" autoFocus
         placeholder={placeholder}
-        value={text} onChange={e => setText(e.target.value)}
-        onKeyDown={e => e.key === "Enter" && text.trim() && onSubmit(text)}
-        style={{ fontSize: 18, padding: 16, marginBottom: 12 }}
+        value={text}
+        onChange={e => setText(e.target.value)}
+        ref={taRef}
+        style={{
+          fontSize: 18, padding: 16, marginBottom: 12, minHeight: 90,
+          resize: "vertical", lineHeight: 1.5, fontFamily: "inherit",
+        }}
       />
       <button
         onClick={() => text.trim() && onSubmit(text)}
@@ -2971,6 +3292,7 @@ function LiveHistoryPanel({ onBack }) {
           studentName: p.name || "Sin nombre",
           studentCourse: p.course || "Sin curso",
           partnerName: p.partnerName || null,
+          lateJoin: p.lateJoin || false,
           examDate: today,
           mode: "live",
           sessionCode: s.code,

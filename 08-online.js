@@ -1287,7 +1287,16 @@ function OnlineResultsPanel({ onBack }) {
                           <tr key={s.id} onClick={() => setReviewing(s)}
                             style={{ borderTop: "1px solid var(--ink-100)", cursor: "pointer" }}
                             title="Clic para ver respuestas">
-                            <td style={{ padding: 12, fontWeight: 600 }}>{s.studentName}</td>
+                            <td style={{ padding: 12, fontWeight: 600 }}>
+                              {s.studentName}
+                              {s.lateJoin && (
+                                <span title="Se unió después de que empezó la sala en vivo (no jugó todas las preguntas)"
+                                  style={{
+                                    marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 7px",
+                                    borderRadius: 999, background: "var(--amber-400)", color: "#7c2d12",
+                                  }}>🕐 tarde</span>
+                              )}
+                            </td>
                             <td style={{ padding: 12, color: "var(--ink-500)" }}>{s.partnerName || "—"}</td>
                             <td style={{ padding: 12 }}>{s.studentCourse}</td>
                             <td style={{ padding: 12 }}>{s.examDate}</td>
