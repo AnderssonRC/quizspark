@@ -53,7 +53,7 @@ function shuffleArr(arr) {
 // secondsTaken: cuánto demoró en responder
 // totalSeconds: tiempo total de la pregunta
 function calculatePoints(q, isCorrect, secondsTaken, totalSeconds) {
-  const pCorrect = q.pointsCorrect ?? 100;
+  const pCorrect = q.pointsCorrect ?? 10;
   const pWrong = q.pointsWrong ?? 0;
   const pBonus = q.pointsSpeedBonus ?? 0;
 
@@ -70,7 +70,7 @@ function calculateMaxPoints(quiz) {
   return (quiz.questions || []).reduce((sum, q) => {
     // Las diapositivas no califican
     if (q.type === "slide") return sum;
-    const correct = q.pointsCorrect ?? 100;
+    const correct = q.pointsCorrect ?? 10;
     const bonus = q.pointsSpeedBonus ?? 0;
     return sum + correct + bonus;
   }, 0);
@@ -496,7 +496,7 @@ function LiveAnswersPanel({ currentQ, answersThisQ, session }) {
 // ============================================================
 function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants, onSkip, onReveal, onAddTime, onFinish, onTogglePause, onRelaunch, onShowParticipants }) {
   const extraSeconds = session.extraSeconds || 0;
-  const totalSeconds = (currentQ.timer || 20) + extraSeconds;
+  const totalSeconds = (currentQ.timer || 60) + extraSeconds;
   const startedAt = session.questionStartedAt || Date.now();
   const isPaused = !!session.pausedAt;
   const [secondsLeft, setSecondsLeft] = useStateL(totalSeconds);
@@ -1236,7 +1236,7 @@ function HostFinal({ session, quiz, onFinish }) {
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ fontSize: 56, marginBottom: 8 }}>🏆</div>
-          <h1 style={{ fontSize: 32, marginBottom: 8 }}>¡Quiz terminado!</h1>
+          <h1 style={{ fontSize: 32, marginBottom: 8 }}>{quiz.mode === "workshop" ? "¡Taller terminado!" : "¡Quiz terminado!"}</h1>
           <p style={{ opacity: 0.85 }}>{quiz.title}</p>
         </div>
 
@@ -1447,6 +1447,9 @@ function LiveSessionHost({ quizId, onExit }) {
           quizId: quizData.id,
           quizTitle: quizData.title || "Quiz",
           pairMode: quizData.pairMode || false,
+          mode: quizData.mode || "quiz",
+          learningObjective: quizData.learningObjective || "",
+          introText: quizData.introText || "",
           ownerId: uid,
           status: "lobby",
           currentQuestionIdx: -1,
@@ -1712,7 +1715,7 @@ function LiveSessionHost({ quizId, onExit }) {
   const gradeLiveAnswer = async (pid, result) => {
     const qIdx = session.currentQuestionIdx;
     const q = quiz.questions[qIdx];
-    const pCorrect = q.pointsCorrect ?? 100;
+    const pCorrect = q.pointsCorrect ?? 10;
     const pWrong = q.pointsWrong ?? 0;
     const points = result === "correct" ? pCorrect
       : result === "partial" ? Math.round(pCorrect / 2)
@@ -1742,6 +1745,31 @@ function LiveSessionHost({ quizId, onExit }) {
       }
     } catch (err) {
       console.error("Error calificando en vivo:", err);
+    }
+  };
+
+  // Taller Evaluativo (En vivo): calificación directa de 1 a 10 por respuesta
+  // abierta (sin las 3 etiquetas de correcto/parcial/incorrecto).
+  const gradeWorkshopAnswer = async (pid, value) => {
+    const qIdx = session.currentQuestionIdx;
+    const points = Math.max(1, Math.min(10, Math.round(value)));
+    const docId = `${pid}-${qIdx}`;
+    const answerRef = window.QS.db.collection("liveSessions").doc(sessionIdRef.current)
+      .collection("answers").doc(docId);
+    try {
+      const snap = await answerRef.get();
+      if (!snap.exists) return;
+      const prev = snap.data();
+      const prevPoints = prev.graded ? (prev.points || 0) : 0;
+      await answerRef.update({ graded: true, points, correct: points >= 6 });
+      const delta = points - prevPoints;
+      if (delta !== 0) {
+        await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+          [`participants.${pid}.score`]: firebase.firestore.FieldValue.increment(delta),
+        });
+      }
+    } catch (err) {
+      console.error("Error calificando taller en vivo:", err);
     }
   };
 
@@ -1817,7 +1845,7 @@ function LiveSessionHost({ quizId, onExit }) {
             userAnswer: ans?.answer ?? null,
             correct: ans?.correct ?? false,
             points: ans?.points ?? 0,
-            pointsMax: (q.pointsCorrect ?? 100) + (q.pointsSpeedBonus ?? 0),
+            pointsMax: (q.pointsCorrect ?? 10) + (q.pointsSpeedBonus ?? 0),
             needsReview,
             reviewed: false,
           };
@@ -1930,6 +1958,18 @@ function LiveSessionHost({ quizId, onExit }) {
     );
   }
   if (session.status === "showResults") {
+    // Taller Evaluativo (En vivo): pantalla de revelación propia, con
+    // calificación 1-10 en vez de las 3 etiquetas del quiz normal.
+    if (quiz.mode === "workshop" && window.WorkshopHostReveal) {
+      return (
+        <>
+          <window.WorkshopHostReveal session={session} quiz={quiz} currentQ={currentQ}
+            answersThisQ={answersThisQ} onNext={goNext} onGradeWorkshop={gradeWorkshopAnswer} />
+          {participantsModal}
+          {joinRequestsBanner}
+        </>
+      );
+    }
     return (
       <>
         <HostReveal session={session} quiz={quiz} currentQ={currentQ}
@@ -2310,6 +2350,14 @@ function StudentJoinLive({ initialCode, onCancel }) {
               </p>
               <p style={{ fontSize: 16, fontWeight: 700 }}>{session?.quizTitle}</p>
             </div>
+            {session?.mode === "workshop" && window.WorkshopHeader && (
+              <window.WorkshopHeader
+                title={session.quizTitle}
+                learningObjective={session.learningObjective}
+                introText={session.introText}
+                deliveryInfo="🔴 Sesión en vivo — conéctate cuando tu profesor lo indique"
+              />
+            )}
             {session?.status !== "lobby" && (
               <div style={{
                 marginBottom: 16, padding: 12, background: "#fef3c7",
@@ -2349,7 +2397,9 @@ function StudentJoinLive({ initialCode, onCancel }) {
             )}
             {error && <p style={{ color: "var(--red-500)", fontSize: 13, marginTop: 8 }}>{error}</p>}
             <button onClick={handleJoin} className="qs-btn qs-btn--success qs-btn--lg" style={{ width: "100%", marginTop: 16 }}>
-              {session?.status !== "lobby" ? "📨 Solicitar ingreso" : "🚀 Entrar al quiz"}
+              {session?.status !== "lobby"
+                ? "📨 Solicitar ingreso"
+                : session?.mode === "workshop" ? "🔌 Conectar al Taller" : "🚀 Entrar al quiz"}
             </button>
           </>
         )}
@@ -2497,7 +2547,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     if (!session || session.status !== "playing") return;
     const currentQ = quiz.questions[session.currentQuestionIdx];
     if (!currentQ) return;
-    const totalSec = (currentQ.timer || 20) + (session.extraSeconds || 0);
+    const totalSec = (currentQ.timer || 60) + (session.extraSeconds || 0);
     const startedAt = session.questionStartedAt || Date.now();
     const isPaused = !!session.pausedAt;
     const tick = () => {
@@ -2523,7 +2573,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     if (answeredAtIdx === session.currentQuestionIdx) return;
     const qIdx = session.currentQuestionIdx;
     const currentQ = quiz.questions[qIdx];
-    const totalSec = currentQ.timer || 20;
+    const totalSec = currentQ.timer || 60;
     const startedAt = session.questionStartedAt || Date.now();
     const secondsTaken = (Date.now() - startedAt) / 1000;
     const isSurvey = quiz.mode === "survey";
@@ -2615,7 +2665,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
           </p>
           <div style={{ padding: 14, background: "var(--violet-50)", borderRadius: 10, marginBottom: 16 }}>
             <p style={{ fontSize: 14, color: "var(--violet-700)", fontWeight: 600 }}>
-              Esperando que el profesor inicie el quiz...
+              {quiz?.mode === "workshop" ? "Espera a que el Docente Comience" : "Esperando que el profesor inicie el quiz..."}
             </p>
           </div>
           <p style={{ fontSize: 12, color: "var(--ink-500)" }}>
@@ -2646,7 +2696,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
           <div style={{ fontSize: 48, marginBottom: 8 }}>
             {myRank === 1 ? "🥇" : myRank === 2 ? "🥈" : myRank === 3 ? "🥉" : "🏁"}
           </div>
-          <h2 style={{ fontSize: 22, marginBottom: 4 }}>¡Quiz terminado!</h2>
+          <h2 style={{ fontSize: 22, marginBottom: 4 }}>{quiz.mode === "workshop" ? "¡Taller terminado!" : "¡Quiz terminado!"}</h2>
           <p style={{ color: "var(--ink-500)", marginBottom: 16, fontSize: 14 }}>
             Quedaste en el puesto <b>{myRank}</b> de {totalPlayers}
           </p>
@@ -3279,7 +3329,7 @@ function LiveHistoryPanel({ onBack }) {
               userAnswer: ans?.answer ?? null,
               correct: ans?.correct ?? false,
               points: ans?.points ?? 0,
-              pointsMax: (q.pointsCorrect ?? 100) + (q.pointsSpeedBonus ?? 0),
+              pointsMax: (q.pointsCorrect ?? 10) + (q.pointsSpeedBonus ?? 0),
               needsReview,
               reviewed: false,
             };

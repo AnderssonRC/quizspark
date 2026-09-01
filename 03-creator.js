@@ -462,8 +462,8 @@ function Editor({ quizId, onBack, onLaunch }) {
       id: "qq-" + Date.now(),
       type: "multi",
       text: "",
-      timer: 20,
-      pointsCorrect: 100,
+      timer: 60,
+      pointsCorrect: 10,
       pointsWrong: 0,
       pointsSpeedBonus: 0,
       options: [
@@ -504,8 +504,8 @@ function Editor({ quizId, onBack, onLaunch }) {
           if (!data.questions || data.questions.length === 0) {
             data.questions = [{
               id: "qq-" + Date.now(), type: "multi",
-              text: "", timer: 20,
-              pointsCorrect: 100, pointsWrong: 0, pointsSpeedBonus: 0,
+              text: "", timer: 60,
+              pointsCorrect: 10, pointsWrong: 0, pointsSpeedBonus: 0,
               options: [
                 { id: "a", text: "", correct: true },
                 { id: "b", text: "", correct: false },
@@ -515,7 +515,7 @@ function Editor({ quizId, onBack, onLaunch }) {
             // Aplicar defaults de puntaje a preguntas sin esos campos (quizzes viejos)
             data.questions = data.questions.map(q => ({
               ...q,
-              pointsCorrect: q.pointsCorrect ?? 100,
+              pointsCorrect: q.pointsCorrect ?? 10,
               pointsWrong: q.pointsWrong ?? 0,
               pointsSpeedBonus: q.pointsSpeedBonus ?? 0,
             }));
@@ -598,7 +598,11 @@ function Editor({ quizId, onBack, onLaunch }) {
 
   const addQuestion = (type) => {
     const id = "qq-" + Date.now();
-    const base = { id, text: "", timer: 20, pointsCorrect: 100, pointsWrong: 0, pointsSpeedBonus: 0 };
+    // Taller Evaluativo: sin puntaje configurable (10/0 fijo, ver motor del taller)
+    // y con un temporizador sugerido más largo (5 min) acorde a preguntas de desarrollo.
+    const base = quiz.mode === "workshop"
+      ? { id, text: "", timer: 300 }
+      : { id, text: "", timer: 60, pointsCorrect: 10, pointsWrong: 0, pointsSpeedBonus: 0 };
     let q;
     if (type === "multi") q = { ...base, type, options: [
       { id: "a", text: "", correct: false }, { id: "b", text: "", correct: false },
@@ -686,15 +690,20 @@ function Editor({ quizId, onBack, onLaunch }) {
               <I.lock size={14}/> Calificación y Reglas
             </button>
           )}
-          <button onClick={handlePublishClick} disabled={saving} className="qs-btn qs-btn--ghost qs-btn--sm">
-            🌐 Publicar online
-          </button>
+          {/* Para Taller Evaluativo, solo tiene sentido uno de los dos canales según el submodo elegido */}
+          {(quiz.mode !== "workshop" || (quiz.workshopMode || "live") !== "live") && (
+            <button onClick={handlePublishClick} disabled={saving} className="qs-btn qs-btn--ghost qs-btn--sm">
+              🌐 Publicar online
+            </button>
+          )}
           <button onClick={handleSave} disabled={saving} className="qs-btn qs-btn--primary qs-btn--sm">
             {saving ? "Guardando..." : "💾 Guardar"}
           </button>
-          <button className="qs-btn qs-btn--success" onClick={handleLaunchClick} disabled={saving}>
-            {saving ? "⏳ Guardando..." : "🎮 Sala en vivo"}
-          </button>
+          {(quiz.mode !== "workshop" || (quiz.workshopMode || "live") === "live") && (
+            <button className="qs-btn qs-btn--success" onClick={handleLaunchClick} disabled={saving}>
+              {saving ? "⏳ Guardando..." : quiz.mode === "workshop" ? "🎮 Iniciar Taller en vivo" : "🎮 Sala en vivo"}
+            </button>
+          )}
         </div>
       </div>
 
@@ -872,8 +881,8 @@ function Editor({ quizId, onBack, onLaunch }) {
               </span>
               <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--ink-500)", fontSize: 13, fontWeight: 600 }}>
                 <I.clock size={14}/>
-                <input type="number" value={active.timer}
-                  onChange={e => updateQuestion({ timer: +e.target.value })}
+                <NumberField value={active.timer} fallback={60}
+                  onChange={v => updateQuestion({ timer: v })}
                   style={{ width: 50, border: "1px solid var(--ink-200)", borderRadius: 8, padding: "4px 8px", textAlign: "center" }}/>
                 seg
               </span>
@@ -934,7 +943,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                 border: "1px solid var(--violet-200)", background: "var(--violet-50)",
                 borderRadius: 14, padding: 14, marginBottom: 16,
               }}>
-                {active.type === "text" && quiz.mode !== "survey" && (
+                {active.type === "text" && quiz.mode === "quiz" && (
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: "var(--ink-700)", marginBottom: 8 }}>
                       ¿Cómo calificar esta respuesta abierta?
@@ -971,17 +980,12 @@ function Editor({ quizId, onBack, onLaunch }) {
               </div>
             )}
 
-            <textarea value={active.text} key={active.id}
-              onChange={e => updateQuestion({ text: e.target.value })}
-              ref={el => { if (el) { el.style.height = "auto"; el.style.height = Math.max(80, el.scrollHeight) + "px"; } }}
-              onInput={e => { e.target.style.height = "auto"; e.target.style.height = Math.max(80, e.target.scrollHeight) + "px"; }}
-              placeholder="Escribe tu pregunta aquí..."
-              style={{
-                width: "100%", border: "2px dashed var(--ink-200)", borderRadius: 16,
-                padding: 20, fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)",
-                resize: "none", outline: "none", minHeight: 80, marginBottom: 16,
-                background: "var(--ink-50)", color: "var(--ink-900)", overflow: "hidden",
-              }}/>
+            <QuestionTextEditor
+              key={active.id}
+              questionKey={active.id}
+              value={active.text}
+              onChange={v => updateQuestion({ text: v })}
+            />
 
             {/* Vista previa de multimedia, junto a la pregunta (como la verán los estudiantes) */}
             {active.image && (
@@ -1140,8 +1144,22 @@ function Editor({ quizId, onBack, onLaunch }) {
                "💡 Acepta varias respuestas equivalentes"}
             </div>
 
+            {/* === Taller Evaluativo: puntaje fijo, sin configuración === */}
+            {quiz.mode === "workshop" && (
+              <div style={{
+                background: "rgba(234, 88, 12, 0.08)", border: "1px solid rgba(234, 88, 12, 0.35)",
+                borderRadius: 12, padding: 14, marginTop: 20, fontSize: 12, color: "#c2410c", lineHeight: 1.6,
+              }}>
+                🎯 <strong>Puntaje del Taller:</strong> las preguntas cerradas valen 10 puntos si son correctas
+                (0 si no). Las preguntas abiertas las calificas tú de 1 a 10 al revisar cada respuesta —
+                {quiz.workshopMode === "offline"
+                  ? " en modo Offline le pones una sola nota a toda la entrega en Resultados."
+                  : " en modo En vivo, al revelar cada pregunta."}
+              </div>
+            )}
+
             {/* === Puntuación de esta pregunta (movida abajo, solo modo quiz) === */}
-            {quiz.mode !== "survey" && (
+            {quiz.mode === "quiz" && (
             <div style={{
               background: "var(--violet-50)", border: "1px solid var(--violet-200)",
               borderRadius: 12, padding: 14, marginTop: 20,
@@ -1152,25 +1170,25 @@ function Editor({ quizId, onBack, onLaunch }) {
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))", gap: 10 }}>
                 <label style={{ display: "block" }}>
                   <span style={{ fontSize: 11, color: "var(--ink-500)", fontWeight: 600, display: "block", marginBottom: 4 }}>Si ACIERTA</span>
-                  <input type="number" value={active.pointsCorrect ?? 100}
-                    onChange={e => updateQuestion({ pointsCorrect: +e.target.value })}
+                  <NumberField value={active.pointsCorrect} fallback={10}
+                    onChange={v => updateQuestion({ pointsCorrect: v })}
                     style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--ink-200)", fontWeight: 700, fontSize: 16, color: "var(--emerald-600)" }}/>
                 </label>
                 <label style={{ display: "block" }}>
                   <span style={{ fontSize: 11, color: "var(--ink-500)", fontWeight: 600, display: "block", marginBottom: 4 }}>Si FALLA</span>
-                  <input type="number" value={active.pointsWrong ?? 0}
-                    onChange={e => updateQuestion({ pointsWrong: +e.target.value })}
+                  <NumberField value={active.pointsWrong} fallback={0}
+                    onChange={v => updateQuestion({ pointsWrong: v })}
                     style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--ink-200)", fontWeight: 700, fontSize: 16, color: "var(--red-500)" }}/>
                 </label>
                 <label style={{ display: "block" }}>
                   <span style={{ fontSize: 11, color: "var(--ink-500)", fontWeight: 600, display: "block", marginBottom: 4 }}>Bonus VELOCIDAD</span>
-                  <input type="number" value={active.pointsSpeedBonus ?? 0}
-                    onChange={e => updateQuestion({ pointsSpeedBonus: +e.target.value })}
+                  <NumberField value={active.pointsSpeedBonus} fallback={0}
+                    onChange={v => updateQuestion({ pointsSpeedBonus: v })}
                     style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--ink-200)", fontWeight: 700, fontSize: 16, color: "var(--amber-500)" }}/>
                 </label>
               </div>
               <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
-                ℹ️ Por defecto: 100 si acierta, 0 si falla. El bonus de velocidad solo aplica en modo En vivo.
+                ℹ️ Por defecto: 10 si acierta, 0 si falla. El bonus de velocidad solo aplica en modo En vivo.
               </p>
             </div>
             )}
@@ -1223,22 +1241,26 @@ function Editor({ quizId, onBack, onLaunch }) {
           </Field>
 
           <Field label="Tipo de actividad">
-            <div style={{ display: "flex", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
               {[
                 { id: "quiz", label: "🎯 Quiz (con nota)" },
                 { id: "survey", label: "📊 Encuesta" },
+                { id: "workshop", label: "🛠️ Taller Evaluativo" },
               ].map(opt => {
                 const activeMode = (quiz.mode || "quiz") === opt.id;
+                const CONFIRM_MSG = {
+                  survey: "¿Cambiar a modo Encuesta? Las preguntas no tendrán respuesta correcta ni puntaje.",
+                  quiz: "¿Cambiar a modo Quiz? Podrás marcar respuestas correctas y asignar puntaje.",
+                  workshop: "¿Cambiar a modo Taller Evaluativo? Las preguntas cerradas valen 10 puntos automáticos y las abiertas las calificas tú (1-10 en vivo, o una sola nota en modo Offline).",
+                };
                 return (
                   <button key={opt.id} onClick={() => {
                     if (opt.id === quiz.mode) return;
-                    if (!confirm(opt.id === "survey"
-                      ? "¿Cambiar a modo Encuesta? Las preguntas no tendrán respuesta correcta ni puntaje."
-                      : "¿Cambiar a modo Quiz? Podrás marcar respuestas correctas y asignar puntaje.")) return;
-                    setQuiz({ ...quiz, mode: opt.id });
+                    if (!confirm(CONFIRM_MSG[opt.id])) return;
+                    setQuiz({ ...quiz, mode: opt.id, workshopMode: quiz.workshopMode || "live" });
                   }}
                     style={{
-                      flex: 1, padding: "10px 6px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+                      padding: "10px 6px", borderRadius: 10, fontSize: 12, fontWeight: 700,
                       background: activeMode ? "var(--violet-100)" : "var(--ink-50)",
                       color: activeMode ? "var(--violet-700)" : "var(--ink-500)",
                       border: activeMode ? "1px solid var(--violet-400)" : "1px solid var(--ink-200)",
@@ -1251,7 +1273,16 @@ function Editor({ quizId, onBack, onLaunch }) {
                 En modo encuesta se recogen opiniones sin calificar. Útil para sondeos, votaciones y lluvia de ideas.
               </p>
             )}
+            {quiz.mode === "workshop" && (
+              <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
+                Preguntas cerradas y abiertas, calificación manual, con presentación e ingreso propios para el estudiante.
+              </p>
+            )}
           </Field>
+
+          {quiz.mode === "workshop" && window.WorkshopEditorFields && (
+            <window.WorkshopEditorFields quiz={quiz} setQuiz={setQuiz} />
+          )}
 
           <Field label="Modo parejas">
             <Toggle label="👥 Trabajo en parejas" value={!!quiz.pairMode}
@@ -1369,10 +1400,88 @@ function Toggle({ label, defaultOn, value, onChange }) {
   );
 }
 
+// Input numérico que no se queda "atascado" en 0 al editar: mientras el
+// usuario escribe, el campo puede quedar realmente vacío (en vez de forzar
+// un "0" que hay que borrar aparte); el valor solo se confirma al padre
+// cuando es un número válido, y si se deja vacío al salir del campo, vuelve
+// al valor sugerido (fallback).
+function NumberField({ value, onChange, fallback = 0, ...rest }) {
+  const [text, setText] = useStateC(String(value ?? fallback));
+  useEffectC(() => { setText(String(value ?? fallback)); }, [value, fallback]);
+  return (
+    <input
+      type="number"
+      value={text}
+      onChange={e => {
+        const raw = e.target.value;
+        setText(raw);
+        if (raw !== "" && raw !== "-" && !isNaN(raw)) onChange(+raw);
+      }}
+      onBlur={() => {
+        if (text === "" || isNaN(+text)) { setText(String(fallback)); onChange(fallback); }
+      }}
+      {...rest}
+    />
+  );
+}
+
+// Recuadro grande de "Escribe tu pregunta aquí...". Mantiene el texto en
+// estado LOCAL mientras se escribe, en vez de reenviar cada tecla al estado
+// del quiz completo: ese estado alimenta TODA la lista de preguntas de la
+// izquierda y el panel de configuración de la derecha, así que actualizarlo
+// en cada tecla obliga a React a re-renderizar todo el editor en cada tecla
+// — con el panel del Taller Evaluativo (más campos) ese costo se sentía
+// como lentitud/bloqueo al escribir. Aquí se sincroniza con el quiz al
+// perder el foco (clic en otra pregunta, en Guardar, etc. — todo eso quita
+// el foco del textarea ANTES de disparar su propia acción) y, como respaldo,
+// con un pequeño debounce mientras se escribe sin pausar.
+function QuestionTextEditor({ value, onChange, questionKey }) {
+  const [text, setText] = useStateC(value);
+  const taRef = useRefC(null);
+  const debounceRef = useRefC(null);
+  const onChangeRef = useRefC(onChange);
+  onChangeRef.current = onChange;
+
+  // Al cambiar de pregunta: reflejar su texto y reajustar el alto una vez.
+  useEffectC(() => { setText(value); }, [questionKey]);
+  useEffectC(() => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = Math.max(80, el.scrollHeight) + "px";
+  }, [questionKey]);
+  useEffectC(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  const flush = (v) => {
+    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
+    onChangeRef.current(v);
+  };
+
+  return (
+    <textarea value={text} ref={taRef}
+      onChange={e => {
+        const v = e.target.value;
+        setText(v);
+        e.target.style.height = "auto";
+        e.target.style.height = Math.max(80, e.target.scrollHeight) + "px";
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => flush(v), 300);
+      }}
+      onBlur={() => flush(text)}
+      placeholder="Escribe tu pregunta aquí..."
+      style={{
+        width: "100%", border: "2px dashed var(--ink-200)", borderRadius: 16,
+        padding: 20, fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)",
+        resize: "none", outline: "none", minHeight: 80, marginBottom: 16,
+        background: "var(--ink-50)", color: "var(--ink-900)", overflow: "hidden",
+      }}/>
+  );
+}
+
 function SettingsModal({ quiz, setQuiz, onClose }) {
   // Calcular total máximo del quiz sumando pointsCorrect + pointsSpeedBonus de cada pregunta
   const totalMaxPoints = (quiz.questions || []).reduce((sum, q) => {
-    const correct = q.pointsCorrect ?? 100;
+    const correct = q.pointsCorrect ?? 10;
     const bonus = q.pointsSpeedBonus ?? 0;
     return sum + correct + bonus;
   }, 0);
@@ -1452,18 +1561,18 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
               marginBottom: 8, fontSize: 13,
             }}>
               <span style={{ minWidth: 30, color: "var(--ink-500)" }}>De</span>
-              <input type="number" value={range.from}
-                onChange={e => updateRange(i, "from", +e.target.value)}
+              <NumberField value={range.from} fallback={0}
+                onChange={v => updateRange(i, "from", v)}
                 style={{ width: 80, padding: 6, borderRadius: 6, border: "1px solid var(--ink-200)", textAlign: "center" }}
               />
               <span style={{ color: "var(--ink-500)" }}>a</span>
-              <input type="number" value={range.to}
-                onChange={e => updateRange(i, "to", +e.target.value)}
+              <NumberField value={range.to} fallback={0}
+                onChange={v => updateRange(i, "to", v)}
                 style={{ width: 80, padding: 6, borderRadius: 6, border: "1px solid var(--ink-200)", textAlign: "center" }}
               />
               <span style={{ color: "var(--ink-500)" }}>→ nota</span>
-              <input type="number" step="0.1" value={range.grade}
-                onChange={e => updateRange(i, "grade", +e.target.value)}
+              <NumberField value={range.grade} fallback={0} step="0.1"
+                onChange={v => updateRange(i, "grade", v)}
                 style={{
                   width: 70, padding: 6, borderRadius: 6, border: "1px solid var(--violet-300)",
                   textAlign: "center", fontWeight: 700, color: "var(--violet-700)",
@@ -1497,4 +1606,4 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
   );
 }
 
-Object.assign(window, { TopNav, Dashboard, Editor });
+Object.assign(window, { TopNav, Dashboard, Editor, Field, Toggle, NumberField });

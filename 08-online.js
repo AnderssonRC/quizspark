@@ -98,7 +98,7 @@ function gradeSubmission(quiz, answers) {
     }
 
     // Puntos personalizados (con defaults para quizzes viejos)
-    const pCorrect = q.pointsCorrect ?? 100;
+    const pCorrect = q.pointsCorrect ?? 10;
     const pWrong = q.pointsWrong ?? 0;
     const pBonus = q.pointsSpeedBonus ?? 0;
 
@@ -406,6 +406,14 @@ function StudentExam({ examCode }) {
           setPhase("error");
           return;
         }
+        // Taller Evaluativo (Offline): presentación y flujo propios — se
+        // delega por completo, ya con el quiz cargado, para no mezclar su
+        // lógica (fecha de entrega, nota única) con el examen tradicional.
+        if (data.mode === "workshop") {
+          setQuiz(data);
+          setPhase("workshop");
+          return;
+        }
         // Preparar preguntas (con posible mezclado)
         let qs = [...(data.questions || [])];
         if (data.shuffleQuestions) qs = shuffle(qs);
@@ -458,7 +466,7 @@ function StudentExam({ examCode }) {
       return;
     }
     setQuestionStartedAt(Date.now());
-    setSecondsLeft(q.timer || 20);
+    setSecondsLeft(q.timer || 60);
   }, [phase, currentIdx]);
 
   // Tick del cronómetro: cada segundo descontamos. Si llega a 0, avanzamos.
@@ -467,7 +475,7 @@ function StudentExam({ examCode }) {
     if (questionStartedAt == null) return; // diapositiva: sin cronómetro
     const q = questionsOrder[currentIdx];
     if (!q) return;
-    const totalSec = q.timer || 20;
+    const totalSec = q.timer || 60;
     const interval = setInterval(() => {
       const elapsed = (Date.now() - questionStartedAt) / 1000;
       const left = Math.max(0, totalSec - elapsed);
@@ -523,6 +531,9 @@ function StudentExam({ examCode }) {
   };
 
   // ---------- Render por fase ----------
+  if (phase === "workshop") {
+    return <window.WorkshopOfflineFlow quiz={quiz} onExit={() => window.location.href = baseUrlNoQuery()} />;
+  }
   if (phase === "loading") {
     return (
       <div style={{
@@ -1057,13 +1068,18 @@ function OnlineResultsPanel({ onBack }) {
     return true;
   });
 
+  // Las entregas de Taller Offline sin calificar aún (score == null) no
+  // deben distorsionar el promedio ni el conteo de aprobados.
+  const graded = filtered.filter(x => x.score != null);
   const stats = {
     total: filtered.length,
-    avgScore: filtered.length > 0
-      ? (filtered.reduce((s, x) => s + (x.score || 0), 0) / filtered.length).toFixed(2)
+    avgScore: graded.length > 0
+      ? (graded.reduce((s, x) => s + (x.score || 0), 0) / graded.length).toFixed(2)
       : "0.00",
-    passing: filtered.filter(x => x.score >= 3.0).length,
+    passing: graded.filter(x => x.score >= 3.0).length,
   };
+  const isWorkshop = selectedQuiz?.mode === "workshop";
+  const isWorkshopOffline = isWorkshop && (selectedQuiz?.workshopMode || "live") === "offline";
 
   const deleteSubmission = async (id) => {
     if (!confirm("¿Eliminar este registro? Esta acción no se puede deshacer.")) return;
@@ -1083,7 +1099,7 @@ function OnlineResultsPanel({ onBack }) {
     // Construimos CSV (compatible con Excel y Google Sheets)
     const header = ["Nombre", "Compañero", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Enviado"];
     selectedQuiz.questions.forEach((q, i) => {
-      header.push(`P${i+1}: ${q.text.substring(0, 50)}`);
+      header.push(`P${i+1}: ${(q.text || "").substring(0, 50)}`);
       header.push(`P${i+1} ¿correcto?`);
       header.push(`P${i+1} puntos obtenidos`);
     });
@@ -1093,7 +1109,7 @@ function OnlineResultsPanel({ onBack }) {
         s.partnerName || "",
         s.studentCourse,
         s.examDate,
-        (s.score || 0).toFixed(2),
+        s.score != null ? s.score.toFixed(2) : "PENDIENTE",
         s.pointsEarned != null ? s.pointsEarned : "",
         s.pointsMax != null ? s.pointsMax : "",
         s.correct || 0,
@@ -1121,7 +1137,7 @@ function OnlineResultsPanel({ onBack }) {
           }
         }
         row.push(answerText);
-        row.push(det ? (det.correct ? "Sí" : "No") : "");
+        row.push(det ? (det.correct == null ? "" : (det.correct ? "Sí" : "No")) : "");
         row.push(det && det.points != null ? det.points : "");
       });
       return row;
@@ -1135,7 +1151,7 @@ function OnlineResultsPanel({ onBack }) {
       return s;
     };
 
-    const csv = [header, ...rows].map(r => r.map(escapeCsv).join(",")).join("\n");
+    const csv = [header, ...rows].map(r => r.map(escapeCsv).join(",")).join("\r\n");
     // BOM UTF-8 para que Excel abra bien acentos
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
@@ -1143,6 +1159,64 @@ function OnlineResultsPanel({ onBack }) {
     const safeTitle = (selectedQuiz.title || "quiz").replace(/[^a-z0-9_-]/gi, "_");
     a.href = url;
     a.download = `desafiate_${safeTitle}_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Excel del Taller Offline: TRANSPUESTO — cada FILA es una pregunta, cada
+  // COLUMNA es un estudiante (a diferencia del quiz normal, donde es al
+  // revés). Usa ";" como separador (el predeterminado de Excel en español,
+  // donde "," es el separador decimal) y aplana los saltos de línea de las
+  // respuestas largas dentro de una sola celda, para que nunca se vea "todo
+  // pegado" al abrirlo.
+  const downloadWorkshopExcel = () => {
+    if (!selectedQuiz || filtered.length === 0) {
+      alert("No hay registros para descargar.");
+      return;
+    }
+    const SEP = ";";
+    const esc = (val) => {
+      const s = String(val == null ? "" : val).replace(/\r?\n/g, " / ");
+      if (s.includes(SEP) || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"';
+      return s;
+    };
+    const answerFor = (s, q) => {
+      const det = (s.gradeDetail || []).find(d => d.qid === q.id);
+      const userAns = det ? det.userAnswer : (s.answers ? s.answers[q.id] : null);
+      if (userAns == null || userAns === "") return "(sin respuesta)";
+      if (Array.isArray(userAns)) {
+        if (q.type === "order") {
+          const byId = {}; (q.items || []).forEach(it => { byId[it.id] = it.text; });
+          return userAns.map(id => byId[id] || id).join(" → ");
+        }
+        return userAns.map(id => (q.options || []).find(o => o.id === id)?.text || id).join(" | ");
+      }
+      if (q.type === "multi" || q.type === "truefalse") {
+        return (q.options || []).find(o => o.id === userAns)?.text || String(userAns);
+      }
+      return String(userAns);
+    };
+
+    const rows = [];
+    rows.push(["", ...filtered.map(s => s.studentName)]);
+    rows.push(["Compañero", ...filtered.map(s => s.partnerName || "")]);
+    rows.push(["Curso", ...filtered.map(s => s.studentCourse)]);
+    rows.push(["Fecha", ...filtered.map(s => s.examDate)]);
+    rows.push(["Nota final (0-5)", ...filtered.map(s => s.score != null ? s.score.toFixed(2) : "PENDIENTE")]);
+    rows.push([]);
+    selectedQuiz.questions.filter(q => q.type !== "slide").forEach((q, i) => {
+      rows.push([`P${i + 1}: ${(q.text || "").substring(0, 80)}`, ...filtered.map(s => answerFor(s, q))]);
+    });
+
+    const csv = rows.map(r => r.map(esc).join(SEP)).join("\r\n");
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const safeTitle = (selectedQuiz.title || "taller").replace(/[^a-z0-9_-]/gi, "_");
+    a.href = url;
+    a.download = `desafiate_taller_${safeTitle}_${new Date().toISOString().slice(0, 10)}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1198,7 +1272,7 @@ function OnlineResultsPanel({ onBack }) {
             >
               {quizzes.map(q => (
                 <option key={q.id} value={q.id}>
-                  {q.title} {q.isPublished ? "🟢" : "⚪"}
+                  {q.mode === "workshop" ? "🛠️ " : ""}{q.title} {q.isPublished ? "🟢" : "⚪"}
                 </option>
               ))}
             </select>
@@ -1206,6 +1280,15 @@ function OnlineResultsPanel({ onBack }) {
 
           {selectedQuiz && (
             <>
+              {isWorkshop && (
+                <div style={{
+                  display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 12,
+                  padding: "5px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700,
+                  background: "rgba(234, 88, 12, 0.12)", color: "#c2410c", border: "1px solid rgba(234, 88, 12, 0.35)",
+                }}>
+                  🛠️ Taller Evaluativo · {isWorkshopOffline ? "Offline" : "En vivo"}
+                </div>
+              )}
               {/* Stats */}
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
                 <div className="qs-card" style={{ padding: 16 }}>
@@ -1252,7 +1335,7 @@ function OnlineResultsPanel({ onBack }) {
                     Limpiar
                   </button>
                 )}
-                <button onClick={downloadExcel} className="qs-btn qs-btn--success">
+                <button onClick={isWorkshopOffline ? downloadWorkshopExcel : downloadExcel} className="qs-btn qs-btn--success">
                   📥 Descargar Excel/CSV
                 </button>
               </div>
@@ -1285,8 +1368,11 @@ function OnlineResultsPanel({ onBack }) {
                         {filtered.map(s => {
                           return (
                           <tr key={s.id} onClick={() => setReviewing(s)}
-                            style={{ borderTop: "1px solid var(--ink-100)", cursor: "pointer" }}
-                            title="Clic para ver respuestas">
+                            style={{
+                              borderTop: "1px solid var(--ink-100)", cursor: "pointer",
+                              borderLeft: isWorkshop ? "3px solid #ea580c" : "3px solid transparent",
+                            }}
+                            title={isWorkshopOffline ? "Clic para ver y calificar la entrega" : "Clic para ver respuestas"}>
                             <td style={{ padding: 12, fontWeight: 600 }}>
                               {s.studentName}
                               {s.lateJoin && (
@@ -1301,11 +1387,18 @@ function OnlineResultsPanel({ onBack }) {
                             <td style={{ padding: 12 }}>{s.studentCourse}</td>
                             <td style={{ padding: 12 }}>{s.examDate}</td>
                             <td style={{ padding: 12 }}>
-                              <span style={{
-                                fontWeight: 700, padding: "2px 10px", borderRadius: 8,
-                                background: s.score >= 3 ? "#d1fae5" : "#fee2e2",
-                                color: s.score >= 3 ? "#065f46" : "#991b1b",
-                              }}>{(s.score || 0).toFixed(1)}</span>
+                              {s.score == null ? (
+                                <span style={{
+                                  fontWeight: 700, padding: "2px 10px", borderRadius: 8,
+                                  background: "rgba(234, 88, 12, 0.14)", color: "#c2410c",
+                                }}>⏳ Pendiente</span>
+                              ) : (
+                                <span style={{
+                                  fontWeight: 700, padding: "2px 10px", borderRadius: 8,
+                                  background: s.score >= 3 ? "#d1fae5" : "#fee2e2",
+                                  color: s.score >= 3 ? "#065f46" : "#991b1b",
+                                }}>{s.score.toFixed(1)}</span>
+                              )}
                             </td>
                             <td style={{ padding: 12 }}>{s.correct}/{s.total}</td>
                             <td style={{ padding: 12, color: "var(--violet-700)", fontWeight: 600 }}>
@@ -1339,7 +1432,18 @@ function OnlineResultsPanel({ onBack }) {
         </>
       )}
 
-      {reviewing && (
+      {reviewing && isWorkshopOffline && window.WorkshopGradeModal && (
+        <window.WorkshopGradeModal
+          submission={reviewing}
+          quiz={selectedQuiz}
+          onClose={() => setReviewing(null)}
+          onSaved={(updated) => {
+            setSubmissions(prev => prev.map(s => s.id === updated.id ? { ...s, ...updated } : s));
+            setReviewing(null);
+          }}
+        />
+      )}
+      {reviewing && !isWorkshopOffline && (
         <ReviewModal
           submission={reviewing}
           quiz={selectedQuiz}
@@ -1417,6 +1521,11 @@ function ReviewModal({ submission, quiz, onClose }) {
                   <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600,
                     color: det.correct ? "var(--emerald-600)" : "var(--red-500)" }}>
                     {det.correct ? "✓ Correcta" : "✗ Incorrecta"} · {det.points || 0}/{det.pointsMax || 0} pts
+                  </div>
+                )}
+                {isOpen && det.pointsMax > 0 && (
+                  <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: "var(--violet-700)" }}>
+                    🎯 Calificación asignada: {det.points || 0}/{det.pointsMax} pts
                   </div>
                 )}
               </div>
