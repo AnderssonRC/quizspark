@@ -1380,7 +1380,7 @@ function OnlineResultsPanel({ onBack }) {
                                   style={{
                                     marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 7px",
                                     borderRadius: 999, background: "var(--amber-400)", color: "#7c2d12",
-                                  }}>🕐 tarde</span>
+                                  }}>⏰ tarde</span>
                               )}
                             </td>
                             <td style={{ padding: 12, color: "var(--ink-500)" }}>{s.partnerName || "—"}</td>

@@ -883,7 +883,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                 <I.clock size={14}/>
                 <NumberField value={active.timer} fallback={60}
                   onChange={v => updateQuestion({ timer: v })}
-                  style={{ width: 50, border: "1px solid var(--ink-200)", borderRadius: 8, padding: "4px 8px", textAlign: "center" }}/>
+                  style={{ width: 64, border: "1px solid var(--ink-200)", borderRadius: 8, padding: "4px 4px", textAlign: "center" }}/>
                 seg
               </span>
             </div>
@@ -1202,6 +1202,7 @@ function Editor({ quizId, onBack, onLaunch }) {
         <aside className="qs-editor-config">
           <h3 style={{ fontSize: 15, marginBottom: 14 }}>Configuración del Quiz</h3>
 
+          {quiz.mode !== "workshop" && (
           <Field label="Carátula del quiz">
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
               {["🌎","📚","🧠","⚖️","🏛️","🕊️","✊","📜","🗳️","⚔️","🎭","🔬","🧮","💡","🎨","🏆"].map(em => (
@@ -1239,6 +1240,7 @@ function Editor({ quizId, onBack, onLaunch }) {
               </div>
             </div>
           </Field>
+          )}
 
           <Field label="Tipo de actividad">
             <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1545,10 +1547,10 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
           </p>
 
           <div style={{
-            background: "var(--violet-50)", border: "1px solid var(--violet-200)",
-            padding: 10, borderRadius: 10, marginBottom: 12, fontSize: 13, color: "var(--violet-700)",
+            background: "var(--violet-50)", border: "1px solid var(--violet-400)",
+            padding: 10, borderRadius: 10, marginBottom: 12, fontSize: 13, color: "var(--ink-900)",
           }}>
-            <b>Total máximo del quiz:</b> {totalMaxPoints} puntos
+            <b style={{ color: "var(--violet-400)" }}>Total máximo del quiz:</b> {totalMaxPoints} puntos
             <br/>
             <span style={{ fontSize: 11, opacity: 0.85 }}>
               (suma de "si acierta" + bonus de velocidad de todas las preguntas)
@@ -1563,19 +1565,25 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
               <span style={{ minWidth: 30, color: "var(--ink-500)" }}>De</span>
               <NumberField value={range.from} fallback={0}
                 onChange={v => updateRange(i, "from", v)}
-                style={{ width: 80, padding: 6, borderRadius: 6, border: "1px solid var(--ink-200)", textAlign: "center" }}
+                style={{
+                  width: 80, padding: 6, borderRadius: 6, border: "1px solid var(--ink-200)",
+                  background: "var(--ink-50)", color: "var(--ink-900)", textAlign: "center",
+                }}
               />
               <span style={{ color: "var(--ink-500)" }}>a</span>
               <NumberField value={range.to} fallback={0}
                 onChange={v => updateRange(i, "to", v)}
-                style={{ width: 80, padding: 6, borderRadius: 6, border: "1px solid var(--ink-200)", textAlign: "center" }}
+                style={{
+                  width: 80, padding: 6, borderRadius: 6, border: "1px solid var(--ink-200)",
+                  background: "var(--ink-50)", color: "var(--ink-900)", textAlign: "center",
+                }}
               />
               <span style={{ color: "var(--ink-500)" }}>→ nota</span>
               <NumberField value={range.grade} fallback={0} step="0.1"
                 onChange={v => updateRange(i, "grade", v)}
                 style={{
-                  width: 70, padding: 6, borderRadius: 6, border: "1px solid var(--violet-300)",
-                  textAlign: "center", fontWeight: 700, color: "var(--violet-700)",
+                  width: 70, padding: 6, borderRadius: 6, border: "1px solid var(--violet-400)",
+                  background: "var(--ink-50)", textAlign: "center", fontWeight: 700, color: "var(--violet-400)",
                 }}
               />
               <button onClick={() => removeRange(i)}

@@ -3,6 +3,14 @@
    ============================================================ */
 
 :root {
+  /* Toda la app es de tema oscuro (ver los tokens --ink-* invertidos abajo).
+     Sin esto, los controles NATIVOS del navegador (selector de fecha/hora,
+     su icono de calendario/reloj, checkboxes) se dibujan asumiendo modo
+     claro — texto e iconos negros — sin importar el CSS que se les ponga
+     encima. Esto le dice al navegador que use su variante oscura por
+     defecto para todo lo que no esté explícitamente estilizado. */
+  color-scheme: dark;
+
   --font-display: "Poppins", "Segoe UI", system-ui, sans-serif;
   --font-body: "Inter", "Segoe UI", system-ui, sans-serif;
 

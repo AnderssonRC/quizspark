@@ -1261,7 +1261,7 @@ function HostFinal({ session, quiz, onFinish }) {
                     background: bg[idx],
                   }}>
                     <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 4 }}>
-                      {p.name}{p.lateJoin ? " 🕐" : ""}
+                      {p.name}{p.lateJoin ? " ⏰" : ""}
                     </div>
                     <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 8 }}>
                       {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
@@ -1290,7 +1290,7 @@ function HostFinal({ session, quiz, onFinish }) {
                 }}>{i + 4}</div>
                 <div style={{ flex: 1 }}>
                   <div style={{ fontWeight: 700 }}>
-                    {p.name}{p.lateJoin ? " 🕐" : ""}
+                    {p.name}{p.lateJoin ? " ⏰" : ""}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
                     {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
@@ -1350,7 +1350,7 @@ function ParticipantsModal({ participants, onKick, onClose }) {
                         marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 7px",
                         borderRadius: 999, background: "var(--amber-400)", color: "#7c2d12",
                         verticalAlign: "middle",
-                      }}>🕐 tarde</span>
+                      }}>⏰ tarde</span>
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
@@ -1450,6 +1450,10 @@ function LiveSessionHost({ quizId, onExit }) {
           mode: quizData.mode || "quiz",
           learningObjective: quizData.learningObjective || "",
           introText: quizData.introText || "",
+          introImage: quizData.introImage || "",
+          introVideo: quizData.introVideo || "",
+          cover: quizData.cover || "",
+          color: quizData.color || "",
           ownerId: uid,
           status: "lobby",
           currentQuestionIdx: -1,
@@ -1933,6 +1937,18 @@ function LiveSessionHost({ quizId, onExit }) {
   if (session.status === "playing") {
     // Si el elemento actual es una diapositiva: pantalla especial sin cronómetro
     if (currentQ && currentQ.type === "slide") {
+      // Taller Evaluativo: diapositiva con el diseño propio del Taller
+      // (fondo oscuro + color elegido), no el violeta del Quiz.
+      if (quiz.mode === "workshop" && window.WorkshopHostSlide) {
+        return (
+          <>
+            <window.WorkshopHostSlide session={session} quiz={quiz} currentQ={currentQ}
+              onNext={goNext} onFinish={finishNow}/>
+            {participantsModal}
+            {joinRequestsBanner}
+          </>
+        );
+      }
       return (
         <>
           <HostSlide session={session} quiz={quiz} currentQ={currentQ}
@@ -2353,8 +2369,12 @@ function StudentJoinLive({ initialCode, onCancel }) {
             {session?.mode === "workshop" && window.WorkshopHeader && (
               <window.WorkshopHeader
                 title={session.quizTitle}
+                cover={session.cover}
+                colorVar={session.color}
                 learningObjective={session.learningObjective}
                 introText={session.introText}
+                introImage={session.introImage}
+                introVideo={session.introVideo}
                 deliveryInfo="🔴 Sesión en vivo — conéctate cuando tu profesor lo indique"
               />
             )}
