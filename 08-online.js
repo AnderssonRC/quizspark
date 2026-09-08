@@ -45,12 +45,23 @@ function shuffle(arr) {
   return a;
 }
 
-// Calcula la nota de una entrega
+// Calcula la nota de una entrega.
+//
+// Preguntas SIN responder (el estudiante no llegó a esa pregunta, o se le
+// acabó el tiempo) NO cuentan como incorrectas: se excluyen del cálculo para
+// que la nota refleje solo lo que sí alcanzó a hacer, no lo que le faltó.
+// Como la tabla de "Calificación y Reglas" define sus rangos en puntos
+// absolutos calibrados sobre el quiz COMPLETO, si la entrega quedó parcial
+// se reescala lo ganado a esa misma escala completa antes de buscar la nota
+// (ej: si respondió la mitad de las preguntas y las acertó todas, se le
+// reescala como si hubiera obtenido el 100% del total, no la mitad).
 function gradeSubmission(quiz, answers) {
   let correct = 0;
   let total = 0;
-  let pointsEarned = 0;
-  let pointsMax = 0;
+  let answered = 0;
+  let pointsEarned = 0;   // puntos ganados en lo respondido
+  let pointsMax = 0;      // máximo posible de lo respondido
+  let fullMaxPoints = 0;  // máximo posible del quiz completo
   const detail = [];
 
   // En modo encuesta no se califica nada: solo se recogen respuestas
@@ -74,6 +85,9 @@ function gradeSubmission(quiz, answers) {
     }
     total++;
     const userAnswer = answers[q.id];
+    const attempted = q.type === "checks" || q.type === "order"
+      ? Array.isArray(userAnswer) && userAnswer.length > 0
+      : userAnswer !== undefined && userAnswer !== null && userAnswer !== "";
     let isCorrect = false;
 
     if (q.type === "multi" || q.type === "truefalse") {
@@ -103,28 +117,35 @@ function gradeSubmission(quiz, answers) {
     const pBonus = q.pointsSpeedBonus ?? 0;
 
     // En modo asincrónico no aplicamos bonus de velocidad
-    const pointsForThisQuestion = isCorrect ? pCorrect : (userAnswer != null ? pWrong : 0);
+    const pointsForThisQuestion = isCorrect ? pCorrect : (attempted ? pWrong : 0);
     const maxForThisQuestion = pCorrect + pBonus; // máximo posible incluyendo bonus
 
-    pointsEarned += pointsForThisQuestion;
-    pointsMax += maxForThisQuestion;
+    fullMaxPoints += maxForThisQuestion;
 
-    if (isCorrect) correct++;
+    if (attempted) {
+      answered++;
+      pointsEarned += pointsForThisQuestion;
+      pointsMax += maxForThisQuestion;
+      if (isCorrect) correct++;
+    }
+
     detail.push({
-      qid: q.id, type: q.type, userAnswer, correct: isCorrect,
+      qid: q.id, type: q.type, userAnswer, correct: isCorrect, attempted,
       points: pointsForThisQuestion, pointsMax: maxForThisQuestion,
     });
   }
 
-  // Convertir a nota usando la tabla del quiz (o escala lineal por defecto)
-  const grade = convertPointsToGrade(pointsEarned, pointsMax, quiz.gradingScale);
+  // Reescalar lo ganado a la escala del quiz completo (ver nota arriba) y
+  // convertir a nota usando la tabla del quiz (o escala lineal por defecto).
+  const scaledPoints = pointsMax > 0 ? (pointsEarned / pointsMax) * fullMaxPoints : 0;
+  const grade = convertPointsToGrade(scaledPoints, fullMaxPoints, quiz.gradingScale);
   const percent = pointsMax > 0 ? Math.round((pointsEarned / pointsMax) * 100) : 0;
 
   return {
-    correct, total,
+    correct, total, answered,
     score: grade,
     percent,
-    pointsEarned, pointsMax,
+    pointsEarned, pointsMax, fullMaxPoints,
     detail,
   };
 }
@@ -511,10 +532,13 @@ function StudentExam({ examCode }) {
         gradeDetail: grade.detail,
         correct: grade.correct,
         total: grade.total,
+        answered: grade.answered,
+        partial: grade.answered < grade.total,
         score: grade.score,
         percent: grade.percent,
         pointsEarned: grade.pointsEarned || 0,
         pointsMax: grade.pointsMax || 0,
+        fullMaxPoints: grade.fullMaxPoints || 0,
         startedAt,
         finishedAt,
         totalSeconds,
@@ -528,6 +552,24 @@ function StudentExam({ examCode }) {
       alert("Error al enviar la evaluación: " + err.message);
       setPhase("exam");
     }
+  };
+
+  // Terminar antes de responder todas las preguntas (ej: se acabó la clase).
+  // Se envía con lo que ya se alcanzó a responder; lo que falta no descuenta.
+  const handleFinishEarly = () => {
+    const answeredCount = questionsOrder.filter(q => {
+      if (q.type === "slide") return true;
+      const a = answers[q.id];
+      return q.type === "checks" || q.type === "order"
+        ? Array.isArray(a) && a.length > 0
+        : a !== undefined && a !== "";
+    }).length;
+    if (answeredCount >= questionsOrder.length) { handleSubmit(); return; }
+    if (!window.confirm(
+      `Vas a terminar con ${answeredCount} de ${questionsOrder.length} preguntas respondidas. ` +
+      "Las que falten no se calificarán ni descontarán. ¿Enviar ahora?"
+    )) return;
+    handleSubmit();
   };
 
   // ---------- Render por fase ----------
@@ -671,9 +713,18 @@ function StudentExam({ examCode }) {
             {passing ? "🎉" : "📋"}
           </div>
           <h2 style={{ fontSize: 24, marginBottom: 4 }}>¡Evaluación enviada!</h2>
-          <p style={{ color: "var(--ink-500)", fontSize: 14, marginBottom: 20 }}>
+          <p style={{ color: "var(--ink-500)", fontSize: 14, marginBottom: 8 }}>
             Gracias, {studentName}. Tus respuestas se guardaron correctamente.
           </p>
+          {result.answered < result.total && (
+            <p style={{
+              color: "var(--amber-700, #92400e)", background: "#fef3c7", borderRadius: 8,
+              padding: "6px 10px", fontSize: 12, fontWeight: 600, marginBottom: 12,
+            }}>
+              ⚠️ Respondiste {result.answered} de {result.total} preguntas. Tu nota se calculó solo
+              sobre las que alcanzaste a responder, sin descontar las que faltaron.
+            </p>
+          )}
 
           {/* Aciertos */}
           <div style={{
@@ -681,7 +732,7 @@ function StudentExam({ examCode }) {
           }}>
             <div style={{ fontSize: 13, color: "var(--ink-500)", fontWeight: 600 }}>Aciertos</div>
             <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "var(--font-display)" }}>
-              {result.correct} de {result.total}
+              {result.correct} de {result.answered}
               <span style={{ fontSize: 14, color: "var(--ink-500)", fontWeight: 600 }}> ({result.percent}%)</span>
             </div>
           </div>
@@ -1004,6 +1055,19 @@ function StudentExam({ examCode }) {
             {currentIdx < totalQ - 1 ? "Siguiente →" : "Enviar evaluación ✓"}
           </button>
         </div>
+        {currentIdx < totalQ - 1 && (
+          <div style={{ textAlign: "center", marginTop: 12 }}>
+            <button
+              onClick={handleFinishEarly}
+              style={{
+                background: "none", border: "none", color: "rgba(255,255,255,0.8)",
+                fontSize: 13, fontWeight: 600, textDecoration: "underline", cursor: "pointer",
+              }}
+            >
+              🏁 No puedo continuar, terminar aquí con lo que llevo
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1097,7 +1161,7 @@ function OnlineResultsPanel({ onBack }) {
       return;
     }
     // Construimos CSV (compatible con Excel y Google Sheets)
-    const header = ["Nombre", "Compañero", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Enviado"];
+    const header = ["Nombre", "Compañero", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Preguntas respondidas", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Enviado"];
     selectedQuiz.questions.forEach((q, i) => {
       header.push(`P${i+1}: ${(q.text || "").substring(0, 50)}`);
       header.push(`P${i+1} ¿correcto?`);
@@ -1113,6 +1177,7 @@ function OnlineResultsPanel({ onBack }) {
         s.pointsEarned != null ? s.pointsEarned : "",
         s.pointsMax != null ? s.pointsMax : "",
         s.correct || 0,
+        s.answered != null ? s.answered : (s.total || 0),
         s.total || 0,
         (s.percent || 0) + "%",
         s.totalSeconds || 0,
@@ -1382,6 +1447,13 @@ function OnlineResultsPanel({ onBack }) {
                                     borderRadius: 999, background: "var(--amber-400)", color: "#7c2d12",
                                   }}>⏰ tarde</span>
                               )}
+                              {s.partial && (
+                                <span title={`Terminó antes de responder todas las preguntas (${s.answered} de ${s.total})`}
+                                  style={{
+                                    marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 7px",
+                                    borderRadius: 999, background: "var(--ink-200)", color: "var(--ink-700)",
+                                  }}>✂️ parcial</span>
+                              )}
                             </td>
                             <td style={{ padding: 12, color: "var(--ink-500)" }}>{s.partnerName || "—"}</td>
                             <td style={{ padding: 12 }}>{s.studentCourse}</td>
@@ -1400,7 +1472,7 @@ function OnlineResultsPanel({ onBack }) {
                                 }}>{s.score.toFixed(1)}</span>
                               )}
                             </td>
-                            <td style={{ padding: 12 }}>{s.correct}/{s.total}</td>
+                            <td style={{ padding: 12 }}>{s.correct}/{s.answered != null ? s.answered : s.total}</td>
                             <td style={{ padding: 12, color: "var(--violet-700)", fontWeight: 600 }}>
                               {s.pointsEarned != null
                                 ? `${s.pointsEarned}/${s.pointsMax}`
@@ -1448,15 +1520,40 @@ function OnlineResultsPanel({ onBack }) {
           submission={reviewing}
           quiz={selectedQuiz}
           onClose={() => setReviewing(null)}
+          onSaved={(updated) => {
+            setSubmissions(prev => prev.map(s => s.id === updated.id ? { ...s, ...updated } : s));
+            setReviewing(null);
+          }}
         />
       )}
     </div>
   );
 }
 
-// =================== REVIEW MODAL — ver respuestas (solo lectura) ===================
-function ReviewModal({ submission, quiz, onClose }) {
+// =================== REVIEW MODAL — ver respuestas (+ nota manual si aplica) ===================
+function ReviewModal({ submission, quiz, onClose, onSaved }) {
   const questions = quiz?.questions || [];
+  const needsManualGrade = submission.score == null;
+  const [grade, setGrade] = useStateO(needsManualGrade ? null : submission.score);
+  const [saving, setSaving] = useStateO(false);
+
+  const handleSaveGrade = async () => {
+    if (grade == null || isNaN(grade) || grade < 0 || grade > 5) {
+      alert("Ingresa una nota válida entre 0 y 5.");
+      return;
+    }
+    setSaving(true);
+    try {
+      await window.QS.db.collection("results").doc(submission.id).update({
+        score: grade, graded: true, gradedAt: Date.now(),
+      });
+      onSaved && onSaved({ id: submission.id, score: grade, graded: true });
+    } catch (err) {
+      alert("Error al guardar la nota: " + err.message);
+    }
+    setSaving(false);
+  };
+
   return (
     <div onClick={onClose} style={{
       position: "fixed", inset: 0, background: "rgba(15,23,42,0.6)",
@@ -1465,21 +1562,42 @@ function ReviewModal({ submission, quiz, onClose }) {
       <div onClick={e => e.stopPropagation()} className="qs-card" style={{
         padding: 24, maxWidth: 640, width: "100%", maxHeight: "88vh", overflowY: "auto",
       }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
           <div>
             <h3 style={{ fontSize: 20 }}>{submission.studentName}</h3>
             <p style={{ fontSize: 13, color: "var(--ink-500)" }}>
               {submission.studentCourse} · {submission.examDate}
               {submission.partnerName ? <><br/>👥 Con {submission.partnerName}</> : null}
+              {submission.lateJoin ? <><br/>⏰ Se unió después de que empezó la sala</> : null}
             </p>
           </div>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 12, color: "var(--ink-500)" }}>Nota</div>
+          {needsManualGrade ? (
             <div style={{
-              fontSize: 24, fontWeight: 800, fontFamily: "var(--font-display)",
-              color: (submission.score || 0) >= 3 ? "var(--emerald-600)" : "var(--red-500)",
-            }}>{(submission.score || 0).toFixed(1)}</div>
-          </div>
+              background: "#fff7ed", border: "1px solid #fdba74", borderRadius: 10, padding: 10,
+              textAlign: "center", minWidth: 170,
+            }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: "#c2410c", display: "block", marginBottom: 4 }}>
+                🎯 Agregar nota manual (0-5)
+              </label>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", justifyContent: "center" }}>
+                <NumberField value={grade} fallback={0} step="0.1" min="0" max="5"
+                  onChange={setGrade}
+                  style={{ width: 70, padding: "6px 8px", borderRadius: 8, border: "1px solid #fdba74", fontWeight: 700, textAlign: "center" }} />
+                <button onClick={handleSaveGrade} disabled={saving} className="qs-btn qs-btn--sm"
+                  style={{ background: "#ea580c", color: "white" }}>
+                  {saving ? "..." : "💾"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 12, color: "var(--ink-500)" }}>Nota</div>
+              <div style={{
+                fontSize: 24, fontWeight: 800, fontFamily: "var(--font-display)",
+                color: (submission.score || 0) >= 3 ? "var(--emerald-600)" : "var(--red-500)",
+              }}>{(submission.score || 0).toFixed(1)}</div>
+            </div>
+          )}
         </div>
 
         <div style={{ display: "grid", gap: 12 }}>
@@ -1518,10 +1636,16 @@ function ReviewModal({ submission, quiz, onClose }) {
                   {answerText === "—" ? "Sin respuesta" : answerText}
                 </div>
                 {!isOpen && (
-                  <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600,
-                    color: det.correct ? "var(--emerald-600)" : "var(--red-500)" }}>
-                    {det.correct ? "✓ Correcta" : "✗ Incorrecta"} · {det.points || 0}/{det.pointsMax || 0} pts
-                  </div>
+                  det.attempted === false ? (
+                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: "var(--ink-400)" }}>
+                      — Sin responder (no cuenta en la nota)
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600,
+                      color: det.correct ? "var(--emerald-600)" : "var(--red-500)" }}>
+                      {det.correct ? "✓ Correcta" : "✗ Incorrecta"} · {det.points || 0}/{det.pointsMax || 0} pts
+                    </div>
+                  )
                 )}
                 {isOpen && det.pointsMax > 0 && (
                   <div style={{ marginTop: 8, fontSize: 13, fontWeight: 600, color: "var(--violet-700)" }}>

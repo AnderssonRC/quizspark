@@ -103,6 +103,24 @@ function workshopStudentBg(colorVar) {
   );
 }
 
+// Mensaje de retroalimentación según la nota (1-10) que el docente asigna a
+// una respuesta abierta. Los rangos que dio el docente se solapan en los
+// bordes (p.ej. 2 aparece en "1-2" y en "2-4"); se resuelven de menor a
+// mayor tomando el primer tope que alcance la nota, así cada entero 1-10
+// cae en un solo mensaje.
+const WORKSHOP_FEEDBACK_BY_SCORE = [
+  { max: 2,  text: "Incorrecta tu respuesta." },
+  { max: 4,  text: "Tienes un pequeño acierto, pero sigues equivocado." },
+  { max: 5,  text: "Tienes un valioso aporte, pero tu ortografía no ayuda." },
+  { max: 7,  text: "Estuvo cerca, pero faltó organizar las ideas con comas o puntos." },
+  { max: 8,  text: "Tienes un buen acierto en la respuesta, son pequeños errores." },
+  { max: 10, text: "Excelente respuesta. ¡Sigue así!" },
+];
+function workshopFeedbackForScore(points) {
+  const found = WORKSHOP_FEEDBACK_BY_SCORE.find(r => points <= r.max);
+  return found ? found.text : "";
+}
+
 function formatDeadline(ts) {
   if (!ts) return "Sin fecha límite definida";
   try {
@@ -606,17 +624,26 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
     try {
       const finishedAt = Date.now();
       const totalSeconds = startedAt ? Math.round((finishedAt - startedAt) / 1000) : 0;
-      let correctCount = 0, totalGraded = 0;
-      const gradeDetail = questions.filter(q => q.type !== "slide").map(q => {
+      // Preguntas sin responder (el estudiante no alcanzó a llegar a ellas) no
+      // cuentan como incorrectas: se marcan "attempted:false" y quedan fuera
+      // de correctCount/totalGraded para no descontarle al docente lo que
+      // el estudiante sí alcanzó a hacer.
+      let correctCount = 0, totalGraded = 0, answeredCount = 0;
+      const nonSlideQuestions = questions.filter(q => q.type !== "slide");
+      const gradeDetail = nonSlideQuestions.map(q => {
         const userAnswer = answers[q.id];
+        const attempted = isAnswered(q);
+        if (attempted) answeredCount++;
         let correct = null, points = null;
         if (q.type !== "text") {
-          correct = checkClosedWorkshopAnswer(q, userAnswer);
-          points = correct ? 10 : 0;
-          totalGraded++;
-          if (correct) correctCount++;
+          if (attempted) {
+            correct = checkClosedWorkshopAnswer(q, userAnswer);
+            points = correct ? 10 : 0;
+            totalGraded++;
+            if (correct) correctCount++;
+          }
         }
-        return { qid: q.id, type: q.type, userAnswer: userAnswer ?? null, correct, points, pointsMax: 10 };
+        return { qid: q.id, type: q.type, userAnswer: userAnswer ?? null, correct, points, pointsMax: 10, attempted };
       });
       const submission = {
         quizId: quiz.id,
@@ -631,6 +658,9 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
         gradeDetail,
         correct: correctCount,
         total: totalGraded,
+        answered: answeredCount,
+        totalQuestions: nonSlideQuestions.length,
+        partial: answeredCount < nonSlideQuestions.length,
         percent: totalGraded > 0 ? Math.round((correctCount / totalGraded) * 100) : null,
         pointsEarned: null,
         pointsMax: null,
@@ -646,6 +676,18 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
       alert("Error al enviar el taller: " + err.message);
       setPhase("workshop");
     }
+  };
+
+  // Terminar antes de responder todo el taller (ej: se acabó la clase). Se
+  // envía con lo alcanzado; lo que falta no descuenta ni cuenta como error.
+  const handleFinishEarly = () => {
+    const answeredCount = questions.filter(isAnswered).length;
+    if (answeredCount >= questions.length) { handleSubmit(); return; }
+    if (!window.confirm(
+      `Vas a terminar con ${answeredCount} de ${questions.length} preguntas respondidas. ` +
+      "Las que falten no se calificarán ni descontarán. ¿Enviar ahora?"
+    )) return;
+    handleSubmit();
   };
 
   const shellStyle = { minHeight: "100vh", background: workshopStudentBg(quiz.color), padding: 20 };
@@ -722,6 +764,9 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
   }
 
   if (phase === "done") {
+    const nonSlideQuestions = questions.filter(q => q.type !== "slide");
+    const answeredCount = nonSlideQuestions.filter(isAnswered).length;
+    const wasPartial = answeredCount < nonSlideQuestions.length;
     return (
       <div style={{ ...shellStyle, display: "grid", placeItems: "center", fontFamily: WORKSHOP_FONT }}>
         <WorkshopCard style={{ padding: 32, maxWidth: 460, width: "100%", textAlign: "center" }}>
@@ -731,6 +776,15 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
             Gracias, {studentName}. Tu profesor revisará tu entrega y te asignará una nota
             para toda la actividad.
           </p>
+          {wasPartial && (
+            <p style={{
+              marginTop: 14, fontSize: 12, fontWeight: 600, color: wc.hex,
+              background: hexToRgba(wc.hex, 0.12), borderRadius: 8, padding: "8px 10px",
+            }}>
+              ⚠️ Respondiste {answeredCount} de {nonSlideQuestions.length} preguntas. Tu profesor
+              verá exactamente cuáles alcanzaste a responder.
+            </p>
+          )}
         </WorkshopCard>
       </div>
     );
@@ -775,6 +829,19 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
         }}>
           {currentIdx < questions.length - 1 ? "Siguiente →" : "Enviar taller ✓"}
         </button>
+        {currentIdx < questions.length - 1 && (
+          <div style={{ textAlign: "center", marginTop: 12 }}>
+            <button
+              onClick={handleFinishEarly}
+              style={{
+                background: "none", border: "none", color: "#e7dccf",
+                fontSize: 13, fontWeight: 600, textDecoration: "underline", cursor: "pointer",
+              }}
+            >
+              🏁 No puedo continuar, terminar aquí con lo que llevo
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -845,7 +912,7 @@ function WorkshopHostSlide({ session, quiz, currentQ, onNext, onFinish }) {
 // ============================================================
 // REVELACIÓN EN VIVO — reemplaza HostReveal para mode === "workshop"
 // ============================================================
-function WorkshopHostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeWorkshop }) {
+function WorkshopHostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeWorkshop, onFinish }) {
   const totalAnswers = Object.keys(answersThisQ || {}).length;
   const isLast = session.currentQuestionIdx >= quiz.questions.length - 1;
   const c = workshopColorInfo(quiz.color);
@@ -867,6 +934,16 @@ function WorkshopHostReveal({ session, quiz, currentQ, answersThisQ, onNext, onG
             <button onClick={onNext} className="qs-btn qs-btn--lg" style={{ width: "100%", background: workshopAccentGradient(quiz.color), color: "white", fontWeight: 700, fontFamily: WORKSHOP_FONT, fontSize: 16 }}>
               {isLast ? "🏁 Ver resultado final" : "➡️ Siguiente pregunta"}
             </button>
+            {!isLast && onFinish && (
+              <div style={{ textAlign: "center", marginTop: 12 }}>
+                <button onClick={onFinish} style={{
+                  background: "none", border: "none", color: "#e7dccf",
+                  fontSize: 13, fontWeight: 600, textDecoration: "underline", cursor: "pointer",
+                }}>
+                  🏁 Terminar aquí y guardar el puntaje actual
+                </button>
+              </div>
+            )}
           </>
         )}
         {customFooter}
@@ -1045,9 +1122,17 @@ function WorkshopGradeModal({ submission, quiz, onClose, onSaved }) {
               {submission.partnerName ? <><br />👥 Con {submission.partnerName}</> : null}
             </p>
           </div>
-          <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 999, background: "rgba(234,88,12,0.14)", color: WORKSHOP_ORANGE }}>
-            🛠️ Taller Offline
-          </span>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 999, background: "rgba(234,88,12,0.14)", color: WORKSHOP_ORANGE }}>
+              🛠️ Taller Offline
+            </span>
+            {submission.partial && (
+              <span title="Terminó antes de responder todo el taller"
+                style={{ fontSize: 11, fontWeight: 700, padding: "4px 10px", borderRadius: 999, background: "var(--ink-200)", color: "var(--ink-700)" }}>
+                ✂️ Parcial · {submission.answered} de {submission.totalQuestions}
+              </span>
+            )}
+          </div>
         </div>
 
         <div style={{ display: "grid", gap: 12, marginBottom: 20 }}>
@@ -1102,4 +1187,5 @@ function WorkshopGradeModal({ submission, quiz, onClose, onSaved }) {
 
 Object.assign(window, {
   WorkshopEditorFields, WorkshopHeader, WorkshopOfflineFlow, WorkshopHostSlide, WorkshopHostReveal, WorkshopGradeModal,
+  workshopColorInfo, workshopFeedbackForScore,
 });
