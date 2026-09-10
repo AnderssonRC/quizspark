@@ -1,0 +1,547 @@
+/* global React, Field, Toggle */
+// ============================================================
+// QuizSpark — MODO LECTOR DE RESPUESTA (hojas OMR en PDF)
+// ------------------------------------------------------------
+// Siguiente escalón del "Modo Sin Celular" (11-lectio.js): en vez de que
+// el docente revele la respuesta en pantalla, cada estudiante marca sus
+// respuestas en una hoja de papel impresa, que en una etapa futura se
+// podrá escanear y leer automáticamente (OMR).
+//
+// Por ahora este archivo solo genera el PDF de las hojas. SHEET_SPEC es
+// la ÚNICA fuente de verdad de la geometría: tanto el generador de PDF
+// de aquí como el futuro lector OMR deben importar este mismo objeto.
+// Ningún número de geometría debe escribirse "a mano" fuera de SHEET_SPEC.
+//
+// Componentes/funciones expuestos (bare window):
+//   SHEET_SPEC                 — geometría (fuente única de verdad)
+//   colX(i), rowY(i)           — helpers de posición del grid de respuestas
+//   buildOMRAnswerSheetsPDF()  — arma el PDF (jsPDF) y lo devuelve
+//   OMRReaderPanel             — panel del Editor (lista de estudiantes + exportar)
+// ============================================================
+const { useState: useStateOmr } = React;
+
+// ---------------------------------------------------------------
+// SHEET_SPEC — geometría de la hoja de respuestas. TODO en milímetros.
+// Ver "Especificación de la hoja de respuestas OMR — Res Cogitans / Desafíate".
+// ---------------------------------------------------------------
+const SHEET_SPEC = {
+  // v1.1.0: se corrigió la cuadrícula de respuestas — en v1.0.0 el encabezado
+  // "A B C D" (baseline Y=63) caía dentro de la franja vertical de los
+  // fiduciales superiores (58.5–65.5) y la última fila casi tocaba los
+  // fiduciales inferiores, violando la "zona libre de 3mm" alrededor de
+  // cada fiducial. Ver derivación en el bloque `grid` más abajo.
+  // v1.2.0: logo más grande, más oscuro y reubicado junto al QR. Ver
+  // derivación en `logo` más abajo.
+  // v1.3.0: logo pegado al borde del QR y un poco más grande todavía.
+  // v1.4.0: logo corrido 1mm más hacia el borde derecho (sin tocar el
+  // #01); fecha movida arriba del logo en cursiva; curso pasa a la
+  // misma línea que el nombre (antes del nombre) con letra más grande;
+  // nueva línea de "Nombre:"/"Curso:" en blanco para llenar a mano
+  // debajo del nombre impreso; instrucción centrada, en cursiva y
+  // subrayada. Ver derivación en `text` más abajo.
+  // v1.5.0: corrección — la línea de "Nombre:"/"Curso:" NO era para
+  // llenar a mano (se quitó); es una sola línea ya impresa con los datos
+  // que trae el quiz: "Nombre: {nombre}   Curso: {curso}", subrayada.
+  // El logo se corrió pegado al margen derecho de la hoja; para que no
+  // choque con nada, el número de secuencia (#01) y la fecha se movieron
+  // a una columna angosta arriba/abajo del logo (ver derivación en
+  // `text` más abajo).
+  version: "1.5.0",
+  unit: "mm",
+
+  page:   { w: 216, h: 279, format: "letter", orientation: "portrait" },
+  sheet:  { w: 100, h: 130, perPage: 4 },
+  origins: [
+    { x: 5.5,   y: 6   },
+    { x: 110.5, y: 6   },
+    { x: 5.5,   y: 143 },
+    { x: 110.5, y: 143 },
+  ],
+
+  cutMarks: { len: 3, lineWidth: 0.2, xs: [5.5, 105.5, 110.5, 210.5], ys: [6, 136, 143, 273] },
+
+  innerBox: { inset: 0.5, lineWidth: 0.3 },
+
+  qr:   { x: 5, y: 5, size: 25, errorCorrection: "M", prefix: "RC1" },
+  // v1.5.0: logo pegado al margen derecho de la hoja. Recuadro interior
+  // (innerBox) llega hasta x=99.5; el logo termina en x=97, 1.5mm antes
+  // de ese borde ("justo en la margen" sin salirse del área imprimible).
+  // w/h SIN CAMBIOS (58×24) → x = 97-58 = 39. y=6/h=24 sin cambios
+  // tampoco (bottom=30, alineado con el borde inferior del QR). Al
+  // correrse tan a la derecha, ya no cabe nada a su lado (ni el #01 ni
+  // la fecha) sin encimarse — por eso esos dos textos se movieron a una
+  // columna propia arriba/abajo del logo (ver `text` más abajo) en vez
+  // de compartir su misma fila.
+  // src/grayTint no son geometría del papel, pero viven aquí igual (misma
+  // fuente única de verdad) para no repetir el nombre de archivo ni la
+  // atenuación en otro lugar del código. grayTint = 0.85 → 85% de tinta
+  // negra, no negro pleno (100%), por la misma cautela del spec sobre
+  // logos oscuros y compactos cerca del detector de fiduciales.
+  logo: { x: 39, y: 6, w: 58, h: 24, src: "logo-res-cogitas.png", grayTint: 0.85 },
+
+  // v1.5.0 — rediseño del bloque de identificación (derivación):
+  //   date: "hacia la derecha, en el borde superior" — con el logo ahora
+  //     ocupando x:39–97 en y:6–30, la fecha va ARRIBA de él, alineada a
+  //     la derecha con su mismo borde (x=97). y=4 dentro del margen
+  //     libre 0.5–6 de arriba (mismo cálculo de aire que antes: cursiva
+  //     7pt).
+  //   seq (#01): ya no cabe junto al logo (que ahora llega hasta x=97),
+  //     así que baja a la columna libre DEBAJO de él — y=34, 4mm después
+  //     de que el logo termina en y=30. Sigue alineado a la derecha,
+  //     mismo estilo gris de siempre.
+  //   idLine: "el nombre que ya aparece escrito... con Curso: y Nombre:
+  //     delante, subrayado" — una sola línea impresa (no un campo en
+  //     blanco): "Nombre: {nombre}   Curso: {curso}", con una línea de
+  //     subrayado debajo de todo su ancho real. y=44 (debajo del #01,
+  //     con aire de sobra). x del segmento "Curso:" se calcula en
+  //     drawSheet() según el ancho real de "Nombre: {nombre}" impreso
+  //     (gapBetween es el espacio fijo entre los dos segmentos).
+  //   instruction: sin cambios de diseño (centrada, cursiva, subrayada),
+  //     solo se corrió un poco más arriba (55.5→51) porque el #01 y el
+  //     idLine ya no ocupan la misma altura de antes.
+  text: {
+    date:        { x: 97, y: 4,  align: "right", font: "Helvetica-Oblique", size: 7 },
+    seq:         { x: 97, y: 34, align: "right", font: "Helvetica",         size: 8 },
+    idLine:      { x: 5,  y: 44, underlineY: 45.3, font: "Helvetica-Bold", size: 10, gapBetween: 8, maxNameWidth: 50 },
+    instruction: { y: 51, underlineY: 51.9, align: "center", font: "Helvetica-Oblique", size: 6.5 },
+  },
+
+  fiducials: {
+    size: 7,
+    centers: [
+      { x: 15, y: 62  },
+      { x: 85, y: 62  },
+      { x: 15, y: 120 },
+      { x: 85, y: 120 },
+    ],
+    clearance: 3,
+    spanX: 70,
+    spanY: 58,
+  },
+
+  // Bloque de respuestas — derivación de las medidas verticales (v1.1.0):
+  //   Fiducial superior: centro Y=62, lado 7mm → borde inferior Y=65.5.
+  //   + zona libre de 3mm (fiducials.clearance) → nada antes de Y=68.5.
+  //   El encabezado "A B C D" necesita que el TOPE de sus letras (no el
+  //   baseline) quede por debajo de 68.5: con Helvetica-Bold 7pt, la
+  //   altura de mayúscula es ~1.8mm, así que headerBaselineY = 71 deja
+  //   margen (≈2.5mm) de sobra sobre esa frontera.
+  //   firstRowY = 75.5 dedica 4.5mm de aire entre el encabezado y la
+  //   primera fila de círculos (antes eran 5.5mm entre 63 y 68.5).
+  //   Con rowStep=5mm sin cambios (separación probada para marcar a mano),
+  //   solo caben 8 filas completas antes de invadir la zona libre del
+  //   fiducial inferior (centro Y=120, borde superior 116.5, menos 3mm
+  //   de zona libre = límite en 113.5): la fila 8 llega a Y=110.5, con el
+  //   círculo (radio 1.75) terminando en 112.25 — 4.25mm de aire real
+  //   sobre el fiducial. Por eso "questions" bajó de 10 a 8 en vez de
+  //   comprimir el paso entre filas (que dejaría los círculos casi
+  //   pegados y difíciles de marcar/leer). Si un quiz tiene más de 8
+  //   preguntas de opción múltiple, cada estudiante recibe varias hojas
+  //   numeradas (#01, #02, ...) — ver buildOMRAnswerSheetsPDF más abajo.
+  grid: {
+    options: 4,
+    questions: 8,
+    firstColX: 39.5,
+    colStep: 7,
+    firstRowY: 75.5,
+    rowStep: 5,
+    circleDiameter: 3.5,
+    circleLineWidth: 0.3,
+    headerBaselineY: 71,
+    qNumX: 31,
+    qNumBaselineOffset: 1.1,
+  },
+};
+
+const colX = (i) => SHEET_SPEC.grid.firstColX + i * SHEET_SPEC.grid.colStep;
+const rowY = (i) => SHEET_SPEC.grid.firstRowY + i * SHEET_SPEC.grid.rowStep;
+
+// Traduce un mm medido "desde arriba" a la Y que espera el motor de dibujo.
+// jsPDF ya mide Y desde arriba hacia abajo, así que hoy es la identidad —
+// pero se deja como función única (en vez de usar los mm crudos) para que
+// portar este generador a un motor que mida Y desde abajo (p. ej. reportlab)
+// sea cambiar UNA línea, no reescribir cada coordenada del archivo.
+const y = (mm) => mm;
+
+// "gris N%" en el sentido de impresión = N% de tinta negra sobre blanco.
+function gray(pct) {
+  const v = Math.round(255 * (1 - pct / 100));
+  return [v, v, v];
+}
+const GRAY_CUTMARKS = gray(70);
+const GRAY_INNERBOX = gray(60);
+const GRAY_SEQ = gray(45);
+
+function applyFont(doc, fontName, size) {
+  let style = "normal";
+  if (fontName === "Helvetica-Bold") style = "bold";
+  else if (fontName === "Helvetica-Oblique") style = "italic";
+  doc.setFont("helvetica", style);
+  doc.setFontSize(size);
+}
+
+// Genera un PNG (data URL) del QR usando la librería global QRCode
+// (davidshimjs, ya cargada para la sala en vivo). Se renderiza en un
+// contenedor invisible fuera de pantalla y se descarta de inmediato.
+function makeQRDataUrl(text, px) {
+  if (typeof window.QRCode === "undefined") return null;
+  const holder = document.createElement("div");
+  holder.style.position = "fixed";
+  holder.style.left = "-9999px";
+  holder.style.top = "-9999px";
+  document.body.appendChild(holder);
+  try {
+    // eslint-disable-next-line no-new
+    new window.QRCode(holder, {
+      text, width: px, height: px,
+      colorDark: "#000000", colorLight: "#ffffff",
+      correctLevel: window.QRCode.CorrectLevel.M,
+    });
+    const canvas = holder.querySelector("canvas");
+    return canvas ? canvas.toDataURL("image/png") : null;
+  } catch (e) {
+    return null;
+  } finally {
+    document.body.removeChild(holder);
+  }
+}
+
+// Carga el logo (una sola vez, se cachea) y lo atenúa al gris que pide
+// SHEET_SPEC.logo.grayTint: se dibuja sobre un fondo blanco con opacidad
+// reducida en vez de a negro pleno — así una hoja "logo oscuro y
+// compacto" no arriesga que el detector de fiduciales confunda un trazo
+// denso del logo con una de las 4 marcas de esquina. Devuelve
+// { dataUrl, w, h } (w/h en píxeles del PNG original, para mantener su
+// proporción al ubicarlo dentro del rectángulo de 33×14mm) o null si no
+// se pudo cargar (en ese caso simplemente no se imprime logo).
+let _omrLogoCache = null;
+function loadLogoDataUrl(src, tint) {
+  const cacheKey = src + "|" + tint;
+  if (_omrLogoCache && _omrLogoCache.key === cacheKey) return _omrLogoCache.promise;
+  const promise = new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = tint;
+        ctx.drawImage(img, 0, 0);
+        resolve({ dataUrl: canvas.toDataURL("image/png"), w: img.naturalWidth, h: img.naturalHeight });
+      } catch (e) {
+        resolve(null);
+      }
+    };
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+  _omrLogoCache = { key: cacheKey, promise };
+  return promise;
+}
+
+// Marcas de corte (una vez por página, en el margen exterior de la hoja carta).
+function drawCutMarks(doc) {
+  const { cutMarks, page } = SHEET_SPEC;
+  doc.setDrawColor(...GRAY_CUTMARKS);
+  doc.setLineWidth(cutMarks.lineWidth);
+  cutMarks.xs.forEach(x => {
+    doc.line(x, y(0), x, y(cutMarks.len));
+    doc.line(x, y(page.h - cutMarks.len), x, y(page.h));
+  });
+  cutMarks.ys.forEach(yy => {
+    doc.line(0, y(yy), cutMarks.len, y(yy));
+    doc.line(page.w - cutMarks.len, y(yy), page.w, y(yy));
+  });
+}
+
+// Nota de impresión al 100% (regla 3 del spec), en el margen inferior de
+// la página — fuera del área de corte de las hojas.
+function drawPrintNote(doc) {
+  const { page } = SHEET_SPEC;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(5);
+  doc.setTextColor(...gray(55));
+  doc.text(
+    `Imprimir al 100% de tamaño — NO usar "ajustar a página" — Lector de Respuestas v${SHEET_SPEC.version} — Res Cogitans / Desafíate`,
+    page.w / 2, y(page.h - 1.8), { align: "center" }
+  );
+}
+
+// Dibuja una hoja individual (100×130mm) en el origen dado.
+// `logoInfo` es { dataUrl, w, h } (o null) — ver loadLogoDataUrl.
+function drawSheet(doc, origin, job, quiz, logoInfo) {
+  const spec = SHEET_SPEC;
+  const ox = origin.x, oy = origin.y;
+
+  // 2.1 — recuadro interior (solo referencia visual de corte)
+  doc.setDrawColor(...GRAY_INNERBOX);
+  doc.setLineWidth(spec.innerBox.lineWidth);
+  const ib = spec.innerBox.inset;
+  doc.rect(ox + ib, y(oy + ib), spec.sheet.w - 2 * ib, spec.sheet.h - 2 * ib, "S");
+
+  // 2.2 — código QR: RC1:{quizId}:{studentId}. Sin nombre ni datos personales.
+  const qrText = `${spec.qr.prefix}:${quiz.id}:${job.student.id}`;
+  const qrDataUrl = makeQRDataUrl(qrText, 300);
+  if (qrDataUrl) {
+    doc.addImage(qrDataUrl, "PNG", ox + spec.qr.x, y(oy + spec.qr.y), spec.qr.size, spec.qr.size);
+  }
+
+  // 2.3 — zona del logo: "Res Cogitans", atenuado al gris de SHEET_SPEC.logo.grayTint
+  // (ver loadLogoDataUrl). Se ajusta DENTRO del rectángulo de 33×14mm
+  // manteniendo su proporción original (nunca lo excede) y queda centrado
+  // en ambos ejes dentro de ese rectángulo.
+  if (logoInfo && logoInfo.dataUrl) {
+    const lg = spec.logo;
+    const aspect = logoInfo.w / logoInfo.h;
+    let drawW = lg.w, drawH = lg.w / aspect;
+    if (drawH > lg.h) { drawH = lg.h; drawW = lg.h * aspect; }
+    const offX = (lg.w - drawW) / 2, offY = (lg.h - drawH) / 2;
+    doc.addImage(logoInfo.dataUrl, "PNG", ox + lg.x + offX, y(oy + lg.y + offY), drawW, drawH);
+  }
+
+  // 2.4 — textos de cabecera
+  const t = spec.text;
+
+  // Fecha — arriba a la derecha, encima del logo, en cursiva.
+  applyFont(doc, t.date.font, t.date.size);
+  doc.setTextColor(0, 0, 0);
+  doc.text(job.dateStr, ox + t.date.x, y(oy + t.date.y), { align: t.date.align });
+
+  // Secuencia (#01) — debajo del logo, en su misma columna de la derecha.
+  applyFont(doc, t.seq.font, t.seq.size);
+  doc.setTextColor(...GRAY_SEQ);
+  doc.text(`#${String(job.seq).padStart(2, "0")}`, ox + t.seq.x, y(oy + t.seq.y), { align: t.seq.align });
+
+  // Línea de identificación YA IMPRESA (el dato viene del quiz, no se
+  // llena a mano): "Nombre: {nombre}   Curso: {curso}", con una línea
+  // de subrayado debajo de todo su ancho real.
+  const idl = t.idLine;
+  applyFont(doc, idl.font, idl.size);
+  doc.setTextColor(0, 0, 0);
+  let nameVal = (job.student.name || "").trim();
+  const originalName = nameVal;
+  while (nameVal && doc.getTextWidth("Nombre: " + nameVal + "…") > idl.maxNameWidth) {
+    nameVal = nameVal.slice(0, -1);
+  }
+  if (nameVal !== originalName) nameVal += "…";
+  const nameSeg = "Nombre: " + (nameVal || "(sin nombre)");
+  doc.text(nameSeg, ox + idl.x, y(oy + idl.y), { align: "left" });
+  const nameSegW = doc.getTextWidth(nameSeg);
+
+  const courseX = idl.x + nameSegW + idl.gapBetween;
+  const courseSeg = "Curso: " + (job.student.course || "").trim();
+  doc.text(courseSeg, ox + courseX, y(oy + idl.y), { align: "left" });
+  const courseSegW = doc.getTextWidth(courseSeg);
+
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(0.2);
+  doc.line(ox + idl.x, y(oy + idl.underlineY), ox + courseX + courseSegW, y(oy + idl.underlineY));
+
+  // Instrucción — centrada, en cursiva y subrayada (para que se note bien).
+  applyFont(doc, t.instruction.font, t.instruction.size);
+  doc.setTextColor(0, 0, 0);
+  const instrText = "Rellena por completo un solo círculo. Lápiz o esfero negro.";
+  const instrCx = ox + spec.sheet.w / 2;
+  doc.text(instrText, instrCx, y(oy + t.instruction.y), { align: t.instruction.align });
+  const instrW = doc.getTextWidth(instrText);
+  doc.setLineWidth(0.2);
+  doc.line(instrCx - instrW / 2, y(oy + t.instruction.underlineY), instrCx + instrW / 2, y(oy + t.instruction.underlineY));
+
+  // 2.5 — fiduciales (las 4 medidas más críticas: NO tocar sin cambiar SHEET_SPEC)
+  doc.setFillColor(0, 0, 0);
+  const fs = spec.fiducials.size;
+  spec.fiducials.centers.forEach(c => {
+    doc.rect(ox + c.x - fs / 2, y(oy + c.y - fs / 2), fs, fs, "F");
+  });
+
+  // 2.6 — bloque de respuestas
+  const g = spec.grid;
+  applyFont(doc, "Helvetica-Bold", 7);
+  doc.setTextColor(0, 0, 0);
+  ["A", "B", "C", "D"].forEach((label, i) => {
+    doc.text(label, ox + colX(i), y(oy + g.headerBaselineY), { align: "center" });
+  });
+
+  applyFont(doc, "Helvetica", 7);
+  doc.setTextColor(0, 0, 0);
+  doc.setDrawColor(0, 0, 0);
+  doc.setLineWidth(g.circleLineWidth);
+  job.sheetQuestions.forEach((sq, li) => {
+    const cy = rowY(li);
+    doc.text(String(sq.globalNumber), ox + g.qNumX, y(oy + cy + g.qNumBaselineOffset), { align: "right" });
+    for (let opt = 0; opt < g.options; opt++) {
+      doc.circle(ox + colX(opt), y(oy + cy), g.circleDiameter / 2, "S");
+    }
+  });
+}
+
+// ---------------------------------------------------------------
+// Generador principal: una hoja por cada bloque de hasta
+// SHEET_SPEC.grid.questions preguntas, por estudiante. Si el quiz tiene
+// más preguntas que caben en una hoja, cada estudiante recibe varias
+// hojas numeradas (#01, #02, ...) — no se reescala la geometría (regla 4).
+// ---------------------------------------------------------------
+async function buildOMRAnswerSheetsPDF({ quiz, students }) {
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    throw new Error("La librería de PDF (jsPDF) no cargó. Revisa tu conexión e inténtalo de nuevo.");
+  }
+  const questions = (quiz.questions || []).filter(q => q.type === "multi");
+  if (!questions.length) throw new Error("El quiz no tiene preguntas de opción múltiple.");
+  if (!students || !students.length) throw new Error("Agrega al menos un estudiante.");
+  if (!quiz.id || String(quiz.id).startsWith("new-")) throw new Error("Guarda el quiz antes de exportar el PDF.");
+
+  // El logo se carga y se atenúa UNA sola vez (es el mismo en las 4 hojas
+  // de cada página y en todas las páginas) — si falla, sigue sin logo.
+  const logoInfo = await loadLogoDataUrl(SHEET_SPEC.logo.src, SHEET_SPEC.logo.grayTint);
+
+  const perSheet = SHEET_SPEC.grid.questions;
+  const sheetsPerStudent = Math.max(1, Math.ceil(questions.length / perSheet));
+  const dateStr = new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" });
+
+  const jobs = [];
+  students.forEach(student => {
+    for (let s = 0; s < sheetsPerStudent; s++) {
+      const startIdx = s * perSheet;
+      const sheetQuestions = questions.slice(startIdx, startIdx + perSheet)
+        .map((qq, li) => ({ globalNumber: startIdx + li + 1 }));
+      if (!sheetQuestions.length) continue;
+      jobs.push({ student, seq: s + 1, dateStr, sheetQuestions });
+    }
+  });
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: SHEET_SPEC.unit, format: SHEET_SPEC.page.format, orientation: SHEET_SPEC.page.orientation });
+
+  let i = 0;
+  let firstPage = true;
+  while (i < jobs.length) {
+    if (!firstPage) doc.addPage();
+    firstPage = false;
+    drawCutMarks(doc);
+    drawPrintNote(doc);
+    for (let slot = 0; slot < SHEET_SPEC.sheet.perPage && i < jobs.length; slot++, i++) {
+      drawSheet(doc, SHEET_SPEC.origins[slot], jobs[i], quiz, logoInfo);
+    }
+  }
+  return doc;
+}
+
+// ---------------------------------------------------------------
+// UI — panel del Editor: lista de estudiantes + botón de exportar.
+// Se muestra dentro de la configuración del quiz cuando quiz.mode === "lectio".
+// ---------------------------------------------------------------
+function genStudentId() {
+  return "st_" + Math.random().toString(36).slice(2, 10);
+}
+
+function OMRReaderPanel({ quiz, setQuiz, onExportPDF }) {
+  const [pasteText, setPasteText] = useStateOmr("");
+  const [showPaste, setShowPaste] = useStateOmr(false);
+  const enabled = !!quiz.omrEnabled;
+  const students = quiz.omrStudents || [];
+  const mcQuestions = (quiz.questions || []).filter(q => q.type === "multi");
+  const perSheet = SHEET_SPEC.grid.questions;
+  const sheetsPerStudent = mcQuestions.length ? Math.max(1, Math.ceil(mcQuestions.length / perSheet)) : 0;
+  const totalSheets = sheetsPerStudent * students.length;
+  const totalPages = totalSheets ? Math.ceil(totalSheets / SHEET_SPEC.sheet.perPage) : 0;
+
+  const updateStudents = (next) => setQuiz({ ...quiz, omrStudents: next });
+  const addStudent = () => updateStudents([...students, { id: genStudentId(), name: "", course: "" }]);
+  const updateStudent = (id, patch) => updateStudents(students.map(s => s.id === id ? { ...s, ...patch } : s));
+  const removeStudent = (id) => updateStudents(students.filter(s => s.id !== id));
+
+  const loadPasted = () => {
+    const lines = pasteText.split("\n").map(l => l.trim()).filter(Boolean);
+    if (!lines.length) return;
+    const added = lines.map(line => {
+      const [namePart, coursePart] = line.split(",");
+      return { id: genStudentId(), name: (namePart || line).trim(), course: (coursePart || "").trim() };
+    });
+    updateStudents([...students, ...added]);
+    setPasteText("");
+    setShowPaste(false);
+  };
+
+  return (
+    <Field label="Modo Lector de Respuesta">
+      <Toggle label="🔲 Activar hoja de respuestas (OMR)" value={enabled}
+        onChange={(v) => setQuiz({ ...quiz, omrEnabled: v })} />
+      <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 6, lineHeight: 1.5 }}>
+        Genera un PDF con una hoja de respuestas por estudiante (con su propio código QR), lista para
+        imprimir y marcar a lápiz o esfero. Por ahora se exporta el PDF; la lectura automática del
+        escaneo llega en una siguiente etapa.
+      </p>
+
+      {enabled && (
+        <div style={{
+          marginTop: 12, padding: 14, borderRadius: 12,
+          background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.3)",
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-700)", marginBottom: 8 }}>
+            👥 Estudiantes ({students.length})
+          </div>
+
+          {students.length === 0 && (
+            <p style={{ fontSize: 12, color: "var(--ink-500)", marginBottom: 10 }}>
+              Agrega los estudiantes que recibirán una hoja (cada uno con su propio código QR).
+            </p>
+          )}
+
+          <div style={{ display: "grid", gap: 6, marginBottom: 10, maxHeight: 240, overflowY: "auto" }}>
+            {students.map((s, i) => (
+              <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <span style={{ fontSize: 11, color: "var(--ink-400)", width: 18, textAlign: "right", flexShrink: 0 }}>{i + 1}</span>
+                <input className="qs-input" style={{ flex: 1.4, padding: "6px 8px", fontSize: 12 }}
+                  placeholder="Nombre completo" value={s.name}
+                  onChange={e => updateStudent(s.id, { name: e.target.value })} />
+                <input className="qs-input" style={{ flex: 1, padding: "6px 8px", fontSize: 12 }}
+                  placeholder="Curso" value={s.course}
+                  onChange={e => updateStudent(s.id, { course: e.target.value })} />
+                <button onClick={() => removeStudent(s.id)} title="Quitar estudiante"
+                  style={{ background: "transparent", border: "none", color: "var(--red-500)", cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            <button onClick={addStudent} className="qs-btn qs-btn--ghost qs-btn--sm">+ Agregar estudiante</button>
+            <button onClick={() => setShowPaste(v => !v)} className="qs-btn qs-btn--ghost qs-btn--sm">📋 Pegar lista</button>
+          </div>
+
+          {showPaste && (
+            <div style={{ marginTop: 8 }}>
+              <textarea className="qs-input" value={pasteText} onChange={e => setPasteText(e.target.value)}
+                placeholder={"Un estudiante por línea. Opcional: Nombre, Curso\nEj: Ana Pérez, 10A"}
+                style={{ minHeight: 80, fontSize: 12, fontFamily: "inherit", resize: "vertical" }} />
+              <button onClick={loadPasted} className="qs-btn qs-btn--primary qs-btn--sm" style={{ marginTop: 6 }}>
+                Cargar lista
+              </button>
+            </div>
+          )}
+
+          <div style={{
+            marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(20,184,166,0.25)",
+            fontSize: 11, color: "var(--ink-500)", lineHeight: 1.6,
+          }}>
+            {mcQuestions.length} pregunta(s) de opción múltiple · hasta {perSheet} por hoja → {sheetsPerStudent || 0} hoja(s)
+            por estudiante · {totalSheets} hoja(s) en total · {totalPages} página(s) carta al imprimir.
+          </div>
+
+          <button onClick={onExportPDF} className="qs-btn qs-btn--success"
+            style={{ width: "100%", marginTop: 10, whiteSpace: "normal", lineHeight: 1.3 }}>
+            📄 Exportar Hoja de Respuesta
+          </button>
+          <p style={{ fontSize: 10, color: "var(--ink-500)", marginTop: 6, lineHeight: 1.5 }}>
+            ⚠️ Al imprimir usa 100% de tamaño (NO "ajustar a página") — el PDF ya trae esta nota impresa
+            en el margen de cada hoja.
+          </p>
+        </div>
+      )}
+    </Field>
+  );
+}
+
+Object.assign(window, { SHEET_SPEC, colX, rowY, buildOMRAnswerSheetsPDF, OMRReaderPanel });

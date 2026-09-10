@@ -37,8 +37,11 @@
   <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
-  <!-- Generador de códigos QR (para el modo proyección de la sala en vivo) -->
+  <!-- Generador de códigos QR (para el modo proyección de la sala en vivo, y para las hojas OMR) -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+  <!-- Generador de PDF (hojas de respuesta del Modo Lector de Respuesta / OMR) -->
+  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
   <style>
     /* Splash de carga: visible al instante mientras Babel compila la app.
@@ -121,7 +124,7 @@
   <script type="text/babel" data-presets="react" src="02-tweaks.js?v=3"></script>
 
   <!-- Creator -->
-  <script type="text/babel" data-presets="react" src="03-creator.js?v=9"></script>
+  <script type="text/babel" data-presets="react" src="03-creator.js?v=13"></script>
 
   <!-- Evaluación asincrónica online -->
   <script type="text/babel" data-presets="react" src="08-online.js?v=10"></script>
@@ -131,6 +134,12 @@
 
   <!-- Taller Evaluativo (modo de actividad nuevo, junto a Quiz y Encuesta) -->
   <script type="text/babel" data-presets="react" src="10-workshop.js?v=12"></script>
+
+  <!-- Lectio / Modo Sin Celular (presentación de diapositivas, sin sala en línea) -->
+  <script type="text/babel" data-presets="react" src="11-lectio.js?v=4"></script>
+
+  <!-- Modo Lector de Respuesta (hojas OMR en PDF, geometría en SHEET_SPEC) -->
+  <script type="text/babel" data-presets="react" src="12-omr.js?v=8"></script>
 
   <!-- App principal -->
   <script type="text/babel" data-presets="react" src="07-app.js?v=3"></script>

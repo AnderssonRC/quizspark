@@ -301,6 +301,9 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
             <button className="qs-btn" onClick={() => {
               if (quizzes.length === 0) {
                 alert("Crea primero un quiz para poder iniciar una sala.");
+              } else if (quizzes[0].mode === "lectio") {
+                // Sin Celular no usa sala en línea: se presenta desde el editor.
+                onOpenEditor(quizzes[0].id);
               } else {
                 onLaunch(quizzes[0].id);
               }
@@ -410,6 +413,12 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
                     borderRadius: 6, background: "var(--violet-100)", color: "var(--violet-700)", whiteSpace: "nowrap",
                   }}>📊 ENCUESTA</span>
                 )}
+                {q.mode === "lectio" && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 700, padding: "2px 8px",
+                    borderRadius: 6, background: "rgba(20,184,166,0.16)", color: "#0f766e", whiteSpace: "nowrap",
+                  }}>📵 SIN CELULAR</span>
+                )}
                 {q.isPublished && (
                   <span style={{
                     fontSize: 10, fontWeight: 700, padding: "2px 8px",
@@ -439,9 +448,15 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
                 <button onClick={() => duplicateQuiz(q.id)} className="qs-btn qs-btn--ghost qs-btn--sm" title="Duplicar quiz">
                   <I.bookCopy size={14}/>
                 </button>
-                <button onClick={() => onLaunch(q.id)} className="qs-btn qs-btn--primary qs-btn--sm" style={{ flex: 1 }}>
-                  🕹️ En vivo 
-                </button>
+                {q.mode === "lectio" ? (
+                  <button onClick={() => onOpenEditor(q.id)} className="qs-btn qs-btn--primary qs-btn--sm" style={{ flex: 1 }} title="Abrir el editor y usar 'Presentar'">
+                    📵 Presentar
+                  </button>
+                ) : (
+                  <button onClick={() => onLaunch(q.id)} className="qs-btn qs-btn--primary qs-btn--sm" style={{ flex: 1 }}>
+                    🕹️ En vivo
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -486,6 +501,8 @@ function Editor({ quizId, onBack, onLaunch }) {
   const [saveStatus, setSaveStatus] = useStateC("");
   const [showPublish, setShowPublish] = useStateC(false);
   const [loadingQuiz, setLoadingQuiz] = useStateC(false);
+  // Modo Sin Celular: presentación de diapositivas local, sin sala en línea
+  const [presenting, setPresenting] = useStateC(false);
   // Recuerda el id real del documento creado, aunque el estado aún no se
   // haya actualizado: evita que un doble clic o un guardado rápido cree
   // el mismo quiz dos veces.
@@ -581,6 +598,39 @@ function Editor({ quizId, onBack, onLaunch }) {
     const savedId = await handleSave();
     if (!savedId) return; // null = falló el guardado
     setShowPublish(true);
+  };
+
+  // Modo Lector de Respuesta: exportar el PDF de hojas OMR. Guarda primero
+  // (el QR de cada hoja lleva el id real del quiz) y delega la geometría
+  // y el armado del PDF a 12-omr.js (SHEET_SPEC es la única fuente de verdad).
+  const handleExportOMRClick = async () => {
+    if (!window.buildOMRAnswerSheetsPDF) {
+      alert("El generador de PDF no está disponible. Recarga la página e inténtalo de nuevo.");
+      return;
+    }
+    const mcQuestions = (quiz.questions || []).filter(q => q.type === "multi");
+    if (!mcQuestions.length) {
+      alert("Agrega al menos una pregunta de opción múltiple antes de exportar.");
+      return;
+    }
+    const students = quiz.omrStudents || [];
+    if (!students.length) {
+      alert("Agrega al menos un estudiante en 'Modo Lector de Respuesta' antes de exportar.");
+      return;
+    }
+    const savedId = await handleSave();
+    if (!savedId || String(savedId).startsWith("new-")) {
+      alert("No se pudo guardar el quiz. Inténtalo de nuevo antes de exportar el PDF.");
+      return;
+    }
+    try {
+      const doc = await window.buildOMRAnswerSheetsPDF({ quiz: { ...quiz, id: savedId }, students });
+      const safeTitle = (quiz.title || "hoja-respuestas").trim().replace(/[^\w\-]+/g, "_").slice(0, 60) || "hoja-respuestas";
+      doc.save(safeTitle + "-lector.pdf");
+    } catch (err) {
+      console.error("Error generando el PDF de hojas OMR:", err);
+      alert("Error generando el PDF: " + err.message);
+    }
   };
 
   const updateQuestion = (patch) => {
@@ -685,13 +735,14 @@ function Editor({ quizId, onBack, onLaunch }) {
               borderRadius: 8, background: "rgba(0, 224, 140, 0.16)", color: "#3dffab",
             }}>🟢 Publicado</span>
           )}
-          {quiz.mode !== "survey" && (
+          {quiz.mode !== "survey" && quiz.mode !== "lectio" && (
             <button onClick={() => setShowSettings(true)} className="qs-btn qs-btn--ghost qs-btn--sm">
               <I.lock size={14}/> Calificación y Reglas
             </button>
           )}
-          {/* Para Taller Evaluativo, solo tiene sentido uno de los dos canales según el submodo elegido */}
-          {(quiz.mode !== "workshop" || (quiz.workshopMode || "live") !== "live") && (
+          {/* Para Taller Evaluativo, solo tiene sentido uno de los dos canales según el submodo elegido.
+              Lectio (Sin Celular) no usa sala en línea: se proyecta localmente. */}
+          {quiz.mode !== "lectio" && (quiz.mode !== "workshop" || (quiz.workshopMode || "live") !== "live") && (
             <button onClick={handlePublishClick} disabled={saving} className="qs-btn qs-btn--ghost qs-btn--sm">
               🌐 Publicar online
             </button>
@@ -699,7 +750,11 @@ function Editor({ quizId, onBack, onLaunch }) {
           <button onClick={handleSave} disabled={saving} className="qs-btn qs-btn--primary qs-btn--sm">
             {saving ? "Guardando..." : "💾 Guardar"}
           </button>
-          {(quiz.mode !== "workshop" || (quiz.workshopMode || "live") === "live") && (
+          {quiz.mode === "lectio" ? (
+            <button className="qs-btn qs-btn--success" onClick={() => setPresenting(true)}>
+              📵 Presentar
+            </button>
+          ) : (quiz.mode !== "workshop" || (quiz.workshopMode || "live") === "live") && (
             <button className="qs-btn qs-btn--success" onClick={handleLaunchClick} disabled={saving}>
               {saving ? "⏳ Guardando..." : quiz.mode === "workshop" ? "🎮 Iniciar Taller en vivo" : "🎮 Sala en vivo"}
             </button>
@@ -712,10 +767,10 @@ function Editor({ quizId, onBack, onLaunch }) {
         <aside className="qs-editor-list">
           {/* AGREGAR PREGUNTA — ahora ARRIBA para crear más rápido */}
           <div style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-500)", letterSpacing: ".05em", marginBottom: 8 }}>
-            AGREGAR {quiz.mode === "survey" ? "PREGUNTA DE ENCUESTA" : "PREGUNTA"}
+            AGREGAR {quiz.mode === "survey" ? "PREGUNTA DE ENCUESTA" : quiz.mode === "lectio" ? "PREGUNTA (opción múltiple)" : "PREGUNTA"}
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
-            {(quiz.mode === "survey" ? SURVEY_TYPES : QUESTION_TYPES).map(t => {
+            {(quiz.mode === "survey" ? SURVEY_TYPES : quiz.mode === "lectio" ? QUESTION_TYPES.filter(t => t.id === "multi") : QUESTION_TYPES).map(t => {
               const Tico = I[t.icon];
               return (
                 <button key={t.id} onClick={() => addQuestion(t.id)} style={{
@@ -1105,9 +1160,15 @@ function Editor({ quizId, onBack, onLaunch }) {
                     borderRadius: 14, background: tileColor(i), color: "#fff",
                     boxShadow: "var(--shadow-tile)", minWidth: 0, overflow: "hidden",
                   }}>
-                    <div style={{ fontSize: 22, opacity: .85, width: 24, textAlign: "center" }}>{tileShape(i)}</div>
-                    <input value={o.text}
-                      onChange={e => updateOption(o.id, { text: e.target.value })}
+                    <div style={{
+                      fontSize: quiz.mode === "lectio" ? 18 : 22, fontWeight: quiz.mode === "lectio" ? 800 : 400,
+                      opacity: .85, width: 24, textAlign: "center", flexShrink: 0,
+                    }}>
+                      {/* Sin Celular: letra A/B/C/D (coincide con las columnas de la hoja OMR) */}
+                      {quiz.mode === "lectio" ? String.fromCharCode(65 + i) : tileShape(i)}
+                    </div>
+                    <AutoGrowTextarea value={o.text}
+                      onChange={v => updateOption(o.id, { text: v })}
                       placeholder={`Opción ${String.fromCharCode(65 + i)}...`}
                       style={{
                         flex: 1, background: "rgba(255,255,255,.2)", color: "#fff",
@@ -1248,12 +1309,14 @@ function Editor({ quizId, onBack, onLaunch }) {
                 { id: "quiz", label: "🎯 Quiz (con nota)" },
                 { id: "survey", label: "📊 Encuesta" },
                 { id: "workshop", label: "🛠️ Taller Evaluativo" },
+                { id: "lectio", label: "📵 Sin Celular" },
               ].map(opt => {
                 const activeMode = (quiz.mode || "quiz") === opt.id;
                 const CONFIRM_MSG = {
                   survey: "¿Cambiar a modo Encuesta? Las preguntas no tendrán respuesta correcta ni puntaje.",
                   quiz: "¿Cambiar a modo Quiz? Podrás marcar respuestas correctas y asignar puntaje.",
                   workshop: "¿Cambiar a modo Taller Evaluativo? Las preguntas cerradas valen 10 puntos automáticos y las abiertas las calificas tú (1-10 en vivo, o una sola nota en modo Offline).",
+                  lectio: "¿Cambiar a modo Sin Celular? Se convierte en una presentación de diapositivas que proyectas tú mismo, sin sala en línea. Por ahora, solo preguntas de opción múltiple.",
                 };
                 return (
                   <button key={opt.id} onClick={() => {
@@ -1280,75 +1343,101 @@ function Editor({ quizId, onBack, onLaunch }) {
                 Preguntas cerradas y abiertas, calificación manual, con presentación e ingreso propios para el estudiante.
               </p>
             )}
+            {quiz.mode === "lectio" && (
+              <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
+                Sin celulares ni sala en línea: proyectas cada pregunta como diapositiva y revelas tú mismo la respuesta correcta. Por ahora, solo opción múltiple.
+              </p>
+            )}
           </Field>
 
           {quiz.mode === "workshop" && window.WorkshopEditorFields && (
             <window.WorkshopEditorFields quiz={quiz} setQuiz={setQuiz} />
           )}
 
-          <Field label="Modo parejas">
-            <Toggle label="👥 Trabajo en parejas" value={!!quiz.pairMode}
-              onChange={(v) => setQuiz({ ...quiz, pairMode: v })} />
-            <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
-              Al ingresar (sala en vivo o evaluación online), el estudiante podrá anotar el nombre de su compañero de equipo.
-            </p>
-          </Field>
+          {quiz.mode === "lectio" && (
+            <Field label="Cómo funciona">
+              <div style={{
+                padding: 14, borderRadius: 12, background: "rgba(20,184,166,0.10)",
+                border: "1px solid rgba(20,184,166,0.35)", fontSize: 12, color: "var(--ink-700)", lineHeight: 1.6,
+              }}>
+                📵 No necesitas sala en línea ni que los estudiantes tengan celular. Usa el botón <b>"Presentar"</b> de
+                arriba para proyectar las preguntas una por una; un clic sobre cualquier opción (o el botón "Revelar")
+                muestra de inmediato cuál es la correcta.
+              </div>
+            </Field>
+          )}
 
-          <Field label="Acceso">
-            <div style={{ display: "flex", gap: 6 }}>
-              {["Pública", "Con Contraseña"].map((opt, i) => (
-                <button key={opt} onClick={() => setQuiz({ ...quiz, access: i === 1 ? "password" : "public" })}
-                  style={{
-                    flex: 1, padding: "8px", borderRadius: 10, fontSize: 12, fontWeight: 700,
-                    background: (quiz.access || "password") === (i === 1 ? "password" : "public") ? "var(--violet-100)" : "var(--ink-50)",
-                    color: (quiz.access || "password") === (i === 1 ? "password" : "public") ? "var(--violet-700)" : "var(--ink-500)",
-                    border: "1px solid var(--ink-200)",
-                  }}>{opt}</button>
-              ))}
-            </div>
-          </Field>
+          {quiz.mode === "lectio" && window.OMRReaderPanel && (
+            <window.OMRReaderPanel quiz={quiz} setQuiz={setQuiz} onExportPDF={handleExportOMRClick} />
+          )}
 
-          <Field label="Contraseña">
-            <div style={{ position: "relative" }}>
-              <input className="qs-input" value={quiz.password}
-                onChange={e => setQuiz({ ...quiz, password: e.target.value.toUpperCase() })}/>
-              <button onClick={() => setQuiz({ ...quiz, password: Math.random().toString(36).slice(2, 8).toUpperCase() })}
-                style={{ position: "absolute", right: 8, top: 8, fontSize: 11, color: "var(--violet-600)", fontWeight: 700 }}>
-                Generar
-              </button>
-            </div>
-          </Field>
+          {quiz.mode !== "lectio" && (
+            <>
+              <Field label="Modo parejas">
+                <Toggle label="👥 Trabajo en parejas" value={!!quiz.pairMode}
+                  onChange={(v) => setQuiz({ ...quiz, pairMode: v })} />
+                <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
+                  Al ingresar (sala en vivo o evaluación online), el estudiante podrá anotar el nombre de su compañero de equipo.
+                </p>
+              </Field>
 
-          <Field label="Ritmo del quiz">
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {[
-                { id: "timer",  icon: "timer", label: "Con temporizador", desc: "Cada pregunta tiene su tiempo" },
-                { id: "manual", icon: "hand",  label: "Avanzo yo (host)", desc: "Yo decido cuándo pasar" },
-              ].map(opt => {
-                const Ico = I[opt.icon];
-                const sel = quiz.pacing === opt.id;
-                return (
-                  <button key={opt.id} onClick={() => setQuiz({ ...quiz, pacing: opt.id })} style={{
-                    padding: 12, borderRadius: 12, textAlign: "left", display: "flex", gap: 10,
-                    background: sel ? "var(--violet-50)" : "var(--ink-50)",
-                    border: sel ? "2px solid var(--violet-500)" : "2px solid transparent",
-                  }}>
-                    <Ico size={20} stroke={sel ? "var(--violet-600)" : "var(--ink-500)"}/>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>{opt.label}</div>
-                      <div style={{ fontSize: 11, color: "var(--ink-500)" }}>{opt.desc}</div>
-                    </div>
+              <Field label="Acceso">
+                <div style={{ display: "flex", gap: 6 }}>
+                  {["Pública", "Con Contraseña"].map((opt, i) => (
+                    <button key={opt} onClick={() => setQuiz({ ...quiz, access: i === 1 ? "password" : "public" })}
+                      style={{
+                        flex: 1, padding: "8px", borderRadius: 10, fontSize: 12, fontWeight: 700,
+                        background: (quiz.access || "password") === (i === 1 ? "password" : "public") ? "var(--violet-100)" : "var(--ink-50)",
+                        color: (quiz.access || "password") === (i === 1 ? "password" : "public") ? "var(--violet-700)" : "var(--ink-500)",
+                        border: "1px solid var(--ink-200)",
+                      }}>{opt}</button>
+                  ))}
+                </div>
+              </Field>
+
+              <Field label="Contraseña">
+                <div style={{ position: "relative" }}>
+                  <input className="qs-input" value={quiz.password}
+                    onChange={e => setQuiz({ ...quiz, password: e.target.value.toUpperCase() })}/>
+                  <button onClick={() => setQuiz({ ...quiz, password: Math.random().toString(36).slice(2, 8).toUpperCase() })}
+                    style={{ position: "absolute", right: 8, top: 8, fontSize: 11, color: "var(--violet-600)", fontWeight: 700 }}>
+                    Generar
                   </button>
-                );
-              })}
-            </div>
-          </Field>
+                </div>
+              </Field>
 
-          <Field label="Mostrar después de cada pregunta">
-            <Toggle label="Respuesta correcta" defaultOn />
-            <Toggle label="Ranking actualizado" defaultOn />
-            <Toggle label="Estadísticas por opción" />
-          </Field>
+              <Field label="Ritmo del quiz">
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  {[
+                    { id: "timer",  icon: "timer", label: "Con temporizador", desc: "Cada pregunta tiene su tiempo" },
+                    { id: "manual", icon: "hand",  label: "Avanzo yo (host)", desc: "Yo decido cuándo pasar" },
+                  ].map(opt => {
+                    const Ico = I[opt.icon];
+                    const sel = quiz.pacing === opt.id;
+                    return (
+                      <button key={opt.id} onClick={() => setQuiz({ ...quiz, pacing: opt.id })} style={{
+                        padding: 12, borderRadius: 12, textAlign: "left", display: "flex", gap: 10,
+                        background: sel ? "var(--violet-50)" : "var(--ink-50)",
+                        border: sel ? "2px solid var(--violet-500)" : "2px solid transparent",
+                      }}>
+                        <Ico size={20} stroke={sel ? "var(--violet-600)" : "var(--ink-500)"}/>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: 13 }}>{opt.label}</div>
+                          <div style={{ fontSize: 11, color: "var(--ink-500)" }}>{opt.desc}</div>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </Field>
+
+              <Field label="Mostrar después de cada pregunta">
+                <Toggle label="Respuesta correcta" defaultOn />
+                <Toggle label="Ranking actualizado" defaultOn />
+                <Toggle label="Estadísticas por opción" />
+              </Field>
+            </>
+          )}
         </aside>
       </div>
 
@@ -1360,7 +1449,31 @@ function Editor({ quizId, onBack, onLaunch }) {
           onPublished={(updated) => setQuiz(q => ({ ...q, ...updated }))}
         />
       )}
+      {presenting && window.LectioPresenter && (
+        <window.LectioPresenter quiz={quiz} onExit={() => setPresenting(false)} />
+      )}
     </div>
+  );
+}
+
+// Campo de texto de una opción de respuesta que crece hacia abajo en vez
+// de recortar el texto: se ajusta la altura al contenido (como ya hace
+// QuestionTextEditor con la pregunta), así una respuesta larga queda
+// completamente visible mientras se edita.
+function AutoGrowTextarea({ value, onChange, placeholder, style }) {
+  const taRef = useRefC(null);
+  const resize = () => {
+    const el = taRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = el.scrollHeight + "px";
+  };
+  useEffectC(resize, [value]);
+  return (
+    <textarea ref={taRef} rows={1} value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      style={{ resize: "none", overflow: "hidden", lineHeight: 1.35, fontFamily: "inherit", ...style }}/>
   );
 }
 
