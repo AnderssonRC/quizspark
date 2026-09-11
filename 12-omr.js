@@ -1,4 +1,4 @@
-/* global React, Field, Toggle */
+/* global React */
 // ============================================================
 // QuizSpark — MODO LECTOR DE RESPUESTA (hojas OMR en PDF)
 // ------------------------------------------------------------
@@ -430,28 +430,34 @@ async function buildOMRAnswerSheetsPDF({ quiz, students }) {
 }
 
 // ---------------------------------------------------------------
-// UI — panel del Editor: lista de estudiantes + botón de exportar.
-// Se muestra dentro de la configuración del quiz cuando quiz.mode === "lectio".
+// UI — editor de la hoja de respuestas. Se muestra como un "lienzo" propio
+// del editor (panel central) cuando quiz.mode === "lectio" y quiz.omrEnabled,
+// para tener sitio de sobra a medida que se agreguen más opciones.
+// El interruptor "Activar hoja de respuestas (OMR)" vive en el panel de
+// Configuración de la derecha (03-creator.js); aquí ya llega activado.
 // ---------------------------------------------------------------
 function genStudentId() {
   return "st_" + Math.random().toString(36).slice(2, 10);
 }
 
-function OMRReaderPanel({ quiz, setQuiz, onExportPDF }) {
+function OMRReaderPanel({ quiz, setQuiz, onExportPDF, onClose }) {
   const [pasteText, setPasteText] = useStateOmr("");
   const [showPaste, setShowPaste] = useStateOmr(false);
-  const enabled = !!quiz.omrEnabled;
   const students = quiz.omrStudents || [];
   const mcQuestions = (quiz.questions || []).filter(q => q.type === "multi");
   const perSheet = SHEET_SPEC.grid.questions;
   const sheetsPerStudent = mcQuestions.length ? Math.max(1, Math.ceil(mcQuestions.length / perSheet)) : 0;
   const totalSheets = sheetsPerStudent * students.length;
   const totalPages = totalSheets ? Math.ceil(totalSheets / SHEET_SPEC.sheet.perPage) : 0;
+  const canExport = mcQuestions.length > 0 && students.length > 0;
 
   const updateStudents = (next) => setQuiz({ ...quiz, omrStudents: next });
   const addStudent = () => updateStudents([...students, { id: genStudentId(), name: "", course: "" }]);
   const updateStudent = (id, patch) => updateStudents(students.map(s => s.id === id ? { ...s, ...patch } : s));
   const removeStudent = (id) => updateStudents(students.filter(s => s.id !== id));
+  const clearStudents = () => {
+    if (students.length && window.confirm("¿Quitar todos los estudiantes de la lista?")) updateStudents([]);
+  };
 
   const loadPasted = () => {
     const lines = pasteText.split("\n").map(l => l.trim()).filter(Boolean);
@@ -465,82 +471,125 @@ function OMRReaderPanel({ quiz, setQuiz, onExportPDF }) {
     setShowPaste(false);
   };
 
+  const gridCols = "34px minmax(0, 1fr) 130px 32px";
+
   return (
-    <Field label="Modo Lector de Respuesta">
-      <Toggle label="🔲 Activar hoja de respuestas (OMR)" value={enabled}
-        onChange={(v) => setQuiz({ ...quiz, omrEnabled: v })} />
-      <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 6, lineHeight: 1.5 }}>
-        Genera un PDF con una hoja de respuestas por estudiante (con su propio código QR), lista para
-        imprimir y marcar a lápiz o esfero. Por ahora se exporta el PDF; la lectura automática del
-        escaneo llega en una siguiente etapa.
+    <div>
+      {/* Encabezado */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 6, flexWrap: "wrap" }}>
+        <h2 style={{ fontSize: 20, margin: 0, display: "flex", alignItems: "center", gap: 8 }}>
+          📄 Hoja de respuestas
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-400)" }}>OMR</span>
+        </h2>
+        {onClose && (
+          <button onClick={onClose} className="qs-btn qs-btn--ghost qs-btn--sm">Desactivar</button>
+        )}
+      </div>
+      <p style={{ fontSize: 13, color: "var(--ink-500)", lineHeight: 1.6, marginBottom: 22 }}>
+        Cada estudiante recibe una hoja en PDF con su propio código QR, lista para imprimir y marcar a
+        lápiz o esfero. Por ahora solo se exporta el PDF; la lectura automática del escaneo llega en una
+        etapa siguiente.
       </p>
 
-      {enabled && (
-        <div style={{
-          marginTop: 12, padding: 14, borderRadius: 12,
-          background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.3)",
-        }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-700)", marginBottom: 8 }}>
-            👥 Estudiantes ({students.length})
-          </div>
-
-          {students.length === 0 && (
-            <p style={{ fontSize: 12, color: "var(--ink-500)", marginBottom: 10 }}>
-              Agrega los estudiantes que recibirán una hoja (cada uno con su propio código QR).
-            </p>
+      {/* Estudiantes */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+        <h3 style={{ fontSize: 15, margin: 0 }}>
+          👥 Estudiantes <span style={{ color: "var(--ink-400)", fontWeight: 600 }}>({students.length})</span>
+        </h3>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <button onClick={addStudent} className="qs-btn qs-btn--ghost qs-btn--sm">+ Agregar</button>
+          <button onClick={() => setShowPaste(v => !v)} className="qs-btn qs-btn--ghost qs-btn--sm">📋 Pegar lista</button>
+          {students.length > 0 && (
+            <button onClick={clearStudents} className="qs-btn qs-btn--ghost qs-btn--sm" style={{ color: "var(--red-500)" }}>Vaciar</button>
           )}
+        </div>
+      </div>
 
-          <div style={{ display: "grid", gap: 6, marginBottom: 10, maxHeight: 240, overflowY: "auto" }}>
+      {showPaste && (
+        <div style={{ marginBottom: 14, padding: 12, borderRadius: 12, background: "var(--ink-50)", border: "1px solid var(--ink-200)" }}>
+          <textarea className="qs-input" value={pasteText} onChange={e => setPasteText(e.target.value)}
+            placeholder={"Un estudiante por línea. Opcional: Nombre, Curso\nEj: Ana Pérez, 10A"}
+            style={{ minHeight: 96, fontSize: 13, fontFamily: "inherit", resize: "vertical" }} />
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button onClick={loadPasted} className="qs-btn qs-btn--primary qs-btn--sm">Cargar lista</button>
+            <button onClick={() => { setShowPaste(false); setPasteText(""); }} className="qs-btn qs-btn--ghost qs-btn--sm">Cancelar</button>
+          </div>
+        </div>
+      )}
+
+      {students.length === 0 ? (
+        <div style={{
+          padding: 20, borderRadius: 12, border: "1px dashed var(--ink-200)", background: "var(--ink-50)",
+          textAlign: "center", fontSize: 13, color: "var(--ink-500)", marginBottom: 22, lineHeight: 1.6,
+        }}>
+          Aún no hay estudiantes. Agrégalos uno por uno con <b>+ Agregar</b> o pega tu lista completa con <b>📋 Pegar lista</b>.
+        </div>
+      ) : (
+        <div style={{ border: "1px solid var(--ink-200)", borderRadius: 12, overflow: "hidden", marginBottom: 22 }}>
+          <div style={{
+            display: "grid", gridTemplateColumns: gridCols, gap: 10, padding: "8px 12px",
+            background: "var(--ink-50)", fontSize: 11, fontWeight: 800, color: "var(--ink-500)",
+            letterSpacing: ".04em", textTransform: "uppercase",
+          }}>
+            <span>#</span><span>Nombre completo</span><span>Curso</span><span/>
+          </div>
+          <div style={{ maxHeight: 420, overflowY: "auto" }}>
             {students.map((s, i) => (
-              <div key={s.id} style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                <span style={{ fontSize: 11, color: "var(--ink-400)", width: 18, textAlign: "right", flexShrink: 0 }}>{i + 1}</span>
-                <input className="qs-input" style={{ flex: 1.4, padding: "6px 8px", fontSize: 12 }}
-                  placeholder="Nombre completo" value={s.name}
+              <div key={s.id} style={{
+                display: "grid", gridTemplateColumns: gridCols, gap: 10, padding: "6px 12px",
+                alignItems: "center", borderTop: "1px solid var(--ink-100)",
+              }}>
+                <span style={{ fontSize: 12, color: "var(--ink-400)" }}>{i + 1}</span>
+                <input className="qs-input" style={{ padding: "7px 10px", fontSize: 13 }}
+                  placeholder="Nombre y apellido" value={s.name}
                   onChange={e => updateStudent(s.id, { name: e.target.value })} />
-                <input className="qs-input" style={{ flex: 1, padding: "6px 8px", fontSize: 12 }}
-                  placeholder="Curso" value={s.course}
+                <input className="qs-input" style={{ padding: "7px 10px", fontSize: 13 }}
+                  placeholder="Ej: 11B" value={s.course}
                   onChange={e => updateStudent(s.id, { course: e.target.value })} />
-                <button onClick={() => removeStudent(s.id)} title="Quitar estudiante"
-                  style={{ background: "transparent", border: "none", color: "var(--red-500)", cursor: "pointer", fontSize: 16, flexShrink: 0 }}>×</button>
+                <button onClick={() => removeStudent(s.id)} title="Quitar estudiante" style={{
+                  background: "transparent", border: "none", color: "var(--red-500)",
+                  cursor: "pointer", fontSize: 18, lineHeight: 1,
+                }}>×</button>
               </div>
             ))}
           </div>
-
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            <button onClick={addStudent} className="qs-btn qs-btn--ghost qs-btn--sm">+ Agregar estudiante</button>
-            <button onClick={() => setShowPaste(v => !v)} className="qs-btn qs-btn--ghost qs-btn--sm">📋 Pegar lista</button>
-          </div>
-
-          {showPaste && (
-            <div style={{ marginTop: 8 }}>
-              <textarea className="qs-input" value={pasteText} onChange={e => setPasteText(e.target.value)}
-                placeholder={"Un estudiante por línea. Opcional: Nombre, Curso\nEj: Ana Pérez, 10A"}
-                style={{ minHeight: 80, fontSize: 12, fontFamily: "inherit", resize: "vertical" }} />
-              <button onClick={loadPasted} className="qs-btn qs-btn--primary qs-btn--sm" style={{ marginTop: 6 }}>
-                Cargar lista
-              </button>
-            </div>
-          )}
-
-          <div style={{
-            marginTop: 12, paddingTop: 10, borderTop: "1px solid rgba(20,184,166,0.25)",
-            fontSize: 11, color: "var(--ink-500)", lineHeight: 1.6,
-          }}>
-            {mcQuestions.length} pregunta(s) de opción múltiple · hasta {perSheet} por hoja → {sheetsPerStudent || 0} hoja(s)
-            por estudiante · {totalSheets} hoja(s) en total · {totalPages} página(s) carta al imprimir.
-          </div>
-
-          <button onClick={onExportPDF} className="qs-btn qs-btn--success"
-            style={{ width: "100%", marginTop: 10, whiteSpace: "normal", lineHeight: 1.3 }}>
-            📄 Exportar Hoja de Respuesta
-          </button>
-          <p style={{ fontSize: 10, color: "var(--ink-500)", marginTop: 6, lineHeight: 1.5 }}>
-            ⚠️ Al imprimir usa 100% de tamaño (NO "ajustar a página") — el PDF ya trae esta nota impresa
-            en el margen de cada hoja.
-          </p>
         </div>
       )}
-    </Field>
+
+      {/* Resumen de impresión */}
+      <div style={{
+        background: "rgba(20,184,166,0.08)", border: "1px solid rgba(20,184,166,0.3)",
+        borderRadius: 12, padding: 16, marginBottom: 14,
+      }}>
+        <div style={{
+          fontSize: 11, fontWeight: 800, color: "var(--ink-600)", letterSpacing: ".04em",
+          marginBottom: 8, textTransform: "uppercase",
+        }}>Resumen de impresión</div>
+        {mcQuestions.length === 0 ? (
+          <p style={{ fontSize: 13, color: "var(--red-500)", margin: 0 }}>
+            ⚠️ Agrega al menos una pregunta de opción múltiple en la pestaña “📝 Preguntas”.
+          </p>
+        ) : students.length === 0 ? (
+          <p style={{ fontSize: 13, color: "var(--ink-500)", margin: 0 }}>
+            Agrega estudiantes para calcular cuántas hojas se imprimirán.
+          </p>
+        ) : (
+          <div style={{ fontSize: 13, color: "var(--ink-700)", lineHeight: 1.8 }}>
+            <div><b>{mcQuestions.length}</b> pregunta(s) de opción múltiple · hasta <b>{perSheet}</b> por hoja</div>
+            <div><b>{sheetsPerStudent}</b> hoja(s) por estudiante · <b>{totalSheets}</b> hoja(s) en total · <b>{totalPages}</b> página(s) carta</div>
+          </div>
+        )}
+      </div>
+
+      <button onClick={onExportPDF} className="qs-btn qs-btn--success" disabled={!canExport}
+        style={{ width: "100%", whiteSpace: "normal", lineHeight: 1.3 }}>
+        📄 Exportar Hoja de Respuesta
+      </button>
+      <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.55 }}>
+        ⚠️ Al imprimir usa 100% de tamaño (NO “ajustar a página”) — el PDF ya trae esta nota impresa en el
+        margen de cada hoja.
+      </p>
+    </div>
   );
 }
 

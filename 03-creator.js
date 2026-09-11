@@ -503,6 +503,10 @@ function Editor({ quizId, onBack, onLaunch }) {
   const [loadingQuiz, setLoadingQuiz] = useStateC(false);
   // Modo Sin Celular: presentación de diapositivas local, sin sala en línea
   const [presenting, setPresenting] = useStateC(false);
+  // Lienzo activo del editor: "questions" (cuestionario) u "omr" (editor de
+  // la hoja de respuestas del Modo Lector). El lienzo OMR solo está
+  // disponible en modo lectio con quiz.omrEnabled activado.
+  const [canvasView, setCanvasView] = useStateC("questions");
   // Recuerda el id real del documento creado, aunque el estado aún no se
   // haya actualizado: evita que un doble clic o un guardado rápido cree
   // el mismo quiz dos veces.
@@ -712,6 +716,12 @@ function Editor({ quizId, onBack, onLaunch }) {
     else if (activeIdx === newIdx) setActiveIdx(idx);
   };
 
+  // Lienzo activo. Los lienzos OMR solo existen en modo lectio con la hoja
+  // de respuestas activada; en cualquier otro caso se muestra el cuestionario.
+  const currentView = (quiz.mode === "lectio" && quiz.omrEnabled) ? canvasView : "questions";
+  const showOmrCanvas = currentView === "omr";        // editor de la hoja
+  const showOmrReader = currentView === "omr-read";   // lector de hojas escaneadas
+
   return (
     <div className="qs-editor-root" style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 73px)" }}>
       {/* Editor toolbar */}
@@ -765,6 +775,38 @@ function Editor({ quizId, onBack, onLaunch }) {
       <div className="qs-editor-grid">
         {/* Question list */}
         <aside className="qs-editor-list">
+          {/* Modo Sin Celular con hoja OMR activada: selector de lienzo
+              (cuestionario / hoja de respuestas). Volver a "Preguntas"
+              simplemente vuelve a editar el cuestionario. */}
+          {quiz.mode === "lectio" && quiz.omrEnabled && (
+            <div style={{ display: "grid", gap: 6, marginBottom: 16 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+                {[
+                  { id: "questions", label: "📝 Preguntas" },
+                  { id: "omr", label: "📄 Hoja de respuestas" },
+                ].map(tab => {
+                  const on = currentView === tab.id;
+                  return (
+                    <button key={tab.id} onClick={() => setCanvasView(tab.id)} style={{
+                      padding: "9px 6px", borderRadius: 10, fontSize: 12, fontWeight: 700, lineHeight: 1.2,
+                      background: on ? "var(--violet-600)" : "var(--ink-50)",
+                      color: on ? "#fff" : "var(--ink-600)",
+                      border: "1px solid " + (on ? "var(--violet-600)" : "var(--ink-200)"),
+                    }}>{tab.label}</button>
+                  );
+                })}
+              </div>
+              <button onClick={() => setCanvasView("omr-read")} style={{
+                padding: "10px 8px", borderRadius: 10, fontSize: 12, fontWeight: 700, lineHeight: 1.2,
+                background: currentView === "omr-read" ? "var(--violet-600)" : "var(--ink-50)",
+                color: currentView === "omr-read" ? "#fff" : "var(--ink-600)",
+                border: "1px solid " + (currentView === "omr-read" ? "var(--violet-600)" : "var(--ink-200)"),
+              }}>📷 Leer Hoja de Respuesta</button>
+            </div>
+          )}
+
+          {currentView === "questions" && (
+          <>
           {/* AGREGAR PREGUNTA — ahora ARRIBA para crear más rápido */}
           <div style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-500)", letterSpacing: ".05em", marginBottom: 8 }}>
             AGREGAR {quiz.mode === "survey" ? "PREGUNTA DE ENCUESTA" : quiz.mode === "lectio" ? "PREGUNTA (opción múltiple)" : "PREGUNTA"}
@@ -784,16 +826,18 @@ function Editor({ quizId, onBack, onLaunch }) {
               );
             })}
           </div>
+          </>
+          )}
 
           <div style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-500)", letterSpacing: ".05em", marginBottom: 10 }}>
-            PREGUNTAS · {quiz.questions.length}
+            {currentView === "questions" ? "PREGUNTAS" : "IR A UNA PREGUNTA"} · {quiz.questions.length}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {quiz.questions.map((q, i) => {
               const t = QUESTION_TYPES.find(t => t.id === q.type);
               const Tico = t ? I[t.icon] : I.list;
               return (
-                <div key={q.id} onClick={() => setActiveIdx(i)} style={{
+                <div key={q.id} onClick={() => { setActiveIdx(i); setCanvasView("questions"); }} style={{
                   padding: 10, borderRadius: 12, cursor: "pointer",
                   background: activeIdx === i ? "var(--violet-100)" : "transparent",
                   border: activeIdx === i ? "2px solid var(--violet-400)" : "2px solid transparent",
@@ -860,8 +904,24 @@ function Editor({ quizId, onBack, onLaunch }) {
           </div>
         </aside>
 
-        {/* Center: question canvas */}
+        {/* Center: cuestionario, editor de la hoja OMR, o lector de hojas escaneadas */}
         <main className="qs-editor-canvas">
+          {showOmrReader ? (
+          <div className="qs-card" style={{ padding: 28, maxWidth: 1000, margin: "0 auto" }}>
+            {window.OMRReaderCanvas
+              ? <window.OMRReaderCanvas quiz={quiz} />
+              : <p style={{ color: "var(--ink-500)" }}>Cargando el lector de hojas…</p>}
+          </div>
+          ) : showOmrCanvas ? (
+          <div className="qs-card" style={{ padding: 28, maxWidth: 920, margin: "0 auto" }}>
+            {window.OMRReaderPanel
+              ? <window.OMRReaderPanel
+                  quiz={quiz} setQuiz={setQuiz}
+                  onExportPDF={handleExportOMRClick}
+                  onClose={() => { setQuiz({ ...quiz, omrEnabled: false }); setCanvasView("questions"); }} />
+              : <p style={{ color: "var(--ink-500)" }}>Cargando editor de la hoja de respuestas…</p>}
+          </div>
+          ) : (
           <div className="qs-card" style={{ padding: 28, maxWidth: 800, margin: "0 auto" }}>
           {active.type === "slide" ? (
             <>
@@ -1257,6 +1317,7 @@ function Editor({ quizId, onBack, onLaunch }) {
             </>
           )}
           </div>
+          )}
         </main>
 
         {/* Right: settings panel */}
@@ -1367,8 +1428,16 @@ function Editor({ quizId, onBack, onLaunch }) {
             </Field>
           )}
 
-          {quiz.mode === "lectio" && window.OMRReaderPanel && (
-            <window.OMRReaderPanel quiz={quiz} setQuiz={setQuiz} onExportPDF={handleExportOMRClick} />
+          {quiz.mode === "lectio" && (
+            <Field label="Modo Lector de Respuesta">
+              <Toggle label="🔲 Activar hoja de respuestas (OMR)" value={!!quiz.omrEnabled}
+                onChange={(v) => { setQuiz({ ...quiz, omrEnabled: v }); setCanvasView(v ? "omr" : "questions"); }} />
+              <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 6, lineHeight: 1.55 }}>
+                {quiz.omrEnabled
+                  ? "Edita los estudiantes y la hoja desde la pestaña “📄 Hoja de respuestas” de la izquierda."
+                  : "Genera una hoja en PDF por estudiante (con código QR) para imprimir y marcar a mano. Al activarla se abre su editor con más espacio."}
+              </p>
+            </Field>
           )}
 
           {quiz.mode !== "lectio" && (
