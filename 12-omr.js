@@ -46,7 +46,34 @@ const SHEET_SPEC = {
   // choque con nada, el número de secuencia (#01) y la fecha se movieron
   // a una columna angosta arriba/abajo del logo (ver derivación en
   // `text` más abajo).
-  version: "1.5.0",
+  // v1.6.0 (revertido en v1.6.1): se probó agregar el número de hoja al QR
+  // para soportar varias hojas por estudiante cuando un quiz supera
+  // grid.questions preguntas. Se descartó: la regla del Modo Sin Celular
+  // es que un quiz SIEMPRE cabe en una sola hoja (máximo grid.questions
+  // preguntas de opción múltiple) — ver el tope en buildOMRAnswerSheetsPDF
+  // y en OMRReaderPanel más abajo. El QR vuelve a ser
+  // "RC1:{quizId}:{studentId}", sin número de hoja.
+  // v1.7.0: rediseño del bloque de identificación + cuadrícula para que
+  // quepan 10 preguntas (antes 8), sin tocar el layout que ya funciona
+  // (grid.firstColX/colStep/rowStep/circleDiameter, QR, logo, fecha) —
+  // ver derivación completa en `text`, `fiducials` y `grid` más abajo.
+  // Resumen de la redistribución:
+  //   - Curso pasa a su propia línea ARRIBA de Nombre (antes compartían
+  //     una sola línea, lo que obligaba a truncar el nombre con "…" si
+  //     el curso era largo). Nombre ahora tiene toda la línea para él
+  //     solo y ya NO se trunca — si un nombre es muy largo, el tamaño de
+  //     letra se reduce en vez de cortarlo (ver drawSheet()).
+  //   - Se quita la línea "#01" (el número de hoja): desde que el Modo
+  //     Sin Celular exige que el quiz quepa en 1 sola hoja (ver
+  //     buildOMRAnswerSheetsPDF), ese número es SIEMPRE "#01" — ya no
+  //     informa nada, así que se libera esa línea para el nuevo bloque
+  //     Curso/Nombre en vez de agregar una línea más al total.
+  //   - El fiducial SUPERIOR sube de Y=62 a Y=54 y el INFERIOR baja de
+  //     Y=120 a Y=123 (spanY 58→69), usando aire que ya estaba de sobra
+  //     en ambos extremos de la hoja, para que la cuadrícula tenga sitio
+  //     para 2 filas más sin apretar rowStep (5mm, ya probado para marcar
+  //     a mano).
+  version: "1.7.0",
   unit: "mm",
 
   page:   { w: 216, h: 279, format: "letter", orientation: "portrait" },
@@ -85,69 +112,77 @@ const SHEET_SPEC = {
   //     la derecha con su mismo borde (x=97). y=4 dentro del margen
   //     libre 0.5–6 de arriba (mismo cálculo de aire que antes: cursiva
   //     7pt).
-  //   seq (#01): ya no cabe junto al logo (que ahora llega hasta x=97),
-  //     así que baja a la columna libre DEBAJO de él — y=34, 4mm después
-  //     de que el logo termina en y=30. Sigue alineado a la derecha,
-  //     mismo estilo gris de siempre.
-  //   idLine: "el nombre que ya aparece escrito... con Curso: y Nombre:
-  //     delante, subrayado" — una sola línea impresa (no un campo en
-  //     blanco): "Nombre: {nombre}   Curso: {curso}", con una línea de
-  //     subrayado debajo de todo su ancho real. y=44 (debajo del #01,
-  //     con aire de sobra). x del segmento "Curso:" se calcula en
-  //     drawSheet() según el ancho real de "Nombre: {nombre}" impreso
-  //     (gapBetween es el espacio fijo entre los dos segmentos).
-  //   instruction: sin cambios de diseño (centrada, cursiva, subrayada),
-  //     solo se corrió un poco más arriba (55.5→51) porque el #01 y el
-  //     idLine ya no ocupan la misma altura de antes.
+  // v1.7.0 — Curso y Nombre, cada uno en su propia línea, sin "#01"
+  // (derivación): se quitó la línea de secuencia (ver comentario de
+  // versión arriba) y en su lugar van Curso (arriba) y Nombre (abajo),
+  // cada uno con toda la línea para sí — el pedido explícito fue "el
+  // curso debe aparecer encima del nombre" y que el nombre no se corte.
+  //   courseLine: y=35 (5mm después del logo, que termina en y=30), letra
+  //     más chica (9pt) porque es el dato secundario.
+  //   nameLine: y=41 (6mm después de courseLine, más aire que antes por
+  //     ser ahora el dato principal), 10pt, subrayado en 42.3 (+1.3mm,
+  //     igual que en v1.5.0/v1.6.x). Ya NO se trunca con "…" — ver
+  //     drawSheet(), que reduce el tamaño de letra si hace falta
+  //     (nameLine.maxWidth) para que el nombre siempre quepa completo.
+  //   instruction: sube de y=51 a y=45.2 (subrayado 46.1) para dejar
+  //     zona libre de sobra sobre el fiducial superior, que en v1.7.0
+  //     sube a Y=54 (ver `fiducials` más abajo) — el límite es 47.5
+  //     (borde 50.5 − 3mm de zona libre), así que 46.1 deja 1.4mm de
+  //     margen.
   text: {
     date:        { x: 97, y: 4,  align: "right", font: "Helvetica-Oblique", size: 7 },
-    seq:         { x: 97, y: 34, align: "right", font: "Helvetica",         size: 8 },
-    idLine:      { x: 5,  y: 44, underlineY: 45.3, font: "Helvetica-Bold", size: 10, gapBetween: 8, maxNameWidth: 50 },
-    instruction: { y: 51, underlineY: 51.9, align: "center", font: "Helvetica-Oblique", size: 6.5 },
+    courseLine:  { x: 5,  y: 35, font: "Helvetica-Bold", size: 9 },
+    nameLine:    { x: 5,  y: 41, underlineY: 42.3, font: "Helvetica-Bold", size: 10, maxWidth: 90 },
+    instruction: { y: 45.2, underlineY: 46.1, align: "center", font: "Helvetica-Oblique", size: 6.5 },
   },
 
+  // v1.7.0: el fiducial SUPERIOR sube de Y=62 a Y=54 y el INFERIOR baja
+  // de Y=120 a Y=123 — ambos usan aire que ya estaba de sobra en su lado
+  // de la hoja (ver derivación completa en `grid` más abajo). spanY pasa
+  // de 58 a 69 (123−54); spanX no cambia.
   fiducials: {
     size: 7,
     centers: [
-      { x: 15, y: 62  },
-      { x: 85, y: 62  },
-      { x: 15, y: 120 },
-      { x: 85, y: 120 },
+      { x: 15, y: 54  },
+      { x: 85, y: 54  },
+      { x: 15, y: 123 },
+      { x: 85, y: 123 },
     ],
     clearance: 3,
     spanX: 70,
-    spanY: 58,
+    spanY: 69,
   },
 
-  // Bloque de respuestas — derivación de las medidas verticales (v1.1.0):
-  //   Fiducial superior: centro Y=62, lado 7mm → borde inferior Y=65.5.
-  //   + zona libre de 3mm (fiducials.clearance) → nada antes de Y=68.5.
-  //   El encabezado "A B C D" necesita que el TOPE de sus letras (no el
-  //   baseline) quede por debajo de 68.5: con Helvetica-Bold 7pt, la
-  //   altura de mayúscula es ~1.8mm, así que headerBaselineY = 71 deja
-  //   margen (≈2.5mm) de sobra sobre esa frontera.
-  //   firstRowY = 75.5 dedica 4.5mm de aire entre el encabezado y la
-  //   primera fila de círculos (antes eran 5.5mm entre 63 y 68.5).
-  //   Con rowStep=5mm sin cambios (separación probada para marcar a mano),
-  //   solo caben 8 filas completas antes de invadir la zona libre del
-  //   fiducial inferior (centro Y=120, borde superior 116.5, menos 3mm
-  //   de zona libre = límite en 113.5): la fila 8 llega a Y=110.5, con el
-  //   círculo (radio 1.75) terminando en 112.25 — 4.25mm de aire real
-  //   sobre el fiducial. Por eso "questions" bajó de 10 a 8 en vez de
-  //   comprimir el paso entre filas (que dejaría los círculos casi
-  //   pegados y difíciles de marcar/leer). Si un quiz tiene más de 8
-  //   preguntas de opción múltiple, cada estudiante recibe varias hojas
-  //   numeradas (#01, #02, ...) — ver buildOMRAnswerSheetsPDF más abajo.
+  // Bloque de respuestas — derivación de las medidas verticales:
+  //   v1.1.0: Fiducial superior en Y=62, lado 7mm → borde inferior Y=65.5.
+  //     + zona libre de 3mm → nada antes de Y=68.5. Encabezado "A B C D"
+  //     con headerBaselineY=71 (≈2.5mm de margen sobre esa frontera).
+  //     firstRowY=75.5 (4.5mm de aire tras el encabezado). Con eso solo
+  //     cabían 8 filas completas antes del fiducial inferior (Y=120,
+  //     borde 116.5, límite en 113.5 con la zona libre).
+  //   v1.7.0: para caber las 10 preguntas del quiz (no solo 8) sin tocar
+  //     rowStep (5mm, ya probado para marcar a mano), se redistribuyen
+  //     AMBOS fiduciales: el superior sube a Y=54 (borde 50.5, zona libre
+  //     hasta 47.5) y el inferior baja a Y=123 (borde 119.5, zona libre
+  //     hasta 116.5) — el fondo de la hoja (Y=130) queda con 3.5mm de
+  //     margen de sobra bajo el fiducial, igual que antes tenía de sobra
+  //     arriba. headerBaselineY baja a 63 (mismo margen de ≈2.5mm sobre
+  //     la nueva frontera de 56.5) y firstRowY a 67.5 (mismos 4.5mm de
+  //     aire tras el encabezado). La fila 10 llega a Y=112.5, círculo
+  //     hasta 114.25 — quedan 2.25mm de aire libre sobre el fiducial
+  //     inferior. Ya no hacen falta varias hojas por estudiante (ver
+  //     buildOMRAnswerSheetsPDF más abajo, que exige que el quiz quepa en
+  //     10 preguntas o menos).
   grid: {
     options: 4,
-    questions: 8,
+    questions: 10,
     firstColX: 39.5,
     colStep: 7,
-    firstRowY: 75.5,
+    firstRowY: 67.5,
     rowStep: 5,
     circleDiameter: 3.5,
     circleLineWidth: 0.3,
-    headerBaselineY: 71,
+    headerBaselineY: 63,
     qNumX: 31,
     qNumBaselineOffset: 1.1,
   },
@@ -170,7 +205,6 @@ function gray(pct) {
 }
 const GRAY_CUTMARKS = gray(70);
 const GRAY_INNERBOX = gray(60);
-const GRAY_SEQ = gray(45);
 
 function applyFont(doc, fontName, size) {
   let style = "normal";
@@ -310,35 +344,31 @@ function drawSheet(doc, origin, job, quiz, logoInfo) {
   doc.setTextColor(0, 0, 0);
   doc.text(job.dateStr, ox + t.date.x, y(oy + t.date.y), { align: t.date.align });
 
-  // Secuencia (#01) — debajo del logo, en su misma columna de la derecha.
-  applyFont(doc, t.seq.font, t.seq.size);
-  doc.setTextColor(...GRAY_SEQ);
-  doc.text(`#${String(job.seq).padStart(2, "0")}`, ox + t.seq.x, y(oy + t.seq.y), { align: t.seq.align });
-
-  // Línea de identificación YA IMPRESA (el dato viene del quiz, no se
-  // llena a mano): "Nombre: {nombre}   Curso: {curso}", con una línea
-  // de subrayado debajo de todo su ancho real.
-  const idl = t.idLine;
-  applyFont(doc, idl.font, idl.size);
+  // Curso — línea propia, ARRIBA del nombre (dato secundario, letra más chica).
+  const cl = t.courseLine;
+  applyFont(doc, cl.font, cl.size);
   doc.setTextColor(0, 0, 0);
-  let nameVal = (job.student.name || "").trim();
-  const originalName = nameVal;
-  while (nameVal && doc.getTextWidth("Nombre: " + nameVal + "…") > idl.maxNameWidth) {
-    nameVal = nameVal.slice(0, -1);
-  }
-  if (nameVal !== originalName) nameVal += "…";
-  const nameSeg = "Nombre: " + (nameVal || "(sin nombre)");
-  doc.text(nameSeg, ox + idl.x, y(oy + idl.y), { align: "left" });
-  const nameSegW = doc.getTextWidth(nameSeg);
-
-  const courseX = idl.x + nameSegW + idl.gapBetween;
   const courseSeg = "Curso: " + (job.student.course || "").trim();
-  doc.text(courseSeg, ox + courseX, y(oy + idl.y), { align: "left" });
-  const courseSegW = doc.getTextWidth(courseSeg);
+  doc.text(courseSeg, ox + cl.x, y(oy + cl.y), { align: "left" });
+
+  // Nombre — línea propia, completa y SIN recortar: si no entra al tamaño
+  // normal (10pt), se reduce el tamaño de letra hasta que quepa entera en
+  // vez de cortarla con "…" (nombres largos siguen siendo legibles).
+  const nl = t.nameLine;
+  const nameSeg = "Nombre: " + ((job.student.name || "").trim() || "(sin nombre)");
+  let nameSize = nl.size;
+  applyFont(doc, nl.font, nameSize);
+  while (nameSize > 6 && doc.getTextWidth(nameSeg) > nl.maxWidth) {
+    nameSize -= 0.5;
+    applyFont(doc, nl.font, nameSize);
+  }
+  doc.setTextColor(0, 0, 0);
+  doc.text(nameSeg, ox + nl.x, y(oy + nl.y), { align: "left" });
+  const nameSegW = doc.getTextWidth(nameSeg);
 
   doc.setDrawColor(0, 0, 0);
   doc.setLineWidth(0.2);
-  doc.line(ox + idl.x, y(oy + idl.underlineY), ox + courseX + courseSegW, y(oy + idl.underlineY));
+  doc.line(ox + nl.x, y(oy + nl.underlineY), ox + nl.x + nameSegW, y(oy + nl.underlineY));
 
   // Instrucción — centrada, en cursiva y subrayada (para que se note bien).
   applyFont(doc, t.instruction.font, t.instruction.size);
@@ -379,10 +409,11 @@ function drawSheet(doc, origin, job, quiz, logoInfo) {
 }
 
 // ---------------------------------------------------------------
-// Generador principal: una hoja por cada bloque de hasta
-// SHEET_SPEC.grid.questions preguntas, por estudiante. Si el quiz tiene
-// más preguntas que caben en una hoja, cada estudiante recibe varias
-// hojas numeradas (#01, #02, ...) — no se reescala la geometría (regla 4).
+// Generador principal: SIEMPRE una sola hoja por estudiante — el Modo Sin
+// Celular no soporta varias hojas por estudiante (el lector OMR solo
+// procesa una), así que un quiz de más de SHEET_SPEC.grid.questions
+// preguntas de opción múltiple no se puede exportar; hay que reducir sus
+// preguntas primero (ver también el aviso en OMRReaderPanel más abajo).
 // ---------------------------------------------------------------
 async function buildOMRAnswerSheetsPDF({ quiz, students }) {
   if (!window.jspdf || !window.jspdf.jsPDF) {
@@ -392,25 +423,27 @@ async function buildOMRAnswerSheetsPDF({ quiz, students }) {
   if (!questions.length) throw new Error("El quiz no tiene preguntas de opción múltiple.");
   if (!students || !students.length) throw new Error("Agrega al menos un estudiante.");
   if (!quiz.id || String(quiz.id).startsWith("new-")) throw new Error("Guarda el quiz antes de exportar el PDF.");
+  const perSheet = SHEET_SPEC.grid.questions;
+  if (questions.length > perSheet) {
+    throw new Error(
+      `El quiz tiene ${questions.length} preguntas de opción múltiple, pero una hoja solo tiene espacio ` +
+      `para ${perSheet}. Quita preguntas hasta llegar a ${perSheet} o menos — el Modo Sin Celular no ` +
+      `soporta varias hojas por estudiante.`
+    );
+  }
 
   // El logo se carga y se atenúa UNA sola vez (es el mismo en las 4 hojas
   // de cada página y en todas las páginas) — si falla, sigue sin logo.
   const logoInfo = await loadLogoDataUrl(SHEET_SPEC.logo.src, SHEET_SPEC.logo.grayTint);
 
-  const perSheet = SHEET_SPEC.grid.questions;
-  const sheetsPerStudent = Math.max(1, Math.ceil(questions.length / perSheet));
   const dateStr = new Date().toLocaleDateString("es-CO", { day: "2-digit", month: "2-digit", year: "numeric" });
 
-  const jobs = [];
-  students.forEach(student => {
-    for (let s = 0; s < sheetsPerStudent; s++) {
-      const startIdx = s * perSheet;
-      const sheetQuestions = questions.slice(startIdx, startIdx + perSheet)
-        .map((qq, li) => ({ globalNumber: startIdx + li + 1 }));
-      if (!sheetQuestions.length) continue;
-      jobs.push({ student, seq: s + 1, dateStr, sheetQuestions });
-    }
-  });
+  // Siempre 1 hoja por estudiante (seq: 1 fijo — ya no se numeran #01/#02...
+  // porque nunca hay una segunda).
+  const jobs = students.map(student => ({
+    student, seq: 1, dateStr,
+    sheetQuestions: questions.map((qq, li) => ({ globalNumber: li + 1 })),
+  }));
 
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: SHEET_SPEC.unit, format: SHEET_SPEC.page.format, orientation: SHEET_SPEC.page.orientation });
@@ -446,10 +479,13 @@ function OMRReaderPanel({ quiz, setQuiz, onExportPDF, onClose }) {
   const students = quiz.omrStudents || [];
   const mcQuestions = (quiz.questions || []).filter(q => q.type === "multi");
   const perSheet = SHEET_SPEC.grid.questions;
-  const sheetsPerStudent = mcQuestions.length ? Math.max(1, Math.ceil(mcQuestions.length / perSheet)) : 0;
-  const totalSheets = sheetsPerStudent * students.length;
+  // El Modo Sin Celular SIEMPRE es una hoja por estudiante — no soporta
+  // varias hojas (ver buildOMRAnswerSheetsPDF). Si el quiz tiene más
+  // preguntas de las que caben, hay que reducirlas antes de exportar.
+  const tooManyQuestions = mcQuestions.length > perSheet;
+  const totalSheets = mcQuestions.length ? students.length : 0;
   const totalPages = totalSheets ? Math.ceil(totalSheets / SHEET_SPEC.sheet.perPage) : 0;
-  const canExport = mcQuestions.length > 0 && students.length > 0;
+  const canExport = mcQuestions.length > 0 && students.length > 0 && !tooManyQuestions;
 
   const updateStudents = (next) => setQuiz({ ...quiz, omrStudents: next });
   const addStudent = () => updateStudents([...students, { id: genStudentId(), name: "", course: "" }]);
@@ -569,14 +605,20 @@ function OMRReaderPanel({ quiz, setQuiz, onExportPDF, onClose }) {
           <p style={{ fontSize: 13, color: "var(--red-500)", margin: 0 }}>
             ⚠️ Agrega al menos una pregunta de opción múltiple en la pestaña “📝 Preguntas”.
           </p>
+        ) : tooManyQuestions ? (
+          <p style={{ fontSize: 13, color: "var(--red-500)", margin: 0, lineHeight: 1.55 }}>
+            ⚠️ Este quiz tiene <b>{mcQuestions.length}</b> preguntas de opción múltiple, pero una hoja solo
+            tiene espacio para <b>{perSheet}</b>. El Modo Sin Celular no soporta varias hojas por
+            estudiante — quita preguntas hasta llegar a {perSheet} o menos en la pestaña “📝 Preguntas”.
+          </p>
         ) : students.length === 0 ? (
           <p style={{ fontSize: 13, color: "var(--ink-500)", margin: 0 }}>
             Agrega estudiantes para calcular cuántas hojas se imprimirán.
           </p>
         ) : (
           <div style={{ fontSize: 13, color: "var(--ink-700)", lineHeight: 1.8 }}>
-            <div><b>{mcQuestions.length}</b> pregunta(s) de opción múltiple · hasta <b>{perSheet}</b> por hoja</div>
-            <div><b>{sheetsPerStudent}</b> hoja(s) por estudiante · <b>{totalSheets}</b> hoja(s) en total · <b>{totalPages}</b> página(s) carta</div>
+            <div><b>{mcQuestions.length}</b> pregunta(s) de opción múltiple de <b>{perSheet}</b> por hoja</div>
+            <div>1 hoja por estudiante · <b>{totalSheets}</b> hoja(s) en total · <b>{totalPages}</b> página(s) carta</div>
           </div>
         )}
       </div>

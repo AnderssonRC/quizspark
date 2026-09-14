@@ -745,7 +745,7 @@ function Editor({ quizId, onBack, onLaunch }) {
               borderRadius: 8, background: "rgba(0, 224, 140, 0.16)", color: "#3dffab",
             }}>🟢 Publicado</span>
           )}
-          {quiz.mode !== "survey" && quiz.mode !== "lectio" && (
+          {quiz.mode !== "survey" && (
             <button onClick={() => setShowSettings(true)} className="qs-btn qs-btn--ghost qs-btn--sm">
               <I.lock size={14}/> Calificación y Reglas
             </button>
@@ -1663,8 +1663,12 @@ function QuestionTextEditor({ value, onChange, questionKey }) {
 }
 
 function SettingsModal({ quiz, setQuiz, onClose }) {
-  // Calcular total máximo del quiz sumando pointsCorrect + pointsSpeedBonus de cada pregunta
-  const totalMaxPoints = (quiz.questions || []).reduce((sum, q) => {
+  // Modo Sin Celular (lectio/OMR): en papel no hay pointsCorrect/pointsSpeedBonus
+  // (eso es del quiz digital) ni valor por pregunta (todas pesan igual) —
+  // el total es simplemente el número de preguntas de opción múltiple.
+  const isOmr = quiz.mode === "lectio";
+  const mcCount = (quiz.questions || []).filter(q => q.type === "multi").length;
+  const totalMaxPoints = isOmr ? mcCount : (quiz.questions || []).reduce((sum, q) => {
     const correct = q.pointsCorrect ?? 10;
     const bonus = q.pointsSpeedBonus ?? 0;
     return sum + correct + bonus;
@@ -1722,6 +1726,48 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
             placeholder="Dejar vacío si no se requiere" />
         </Field>
 
+        {isOmr ? (
+          <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--ink-200)" }}>
+            <h3 style={{ fontSize: 16, marginBottom: 8 }}>🎯 Fórmula de calificación</h3>
+            <p style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 12, lineHeight: 1.55 }}>
+              El Modo Sin Celular no usa tramos ni valor por pregunta (todas pesan igual): la nota sube en
+              línea recta y con decimales según los aciertos. <b>nota = (aciertos ÷ preguntas respondidas) × nota máxima.</b>
+            </p>
+
+            <div style={{
+              background: "var(--violet-50)", border: "1px solid var(--violet-400)",
+              padding: 10, borderRadius: 10, marginBottom: 14, fontSize: 13, color: "var(--ink-900)",
+            }}>
+              <b style={{ color: "var(--violet-400)" }}>Preguntas de la hoja:</b> {totalMaxPoints}
+              <br/>
+              <span style={{ fontSize: 11, opacity: 0.85 }}>
+                (opción múltiple, pestaña "Hoja de respuestas")
+              </span>
+            </div>
+
+            <label style={{ display: "block", marginBottom: 12 }}>
+              <span style={{ fontSize: 12, color: "var(--ink-500)", fontWeight: 600, display: "block", marginBottom: 4 }}>
+                Nota máxima (la que gana un estudiante con el 100% de aciertos)
+              </span>
+              <NumberField value={quiz.omrMaxGrade} fallback={5} step="0.1"
+                onChange={v => setQuiz({ ...quiz, omrMaxGrade: v })}
+                style={{
+                  width: 100, padding: "8px 10px", borderRadius: 8, border: "1px solid var(--violet-400)",
+                  fontWeight: 700, fontSize: 16, color: "var(--violet-400)", background: "var(--ink-50)", textAlign: "center",
+                }}/>
+            </label>
+
+            {totalMaxPoints > 0 && (
+              <p style={{ fontSize: 12, color: "var(--ink-500)", margin: 0, lineHeight: 1.55 }}>
+                Ejemplo: con {totalMaxPoints} preguntas y nota máxima {quiz.omrMaxGrade ?? 5}, un
+                estudiante que acierta {Math.min(9, totalMaxPoints)} saca{" "}
+                <b style={{ color: "var(--violet-400)" }}>
+                  {(Math.min(9, totalMaxPoints) / totalMaxPoints * (quiz.omrMaxGrade ?? 5)).toFixed(1)}
+                </b>.
+              </p>
+            )}
+          </div>
+        ) : (
         <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--ink-200)" }}>
           <h3 style={{ fontSize: 16, marginBottom: 8 }}>📊 Tabla de conversión a nota</h3>
           <p style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 12 }}>
@@ -1787,6 +1833,7 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
             </button>
           </div>
         </div>
+        )}
 
         <button onClick={onClose} className="qs-btn qs-btn--primary" style={{ width: "100%", marginTop: 24 }}>
           Listo

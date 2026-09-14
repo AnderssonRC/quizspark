@@ -1,4 +1,4 @@
-/* global React, convertToGrade */
+/* global React, ReactDOM */
 // ============================================================
 // QuizSpark — LECTOR OMR · Tabla de resultados + editor + guardado
 // ------------------------------------------------------------
@@ -23,7 +23,7 @@
 //   OMRResultsTable                — la tabla (spec 5) + su editor modal
 //                                    (spec 5.2).
 // ============================================================
-const { useState: useStateRes, useMemo: useMemoRes } = React;
+const { useState: useStateRes, useMemo: useMemoRes, useEffect: useEffectRes, useRef: useRefRes } = React;
 
 // Códigos de incidencia que bloquean el guardado (spec 5.1).
 const OMR_BLOCKING_CODES = ["FIDUCIAL_FAIL", "QR_FAIL", "WRONG_QUIZ", "DUPLICATE"];
@@ -33,38 +33,76 @@ function omrIsBlocked(entry) {
 }
 
 // ------------------------------------------------------------
-// Calificación — reutiliza convertToGrade tal cual la usan los quizzes
-// digitales (09-live.js). Las preguntas BLANK/WEAK/MULTI (o sin
-// respuesta) se tratan como "no respondidas": se excluyen del máximo y lo
-// ganado se reescala a la escala completa, igual que un estudiante que no
-// alcanzó a responder todo en una sala en vivo.
+// Traduce los códigos crudos de incidencia (los que arma 13-omr-reader.js
+// y 13b-omr-worker.js) a un texto que un docente entiende de un vistazo,
+// en vez del código técnico. El código crudo sigue disponible en el
+// atributo title de cada chip, por si hace falta para depurar.
+// ------------------------------------------------------------
+const OMR_INCIDENCE_LABELS = {
+  FIDUCIAL_FAIL: "No se detectó la hoja",
+  QR_FAIL: "Error de QR",
+  WRONG_QUIZ: "QR de otro quiz",
+  DUPLICATE: "Estudiante duplicado",
+  LOW_DPI: "Resolución de escaneo baja",
+  SHEET_ERROR: "Error al procesar la hoja",
+};
+function formatOmrQList(rest) {
+  const nums = (rest || "").split(",").filter(Boolean);
+  if (nums.length <= 1) return nums[0] || "";
+  return "preg. " + nums.slice(0, -1).join(", ") + " y " + nums[nums.length - 1];
+}
+function omrIncidenceLabel(code) {
+  const sep = code.indexOf(":");
+  const base = sep === -1 ? code : code.slice(0, sep);
+  const rest = sep === -1 ? "" : code.slice(sep + 1);
+  if (base === "MULTI") return "Doble círculo" + (rest ? " · " + formatOmrQList(rest) : "");
+  if (base === "WEAK") return "Círculo débil" + (rest ? " · " + formatOmrQList(rest) : "");
+  if (base === "BLANK") return "Círculo vacío" + (rest ? " · " + formatOmrQList(rest) : "");
+  return OMR_INCIDENCE_LABELS[base] || code;
+}
+
+// ------------------------------------------------------------
+// Calificación — el Modo Sin Celular usa su PROPIA fórmula, distinta de la
+// tabla de rangos ("Tabla de conversión a nota") de los quizzes digitales:
+//
+//     nota = (puntos obtenidos / puntos máximos respondidos) × nota máxima
+//
+// Lineal y con decimales, sin tramos ni saltos — cada pregunta pesa igual
+// (no hay "valor por pregunta" configurable: con todas las preguntas
+// pesando lo mismo, cualquier valor que se les ponga da la misma nota, así
+// que esa opción se quitó por innecesaria) y cada acierto extra sube la
+// nota proporcionalmente (ej.: 9 de 10 preguntas con nota máxima 4 → 3.6).
+// La "nota máxima" es quiz.omrMaxGrade (editable en "🔒 Calificación y
+// Reglas" para quizzes de Modo Sin Celular; 5 si no se ha tocado).
+// Esto es exclusivo del Modo Sin Celular — no toca la calificación de las
+// salas en vivo/online, que sigue usando convertToGrade + la tabla de
+// rangos tal cual.
+// Las preguntas BLANK/WEAK/MULTI (o sin respuesta) se tratan como "no
+// respondidas": se excluyen del total y lo ganado se reescala sobre las
+// preguntas sí respondidas, igual que un estudiante que no alcanzó a
+// responder todo en una sala en vivo.
 // ------------------------------------------------------------
 function buildOmrResultData(quiz, answers, student, meta) {
   const mcQuestions = (quiz.questions || []).filter(q => q.type === "multi");
-  let fullMaxPoints = 0, pointsMaxAnswered = 0, answeredCount = 0, correctCount = 0, score = 0;
+  let answeredCount = 0, correctCount = 0;
 
   const gradeDetail = mcQuestions.map((q, i) => {
-    const pMax = (q.pointsCorrect ?? 10) + (q.pointsSpeedBonus ?? 0);
-    fullMaxPoints += pMax;
     const optIdx = answers ? answers[i] : null;
     const attempted = optIdx != null;
-    let correct = false, points = 0, userOptionId = null;
+    let correct = false, userOptionId = null;
     if (attempted) {
       answeredCount++;
-      pointsMaxAnswered += pMax;
       const opt = (q.options || [])[optIdx];
       userOptionId = opt ? opt.id : null;
       correct = !!(opt && opt.correct);
-      points = correct ? (q.pointsCorrect ?? 10) : (q.pointsWrong ?? 0);
-      score += points;
       if (correct) correctCount++;
     }
-    return { qid: q.id, type: q.type, userAnswer: userOptionId, correct, points, pointsMax: pMax, attempted };
+    return { qid: q.id, type: q.type, userAnswer: userOptionId, correct, points: correct ? 1 : 0, pointsMax: 1, attempted };
   });
 
-  const scaledScore = pointsMaxAnswered > 0 ? (score / pointsMaxAnswered) * fullMaxPoints : 0;
-  const grade = convertToGrade(scaledScore, fullMaxPoints, quiz.gradingScale);
-  const percent = pointsMaxAnswered > 0 ? Math.round((score / pointsMaxAnswered) * 100) : 0;
+  const notaMaxima = quiz.omrMaxGrade ?? 5;
+  const grade = answeredCount > 0 ? +((correctCount / answeredCount) * notaMaxima).toFixed(2) : 0;
+  const percent = answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0;
 
   return {
     quizId: quiz.id, quizTitle: quiz.title || "Quiz",
@@ -73,14 +111,16 @@ function buildOmrResultData(quiz, answers, student, meta) {
     examDate: (meta && meta.examDate) || new Date().toISOString().slice(0, 10),
     gradeDetail,
     correct: correctCount, total: mcQuestions.length, answered: answeredCount,
-    percent, score, pointsMax: fullMaxPoints, grade,
+    percent, score: correctCount, pointsMax: mcQuestions.length, grade,
   };
 }
 
 // ------------------------------------------------------------
 // Aplana pages[].sheets[] (de 13-omr-reader.js) en filas de tabla,
 // detecta duplicados de studentId dentro del mismo lote y califica cada
-// una con buildOmrResultData.
+// una con buildOmrResultData. El Modo Sin Celular es siempre 1 hoja por
+// estudiante (12-omr.js no deja exportar un quiz con más preguntas de las
+// que caben en una hoja), así que no hace falta fusionar nada aquí.
 // ------------------------------------------------------------
 function buildOmrEntries(pages, quiz) {
   const flat = [];
@@ -177,11 +217,92 @@ async function confirmOmrEntry(quiz, entry) {
 // ------------------------------------------------------------
 // UI — tabla (spec 5) + editor de respuestas (spec 5.2)
 // ------------------------------------------------------------
-function OMREditorModal({ entry, quiz, onClose, onSave }) {
+
+// Desplegable de estudiante buscable: lista SIEMPRE completa (la que está
+// guardada en el quiz desde la pestaña "📄 Hoja de respuestas"), ordenada
+// alfabéticamente, y filtrable escribiendo cualquier parte del nombre
+// (basta una inicial). Dibuja su propia lista (portal a document.body) en
+// vez de <input list>+<datalist> nativo — el datalist del navegador no se
+// veía en este entorno, y además así el listado nunca queda recortado por
+// el contenedor con scroll de la tabla. `excludedStudentIds` son los que
+// ya tienen nota GUARDADA en Firestore para este quiz (nunca los de otras
+// hojas del mismo lote sin confirmar todavía — eso lo cubre la incidencia
+// "Estudiante duplicado").
+function omrStudentLabel(s) {
+  return (s.name || s.id) + (s.course ? " · " + s.course : "");
+}
+function OMRStudentPicker({ students, value, onChange, excludedStudentIds, placeholder, style }) {
+  const inputRef = useRefRes(null);
+  const [open, setOpen] = useStateRes(false);
+  const [rect, setRect] = useStateRes(null);
+  const [query, setQuery] = useStateRes("");
+
+  const options = useMemoRes(() => {
+    const excluded = excludedStudentIds || new Set();
+    return (students || [])
+      .filter(s => !excluded.has(s.id) || s.id === value)
+      .slice()
+      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, "es", { sensitivity: "base" }));
+  }, [students, excludedStudentIds, value]);
+
+  const selected = options.find(s => s.id === value);
+  useEffectRes(() => { setQuery(selected ? omrStudentLabel(selected) : ""); }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const filtered = useMemoRes(() => {
+    const q = query.trim().toLowerCase();
+    if (!q || (selected && omrStudentLabel(selected) === query)) return options;
+    return options.filter(s => omrStudentLabel(s).toLowerCase().includes(q));
+  }, [options, query, selected]);
+
+  const openList = () => {
+    if (inputRef.current) setRect(inputRef.current.getBoundingClientRect());
+    setOpen(true);
+  };
+  const pick = (s) => { onChange(s.id); setQuery(omrStudentLabel(s)); setOpen(false); };
+
+  return (
+    <div style={{ display: "inline-block", width: (style && style.width) || "100%" }}>
+      <input ref={inputRef} className="qs-input" value={query}
+        placeholder={placeholder || "Escribe para buscar…"}
+        onFocus={openList}
+        onChange={ev => { setQuery(ev.target.value); if (value) onChange(null); openList(); }}
+        onBlur={() => setTimeout(() => {
+          setOpen(false);
+          setQuery(prevQuery => {
+            const match = options.find(s => omrStudentLabel(s) === prevQuery);
+            return match ? prevQuery : (selected ? omrStudentLabel(selected) : "");
+          });
+        }, 150)}
+        style={{ ...style, width: "100%" }}
+      />
+      {open && ReactDOM.createPortal(
+        <div className="qs-card" style={{
+          position: "fixed", top: rect ? rect.bottom + 4 : 0, left: rect ? rect.left : 0,
+          width: rect ? Math.max(rect.width, 220) : 220,
+          maxHeight: 240, overflowY: "auto", zIndex: 9999, padding: 4,
+        }}>
+          {filtered.length ? filtered.map(s => (
+            <div key={s.id} onMouseDown={ev => { ev.preventDefault(); pick(s); }}
+              style={{ padding: "7px 10px", fontSize: 13, borderRadius: 8, cursor: "pointer", color: "var(--ink-900)" }}
+              onMouseEnter={ev => { ev.currentTarget.style.background = "var(--ink-100)"; }}
+              onMouseLeave={ev => { ev.currentTarget.style.background = "transparent"; }}
+            >{omrStudentLabel(s)}</div>
+          )) : (
+            <div style={{ padding: "8px 10px", fontSize: 12, color: "var(--ink-400)" }}>Sin resultados</div>
+          )}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
+}
+
+function OMREditorModal({ entry, quiz, onClose, onSave, onAssignStudent, excludedStudentIds }) {
   const mcQuestions = (quiz.questions || []).filter(q => q.type === "multi").slice(0, entry.answers.length);
   const [answers, setAnswers] = useStateRes([...entry.answers]);
   const setAnswer = (qi, val) => setAnswers(prev => prev.map((v, i) => (i === qi ? val : v)));
   const live = useMemoRes(() => buildOmrResultData(quiz, answers, entry.student, { examDate: entry.result.examDate }), [answers]);
+  const wrongQuiz = (entry.incidences || []).includes("WRONG_QUIZ");
 
   return (
     <div onClick={onClose} style={{
@@ -199,6 +320,25 @@ function OMREditorModal({ entry, quiz, onClose, onSave }) {
             color: live.grade >= 3 ? "#065f46" : "#991b1b",
           }}>{live.grade.toFixed(1)} · {live.correct}/{live.total}</span>
         </div>
+
+        {/* El QR no identificó al estudiante — elegirlo a mano acá mismo,
+            sin tener que cerrar el editor. Se descartan del desplegable
+            los que ya tienen nota (guardada o asignada a otra hoja de este
+            lote) para no asignar por error el mismo estudiante dos veces. */}
+        {!entry.student && !wrongQuiz && onAssignStudent && (
+          <div style={{
+            marginBottom: 16, padding: 10, borderRadius: 10,
+            background: "rgba(255,190,31,0.12)", border: "1px solid rgba(255,190,31,0.35)",
+          }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#b45309", marginBottom: 6 }}>
+              ⚠️ El QR no identificó al estudiante — elegilo a mano (o escribe una inicial para buscar):
+            </label>
+            <OMRStudentPicker students={quiz.omrStudents} value={entry.chosenStudentId}
+              onChange={sid => onAssignStudent(entry.id, sid)}
+              excludedStudentIds={excludedStudentIds}
+              style={{ padding: "7px 10px", fontSize: 13, width: "100%", maxWidth: 340 }} />
+          </div>
+        )}
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(0,1.1fr)", gap: 20 }}>
           <div>
@@ -238,7 +378,7 @@ function OMREditorModal({ entry, quiz, onClose, onSave }) {
   );
 }
 
-function OMRResultsTable({ quiz, entries, onAssignStudent, onEditAnswers, onConfirm, onConfirmAll }) {
+function OMRResultsTable({ quiz, entries, onAssignStudent, onEditAnswers, onConfirm, onConfirmAll, excludedStudentIds }) {
   const [editing, setEditing] = useStateRes(null);
   const [zoom, setZoom] = useStateRes(null);
   const [confirmingId, setConfirmingId] = useStateRes(null);
@@ -246,6 +386,11 @@ function OMRResultsTable({ quiz, entries, onAssignStudent, onEditAnswers, onConf
 
   if (!entries.length) return null;
   const pendingCount = entries.filter(e => e.status !== "confirmed").length;
+  // La entrada que edita el modal se busca de nuevo en `entries` en cada
+  // render (en vez de usar directamente el snapshot capturado al abrirlo):
+  // así, si dentro del editor se asigna un estudiante, el modal lo refleja
+  // al toque sin tener que cerrarlo y volver a abrirlo.
+  const editingLive = editing ? (entries.find(e => e.id === editing.id) || editing) : null;
 
   const handleConfirm = async (id) => {
     setConfirmingId(id);
@@ -290,14 +435,10 @@ function OMRResultsTable({ quiz, entries, onAssignStudent, onEditAnswers, onConf
                       {e.student ? e.student.name
                         : wrongQuiz ? <span style={{ color: "var(--red-500)", fontWeight: 700 }}>⚠️ Hoja de otro quiz</span>
                         : (
-                          <select className="qs-input" style={{ padding: "5px 6px", fontSize: 12, width: "auto" }}
-                            value={e.chosenStudentId || ""}
-                            onChange={ev => onAssignStudent(e.id, ev.target.value || null)}>
-                            <option value="">— elegir estudiante —</option>
-                            {(quiz.omrStudents || []).map(s => (
-                              <option key={s.id} value={s.id}>{s.name || s.id}{s.course ? " · " + s.course : ""}</option>
-                            ))}
-                          </select>
+                          <OMRStudentPicker students={quiz.omrStudents} value={e.chosenStudentId}
+                            onChange={sid => onAssignStudent(e.id, sid)}
+                            excludedStudentIds={excludedStudentIds}
+                            style={{ padding: "5px 6px", fontSize: 12, width: 160 }} />
                         )}
                     </td>
                     <td style={{ padding: 10, color: "var(--ink-500)" }}>{e.result.studentCourse}</td>
@@ -315,11 +456,11 @@ function OMRResultsTable({ quiz, entries, onAssignStudent, onEditAnswers, onConf
                           {e.incidences.map((code, k) => {
                             const isBlock = OMR_BLOCKING_CODES.some(b => code === b || code.indexOf(b + ":") === 0);
                             return (
-                              <span key={k} style={{
+                              <span key={k} title={code} style={{
                                 fontSize: 10, fontWeight: 800, padding: "2px 6px", borderRadius: 6,
                                 background: isBlock ? "rgba(255,77,103,0.16)" : "rgba(245,158,11,0.18)",
                                 color: isBlock ? "var(--red-500)" : "#fbbf24",
-                              }}>{code}</span>
+                              }}>{omrIncidenceLabel(code)}</span>
                             );
                           })}
                         </div>
@@ -352,9 +493,10 @@ function OMRResultsTable({ quiz, entries, onAssignStudent, onEditAnswers, onConf
         </div>
       </div>
 
-      {editing && (
-        <OMREditorModal entry={editing} quiz={quiz} onClose={() => setEditing(null)}
-          onSave={(answers) => { onEditAnswers(editing.id, answers); setEditing(null); }} />
+      {editingLive && (
+        <OMREditorModal entry={editingLive} quiz={quiz} onClose={() => setEditing(null)}
+          onSave={(answers) => { onEditAnswers(editingLive.id, answers); setEditing(null); }}
+          onAssignStudent={onAssignStudent} excludedStudentIds={excludedStudentIds} />
       )}
 
       {zoom && (
@@ -371,7 +513,7 @@ function OMRResultsTable({ quiz, entries, onAssignStudent, onEditAnswers, onConf
 }
 
 Object.assign(window, {
-  OMR_BLOCKING_CODES, omrIsBlocked,
+  OMR_BLOCKING_CODES, omrIsBlocked, omrIncidenceLabel,
   buildOmrResultData, buildOmrEntries, confirmOmrEntry,
   OMRResultsTable,
 });

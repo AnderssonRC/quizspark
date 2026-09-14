@@ -318,11 +318,36 @@ function OMRReaderCanvas({ quiz }) {
   const [phase, setPhase] = useStateRd("idle");   // idle | rasterizing | rasterized | detecting | done | error
   const [logLines, setLogLines] = useStateRd([]);
   const [pages, setPages] = useStateRd([]);       // { label, canvas|null, sourceDpi, preview, det }
-  const [debug, setDebug] = useStateRd(true);     // dibujar todos los contornos
+  const [debug, setDebug] = useStateRd(false);    // dibujar todos los contornos (rojo)
+  // Vistas de diagnóstico — apagadas por defecto para que quede limpio (con
+  // "Resultados detectados" alcanza), pero siguen disponibles como opción
+  // desplegable al lado de "Ver todos los contornos (rojo)".
+  const [showLog, setShowLog] = useStateRd(false);        // registro de proceso
+  const [showPagesGrid, setShowPagesGrid] = useStateRd(false); // páginas/hojas detectadas (overlays rojo/azul)
+  // Estudiantes que ya tienen nota guardada para este quiz (spec: el
+  // desplegable de "elegir estudiante" — en la tabla y en el editor — no
+  // debe ofrecer a alguien que ya tiene resultado, para no asignarlo dos
+  // veces por error). Se carga una vez al entrar; cuando se confirma una
+  // fila se suma localmente sin tener que volver a consultar Firestore.
+  const [savedStudentIds, setSavedStudentIds] = useStateRd(() => new Set());
   const inputRef = useRefRd(null);
   const rasterRef = useRefRd([]);                 // canvases vivos (fuera de React)
-  const debugRef = useRefRd(true);
+  const debugRef = useRefRd(false);
   debugRef.current = debug;
+
+  useEffectRd(() => {
+    let cancelled = false;
+    if (!quiz.id || String(quiz.id).startsWith("new-") || !window.QS || !window.QS.db) return;
+    window.QS.db.collection("results").where("quizId", "==", quiz.id).get()
+      .then(snap => {
+        if (cancelled) return;
+        const ids = new Set();
+        snap.forEach(doc => { const sid = doc.data().studentId; if (sid) ids.add(sid); });
+        setSavedStudentIds(ids);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [quiz.id]);
 
   const log = useCallbackRd((line) => {
     const stamp = new Date().toLocaleTimeString();
@@ -546,6 +571,15 @@ function OMRReaderCanvas({ quiz }) {
     [pages, quiz]
   );
 
+  // Estudiantes a descartar del desplegable "elegir estudiante": SOLO los
+  // que ya tienen un resultado guardado (confirmado) para este quiz. Los
+  // que ya quedaron resueltos por QR en otra hoja del mismo lote NO se
+  // descartan acá — la lista debe seguir mostrando siempre el curso
+  // completo de "Hoja de respuestas"; si el docente igual repite uno a
+  // propósito o por error, la incidencia "Estudiante duplicado" lo avisa
+  // y bloquea el guardado.
+  const excludedStudentIds = savedStudentIds;
+
   const onConfirm = useCallbackRd(async (entryId) => {
     const entry = entries.find(e => e.id === entryId);
     if (!entry || !window.confirmOmrEntry) return;
@@ -553,6 +587,9 @@ function OMRReaderCanvas({ quiz }) {
       const res = await window.confirmOmrEntry(quiz, entry);
       if (res === "created" || res === "overwritten") {
         updateSheet(entryId, () => ({ status: "confirmed" }));
+        if (entry.chosenStudentId) {
+          setSavedStudentIds(prev => new Set(prev).add(entry.chosenStudentId));
+        }
         log(`✅ Confirmado: ${entry.result.studentName} → nota ${entry.result.grade.toFixed(1)} (${res === "overwritten" ? "sobrescribió uno existente" : "nuevo"})`);
       } else if (res === "skipped") {
         log(`(el docente decidió no sobrescribir el resultado existente de ${entry.result.studentName})`);
@@ -606,13 +643,21 @@ function OMRReaderCanvas({ quiz }) {
             : "2 · 🔍 Detectar fiduciales"}
         </button>
         <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-500)", cursor: "pointer" }}>
+          <input type="checkbox" checked={showLog} onChange={e => setShowLog(e.target.checked)} />
+          🪵 Ver registro de proceso
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-500)", cursor: "pointer" }}>
+          <input type="checkbox" checked={showPagesGrid} onChange={e => setShowPagesGrid(e.target.checked)} />
+          🖼️ Ver páginas y hojas detectadas
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--ink-500)", cursor: "pointer" }}>
           <input type="checkbox" checked={debug} onChange={e => setDebug(e.target.checked)} />
           🐞 Ver todos los contornos (rojo)
         </label>
       </div>
 
-      {/* Registro de diagnóstico */}
-      {logLines.length > 0 && (
+      {/* Registro de diagnóstico — oculto por defecto, se activa arriba */}
+      {showLog && logLines.length > 0 && (
         <pre style={{
           maxHeight: 220, overflowY: "auto", background: "var(--ink-50)", color: "#86efac",
           border: "1px solid var(--ink-200)",
@@ -626,17 +671,24 @@ function OMRReaderCanvas({ quiz }) {
           padding: 12, borderRadius: 10, background: "rgba(255,77,103,0.1)",
           border: "1px solid rgba(255,77,103,0.4)", color: "var(--red-500)", fontSize: 13, marginBottom: 16,
         }}>
-          El proceso se detuvo. Revisa el registro de arriba (y la consola del navegador, F12) para ver
-          la última línea antes del fallo.
+          El proceso se detuvo. Revisa el registro de arriba (activa "🪵 Ver registro de proceso" si está
+          oculto) y la consola del navegador (F12) para ver la última línea antes del fallo.
         </div>
       )}
 
       {pages.length > 0 && (
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 12, fontSize: 13, fontWeight: 600, color: "var(--ink-500)" }}>
+          <span>{pages.length} página(s)</span>
+          {phase === "done" && <span>· {totalSheets} hoja(s) detectada(s)</span>}
+        </div>
+      )}
+
+      {/* Páginas/hojas detectadas (overlays rojo/verde de fiduciales + vista
+          previa rectificada con círculos azules por burbuja) — ocultas por
+          defecto, con "Resultados detectados" abajo alcanza para el uso
+          normal; se activan arriba para depurar. */}
+      {showPagesGrid && pages.length > 0 && (
         <>
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 12, fontSize: 13, fontWeight: 600, color: "var(--ink-500)" }}>
-            <span>{pages.length} página(s)</span>
-            {phase === "done" && <span>· {totalSheets} hoja(s) detectada(s)</span>}
-          </div>
           <div style={{ display: "grid", gap: 16, gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}>
             {pages.map((p, i) => (
               <div key={i} style={{ border: "1px solid var(--ink-200)", borderRadius: 12, overflow: "hidden", background: "var(--white)" }}>
@@ -704,9 +756,12 @@ function OMRReaderCanvas({ quiz }) {
       )}
 
       {/* Paso 7: tabla de resultados — correlaciona lo leído con las
-          respuestas correctas del quiz y califica con la misma fórmula de
-          los quizzes digitales. Paso 8: "Confirmar" guarda en Firestore
-          (colección "results"), solo al pulsarlo. */}
+          respuestas correctas del quiz y las califica con la fórmula
+          propia del Modo Sin Celular (lineal, con decimales — ver
+          13c-omr-results.js). El Modo Sin Celular siempre es 1 hoja por
+          estudiante (si el quiz tiene más preguntas de las que caben, no
+          se deja exportar — ver 12-omr.js). Paso 8: "Confirmar" guarda en
+          Firestore (colección "results"), solo al pulsarlo. */}
       {window.OMRResultsTable && (
         <window.OMRResultsTable
           quiz={quiz} entries={entries}
@@ -714,6 +769,7 @@ function OMRReaderCanvas({ quiz }) {
           onEditAnswers={onEditAnswers}
           onConfirm={onConfirm}
           onConfirmAll={onConfirmAll}
+          excludedStudentIds={excludedStudentIds}
         />
       )}
 
