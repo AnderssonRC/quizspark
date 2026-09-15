@@ -74,6 +74,16 @@ const workshopInputStyle = (extra) => ({
   color: WORKSHOP_TEXT, fontFamily: "inherit", fontSize: 14, outline: "none",
   colorScheme: "dark", ...extra,
 });
+// Etiqueta de la pantalla "identifícate" (nombre/curso/pareja): centrada,
+// grande y con el color propio del taller — en vez de la etiqueta gris
+// genérica de un formulario cualquiera.
+function workshopIdentifyLabelStyle(wc) {
+  return {
+    display: "block", textAlign: "center", marginBottom: 8,
+    fontSize: 16, fontWeight: 700, fontFamily: WORKSHOP_FONT,
+    color: wc.hex, letterSpacing: ".01em",
+  };
+}
 
 function workshopColorInfo(colorVar) {
   return WORKSHOP_COLORS[colorVar] || WORKSHOP_COLORS[WORKSHOP_DEFAULT_COLOR];
@@ -726,22 +736,23 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
             deliveryInfo={formatDeadline(deadline)}
           />
           <WorkshopCard style={{ padding: 28 }}>
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>Tu nombre completo</label>
-              <input type="text" style={workshopInputStyle()} placeholder="Ana María Pérez"
+            <div style={{ marginBottom: 18 }}>
+              <label style={workshopIdentifyLabelStyle(wc)}>👤 Tu nombre completo</label>
+              <input type="text" style={workshopInputStyle({ textAlign: "center", fontSize: 16, padding: "13px 14px" })}
+                placeholder="Ana María Pérez"
                 value={studentName} onChange={e => setStudentName(e.target.value)} autoFocus />
             </div>
-            <div style={{ marginBottom: quiz.pairMode ? 14 : 20 }}>
-              <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>Curso</label>
-              <input type="text" style={workshopInputStyle()} placeholder="Ej: 10A"
+            <div style={{ marginBottom: quiz.pairMode ? 18 : 24 }}>
+              <label style={workshopIdentifyLabelStyle(wc)}>🏫 Curso</label>
+              <input type="text" style={workshopInputStyle({ textAlign: "center", fontSize: 16, padding: "13px 14px" })}
+                placeholder="Ej: 10A"
                 value={studentCourse} onChange={e => setStudentCourse(e.target.value)} />
             </div>
             {quiz.pairMode && (
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
-                  👥 Nombre de tu compañero (opcional)
-                </label>
-                <input type="text" style={workshopInputStyle()} placeholder="Ej: Juan Pérez"
+              <div style={{ marginBottom: 24 }}>
+                <label style={workshopIdentifyLabelStyle(wc)}>👥 Nombre de tu compañero (opcional)</label>
+                <input type="text" style={workshopInputStyle({ textAlign: "center", fontSize: 16, padding: "13px 14px" })}
+                  placeholder="Ej: Juan Pérez"
                   value={partnerName} onChange={e => setPartnerName(e.target.value)} />
               </div>
             )}

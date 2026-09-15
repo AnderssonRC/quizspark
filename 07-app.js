@@ -2,7 +2,7 @@
 // ============================================================
 // QuizSpark — App shell + router + autenticación
 // ============================================================
-const { useState: useStateA, useEffect: useEffectA } = React;
+const { useState: useStateA, useEffect: useEffectA, useRef: useRefA } = React;
 
 function getURLParam(name) {
   try {
@@ -79,6 +79,40 @@ function App() {
   const [showAdmin, setShowAdmin] = useStateA(false);
   const [showJoinFromNav, setShowJoinFromNav] = useStateA(false);
   const [unauthedJoin, setUnauthedJoin] = useStateA(false); // estudiante uniéndose desde el login
+
+  // ---- Guarda de navegación: el botón "Atrás" del navegador no debe
+  // sacar al docente de Desafíate, debe devolverlo al Dashboard ----
+  // Sin esto, como la app nunca usa pushState, "Atrás" simplemente
+  // navega a lo que había en el historial ANTES de llegar a la app (el
+  // buscador, otro sitio, etc.) — se sale de Desafíate sin aviso, sin
+  // importar en qué pantalla interna estaba.
+  // Estrategia: al entrar, se agrega UNA entrada "canario" al historial.
+  // Si el usuario presiona Atrás estando en cualquier pantalla que no
+  // sea el Dashboard (editor, resultados, biblioteca, sala en vivo,
+  // panel de admin, unirse desde el nav), se resetea todo al Dashboard
+  // y se vuelve a agregar el canario — así ese "Atrás" se queda DENTRO
+  // de la app. Solo si ya estaba en el Dashboard (sin nada abierto) se
+  // deja que el navegador siga para atrás con normalidad (ahí sí tiene
+  // sentido salir, porque ya se llegó al "inicio" de la app).
+  const navStateRef = useRefA({ view: "dashboard", showAdmin: false, showJoinFromNav: false });
+  useEffectA(() => {
+    navStateRef.current = { view, showAdmin, showJoinFromNav };
+  });
+  useEffectA(() => {
+    if (examCode || joinCode) return; // esos modos son de estudiante, sin shell propio
+    window.history.pushState({ qsApp: true }, "");
+    const onPopState = () => {
+      const st = navStateRef.current;
+      const atHome = st.view === "dashboard" && !st.showAdmin && !st.showJoinFromNav;
+      if (atHome) return; // ya estaba en el inicio: dejar que salga normalmente
+      setView("dashboard");
+      setShowAdmin(false);
+      setShowJoinFromNav(false);
+      window.history.pushState({ qsApp: true }, "");
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [examCode, joinCode]);
 
   // ---- Listener de sesión Firebase (solo si NO estamos en modo estudiante por URL) ----
   useEffectA(() => {

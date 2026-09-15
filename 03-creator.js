@@ -433,7 +433,10 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
               {q.isPublished && q.publishCode && (
                 <button
                   onClick={() => {
-                    const url = window.location.origin + window.location.pathname + "?exam=" + q.publishCode;
+                    // "t" es solo una pista de modo para la pantalla de carga
+                    // del estudiante (ver studentUrl en PublishModal, 08-online.js).
+                    const url = window.location.origin + window.location.pathname
+                      + "?exam=" + q.publishCode + "&t=" + (q.mode || "quiz");
                     navigator.clipboard.writeText(url);
                     alert("Enlace copiado:\n" + url);
                   }}

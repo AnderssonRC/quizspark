@@ -26,6 +26,18 @@ function quizBgExam(color) {
   return `linear-gradient(135deg, ${pair[0]}, ${pair[1]})`;
 }
 
+// Sustantivo con el que un estudiante reconoce cada modo, para que las
+// pantallas de StudentExam digan "quiz"/"encuesta"/etc. en vez de siempre
+// "evaluación". Se usa tanto con el modo YA confirmado (quiz.mode, una vez
+// que Firestore respondió) como con la PISTA que viaja en el link (?t=...,
+// ver studentUrl en PublishModal) mientras esa respuesta todavía no llega.
+function studentActivityNoun(mode) {
+  if (mode === "survey") return "encuesta";
+  if (mode === "workshop") return "taller";
+  if (mode === "lectio") return "actividad";
+  return "quiz";
+}
+
 function generateShortCode() {
   // Código de 6 caracteres alfanuméricos en mayúsculas
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sin O, 0, I, 1 para evitar confusión
@@ -186,7 +198,12 @@ function PublishModal({ quiz, onClose, onPublished }) {
   const [copied, setCopied] = useStateO(false);
 
   const baseUrl = window.location.origin + window.location.pathname;
-  const studentUrl = publishedCode ? `${baseUrl}?exam=${publishedCode}` : "";
+  // "t" es solo una PISTA para que la pantalla de carga del estudiante
+  // (StudentExam) pueda decir "Cargando quiz/encuesta..." desde el primer
+  // instante, antes incluso de que resuelva la consulta a Firestore que
+  // confirma el modo real — nunca se usa para nada más (ni calificación
+  // ni permisos: eso siempre sale del documento real).
+  const studentUrl = publishedCode ? `${baseUrl}?exam=${publishedCode}&t=${quiz.mode || "quiz"}` : "";
 
   const handlePublish = async () => {
     setLoading(true);
@@ -393,6 +410,11 @@ function PublishModal({ quiz, onClose, onPublished }) {
 
 // =================== STUDENT EXAM (sin login) ===================
 function StudentExam({ examCode }) {
+  // Pista de modo que viaja en el link (?t=quiz|survey|workshop|lectio,
+  // ver studentUrl en PublishModal): solo se usa para el texto de la
+  // pantalla de carga, ANTES de que Firestore confirme el modo real — el
+  // resto de la pantalla siempre usa quiz.mode una vez que llega.
+  const [modeHint] = useStateO(() => getURLParam("t"));
   const [phase, setPhase] = useStateO("loading"); // loading | identify | exam | submitting | done | error
   const [errorMsg, setErrorMsg] = useStateO("");
   const [quiz, setQuiz] = useStateO(null);
@@ -573,6 +595,16 @@ function StudentExam({ examCode }) {
   };
 
   // ---------- Render por fase ----------
+  // El texto ya no asume "evaluación" (quiz) para todo: se ajusta según
+  // quiz.mode. Mientras la hoja se está descargando (phase "loading")
+  // quiz.mode todavía no existe (recién llega en la misma respuesta de
+  // Firestore que lo confirma) — para que la pantalla de carga no diga
+  // igual "Cargando..." sin más, usa la PISTA optimista del link (modeHint,
+  // ?t=...) mientras tanto; apenas responde Firestore, todo el resto de
+  // la pantalla usa quiz.mode real (la pista nunca decide nada más).
+  const isSurvey = quiz?.mode === "survey";
+  const activityNoun = studentActivityNoun(quiz?.mode);
+
   if (phase === "workshop") {
     return <window.WorkshopOfflineFlow quiz={quiz} onExit={() => window.location.href = baseUrlNoQuery()} />;
   }
@@ -583,8 +615,10 @@ function StudentExam({ examCode }) {
         background: quizBgExam(quiz?.color), color: "white",
       }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 40 }}>⚡</div>
-          <p>Cargando evaluación...</p>
+          <div style={{ fontSize: 96, lineHeight: 1, marginBottom: 10, filter: "drop-shadow(0 10px 22px rgba(0,0,0,0.35))" }}>⚡</div>
+          <p style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)", letterSpacing: ".02em", margin: 0 }}>
+            Cargando{modeHint ? " " + studentActivityNoun(modeHint) : ""}…
+          </p>
         </div>
       </div>
     );
@@ -679,7 +713,7 @@ function StudentExam({ examCode }) {
             style={{ width: "100%" }}
             onClick={handleStart}
           >
-            Comenzar evaluación →
+            Comenzar {activityNoun} →
           </button>
         </div>
       </div>
@@ -693,15 +727,17 @@ function StudentExam({ examCode }) {
         background: quizBgExam(quiz?.color), color: "white",
       }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 40 }}>📤</div>
-          <p>Enviando tus respuestas...</p>
+          <div style={{ fontSize: 96, lineHeight: 1, marginBottom: 10, filter: "drop-shadow(0 10px 22px rgba(0,0,0,0.35))" }}>📤</div>
+          <p style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)", letterSpacing: ".02em", margin: 0 }}>
+            Enviando tus respuestas…
+          </p>
         </div>
       </div>
     );
   }
 
   if (phase === "done") {
-    const passing = result.score >= 3.0;
+    const passing = !isSurvey && result.score >= 3.0;
     return (
       <div style={{
         minHeight: "100vh",
@@ -710,13 +746,17 @@ function StudentExam({ examCode }) {
       }}>
         <div className="qs-card" style={{ padding: 32, maxWidth: 460, width: "100%", textAlign: "center" }}>
           <div style={{ fontSize: 56, marginBottom: 12 }}>
-            {passing ? "🎉" : "📋"}
+            {isSurvey ? "🙌" : passing ? "🎉" : "📋"}
           </div>
-          <h2 style={{ fontSize: 24, marginBottom: 4 }}>¡Evaluación enviada!</h2>
+          <h2 style={{ fontSize: 24, marginBottom: 4 }}>
+            {isSurvey ? "¡Encuesta enviada!" : "¡Quiz enviado!"}
+          </h2>
           <p style={{ color: "var(--ink-500)", fontSize: 14, marginBottom: 8 }}>
             Gracias, {studentName}. Tus respuestas se guardaron correctamente.
           </p>
-          {result.answered < result.total && (
+          {/* En encuesta no hay nota: nada que calificar ni de qué avisar
+              si faltó alguna pregunta. */}
+          {!isSurvey && result.answered < result.total && (
             <p style={{
               color: "var(--amber-700, #92400e)", background: "#fef3c7", borderRadius: 8,
               padding: "6px 10px", fontSize: 12, fontWeight: 600, marginBottom: 12,
@@ -726,39 +766,43 @@ function StudentExam({ examCode }) {
             </p>
           )}
 
-          {/* Aciertos */}
-          <div style={{
-            background: "var(--ink-50)", padding: 16, borderRadius: 12, marginBottom: 12,
-          }}>
-            <div style={{ fontSize: 13, color: "var(--ink-500)", fontWeight: 600 }}>Aciertos</div>
-            <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "var(--font-display)" }}>
-              {result.correct} de {result.answered}
-              <span style={{ fontSize: 14, color: "var(--ink-500)", fontWeight: 600 }}> ({result.percent}%)</span>
-            </div>
-          </div>
+          {!isSurvey && (
+            <>
+              {/* Aciertos */}
+              <div style={{
+                background: "var(--ink-50)", padding: 16, borderRadius: 12, marginBottom: 12,
+              }}>
+                <div style={{ fontSize: 13, color: "var(--ink-500)", fontWeight: 600 }}>Aciertos</div>
+                <div style={{ fontSize: 24, fontWeight: 800, fontFamily: "var(--font-display)" }}>
+                  {result.correct} de {result.answered}
+                  <span style={{ fontSize: 14, color: "var(--ink-500)", fontWeight: 600 }}> ({result.percent}%)</span>
+                </div>
+              </div>
 
-          {/* Puntaje */}
-          <div style={{
-            background: "var(--violet-50)", padding: 16, borderRadius: 12, marginBottom: 12,
-          }}>
-            <div style={{ fontSize: 13, color: "var(--violet-700)", fontWeight: 600 }}>Puntaje obtenido</div>
-            <div style={{ fontSize: 28, fontWeight: 800, fontFamily: "var(--font-display)", color: "var(--violet-700)" }}>
-              {result.pointsEarned}
-              <span style={{ fontSize: 16, opacity: 0.7 }}> / {result.pointsMax}</span>
-            </div>
-          </div>
+              {/* Puntaje */}
+              <div style={{
+                background: "var(--violet-50)", padding: 16, borderRadius: 12, marginBottom: 12,
+              }}>
+                <div style={{ fontSize: 13, color: "var(--violet-700)", fontWeight: 600 }}>Puntaje obtenido</div>
+                <div style={{ fontSize: 28, fontWeight: 800, fontFamily: "var(--font-display)", color: "var(--violet-700)" }}>
+                  {result.pointsEarned}
+                  <span style={{ fontSize: 16, opacity: 0.7 }}> / {result.pointsMax}</span>
+                </div>
+              </div>
 
-          {/* Nota convertida */}
-          <div style={{
-            background: passing ? "#d1fae5" : "#fef3c7",
-            color: passing ? "#065f46" : "#92400e",
-            padding: 24, borderRadius: 16, marginBottom: 16,
-          }}>
-            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>TU NOTA</div>
-            <div style={{ fontSize: 56, fontWeight: 800, fontFamily: "var(--font-display)", lineHeight: 1 }}>
-              {result.score.toFixed(1)}
-            </div>
-          </div>
+              {/* Nota convertida */}
+              <div style={{
+                background: passing ? "#d1fae5" : "#fef3c7",
+                color: passing ? "#065f46" : "#92400e",
+                padding: 24, borderRadius: 16, marginBottom: 16,
+              }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>TU NOTA</div>
+                <div style={{ fontSize: 56, fontWeight: 800, fontFamily: "var(--font-display)", lineHeight: 1 }}>
+                  {result.score.toFixed(1)}
+                </div>
+              </div>
+            </>
+          )}
 
           <p style={{ fontSize: 12, color: "var(--ink-500)" }}>
             Tu profesor podrá ver el detalle de tus respuestas.
@@ -1052,7 +1096,7 @@ function StudentExam({ examCode }) {
               fontWeight: 700, opacity: !isAnswered ? 0.5 : 1,
             }}
           >
-            {currentIdx < totalQ - 1 ? "Siguiente →" : "Enviar evaluación ✓"}
+            {currentIdx < totalQ - 1 ? "Siguiente →" : `Enviar ${activityNoun} ✓`}
           </button>
         </div>
         {currentIdx < totalQ - 1 && (
