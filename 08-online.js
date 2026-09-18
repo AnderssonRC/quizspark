@@ -417,6 +417,7 @@ function StudentExam({ examCode }) {
   const [modeHint] = useStateO(() => getURLParam("t"));
   const [phase, setPhase] = useStateO("loading"); // loading | identify | exam | submitting | done | error
   const [errorMsg, setErrorMsg] = useStateO("");
+  const [submitError, setSubmitError] = useStateO(""); // fallo de envío final (con borrador local de respaldo)
   const [quiz, setQuiz] = useStateO(null);
   const [studentName, setStudentName] = useStateO("");
   const [studentCourse, setStudentCourse] = useStateO("");
@@ -480,8 +481,9 @@ function StudentExam({ examCode }) {
       alert("Por favor completa todos los campos.");
       return;
     }
-    setStartedAt(Date.now());
-    setPhase("exam");
+    // Antes del examen: cuenta regresiva META (14-meta.js). El cronómetro
+    // general (startedAt) arranca recién cuando la cuenta llega a cero.
+    setPhase("meta");
   };
 
   const setAnswer = (qid, value) => {
@@ -537,42 +539,77 @@ function StudentExam({ examCode }) {
     return () => clearInterval(interval);
   }, [phase, currentIdx, questionStartedAt]);
 
+  // Clave del borrador local: si el envío falla (ej. wifi del colegio se
+  // cae justo al terminar), la respuesta ya contestada no se pierde y se
+  // puede reintentar sin que el estudiante tenga que volver a responder.
+  const pendingSubmissionKey = () => "qs_pending_submission_" + quiz.id;
+
+  const submitPayload = async (submission) => {
+    await window.QS.db.collection("results").add(submission);
+    try { localStorage.removeItem(pendingSubmissionKey()); } catch (e) { /* almacenamiento no disponible: no es crítico */ }
+    setResult(gradeSubmission(quiz, submission.answers));
+    setPhase("done");
+  };
+
   const handleSubmit = async () => {
     setPhase("submitting");
+    setSubmitError("");
+    const finishedAt = Date.now();
+    const totalSeconds = Math.round((finishedAt - startedAt) / 1000);
+    const grade = gradeSubmission(quiz, answers);
+    const submission = {
+      quizId: quiz.id,
+      ownerId: quiz.ownerId,
+      studentName: studentName.trim(),
+      studentCourse: studentCourse.trim(),
+      partnerName: partnerName.trim() || null,
+      examDate,
+      answers,
+      gradeDetail: grade.detail,
+      correct: grade.correct,
+      total: grade.total,
+      answered: grade.answered,
+      partial: grade.answered < grade.total,
+      score: grade.score,
+      percent: grade.percent,
+      pointsEarned: grade.pointsEarned || 0,
+      pointsMax: grade.pointsMax || 0,
+      fullMaxPoints: grade.fullMaxPoints || 0,
+      startedAt,
+      finishedAt,
+      totalSeconds,
+      submittedAt: Date.now(),
+    };
+    // Guardar el borrador ANTES de intentar enviar: si la escritura a
+    // Firestore falla, lo respondido queda a salvo en este dispositivo.
+    try { localStorage.setItem(pendingSubmissionKey(), JSON.stringify(submission)); } catch (e) { /* almacenamiento no disponible: se sigue igual, solo sin respaldo local */ }
     try {
-      const finishedAt = Date.now();
-      const totalSeconds = Math.round((finishedAt - startedAt) / 1000);
-      const grade = gradeSubmission(quiz, answers);
-      const submission = {
-        quizId: quiz.id,
-        ownerId: quiz.ownerId,
-        studentName: studentName.trim(),
-        studentCourse: studentCourse.trim(),
-        partnerName: partnerName.trim() || null,
-        examDate,
-        answers,
-        gradeDetail: grade.detail,
-        correct: grade.correct,
-        total: grade.total,
-        answered: grade.answered,
-        partial: grade.answered < grade.total,
-        score: grade.score,
-        percent: grade.percent,
-        pointsEarned: grade.pointsEarned || 0,
-        pointsMax: grade.pointsMax || 0,
-        fullMaxPoints: grade.fullMaxPoints || 0,
-        startedAt,
-        finishedAt,
-        totalSeconds,
-        submittedAt: Date.now(),
-      };
-      await window.QS.db.collection("results").add(submission);
-      setResult(grade);
-      setPhase("done");
+      await submitPayload(submission);
     } catch (err) {
       console.error(err);
-      alert("Error al enviar la evaluación: " + err.message);
+      setSubmitError("No se pudo enviar. Revisa tu conexión e inténtalo de nuevo. Tus respuestas quedaron guardadas en este dispositivo.");
+    }
+  };
+
+  // Reintento manual desde la pantalla de envío: reutiliza el borrador
+  // guardado en localStorage (no vuelve a calificar ni pide respuestas otra vez).
+  const handleRetrySubmit = async () => {
+    let submission = null;
+    try { submission = JSON.parse(localStorage.getItem(pendingSubmissionKey()) || "null"); } catch (e) { /* no-op */ }
+    if (!submission) {
+      // No debería pasar (se guarda siempre antes de intentar), pero por si
+      // el navegador borró el almacenamiento local, no dejamos al estudiante
+      // sin salida: puede reintentar desde el examen.
+      setSubmitError("");
       setPhase("exam");
+      return;
+    }
+    setSubmitError("");
+    try {
+      await submitPayload(submission);
+    } catch (err) {
+      console.error(err);
+      setSubmitError("Sigue sin poder enviarse. Revisa tu conexión e inténtalo de nuevo.");
     }
   };
 
@@ -720,17 +757,42 @@ function StudentExam({ examCode }) {
     );
   }
 
+  if (phase === "meta") {
+    return (
+      <window.MetaCountdown
+        mode={isSurvey ? "survey" : "quiz"}
+        playful
+        background={quizBgExam(quiz?.color)}
+        onDone={() => { setStartedAt(Date.now()); setPhase("exam"); }}
+      />
+    );
+  }
+
   if (phase === "submitting") {
     return (
       <div style={{
         minHeight: "100vh", display: "grid", placeItems: "center",
-        background: quizBgExam(quiz?.color), color: "white",
+        background: quizBgExam(quiz?.color), color: "white", padding: 20,
       }}>
         <div style={{ textAlign: "center" }}>
-          <div style={{ fontSize: 96, lineHeight: 1, marginBottom: 10, filter: "drop-shadow(0 10px 22px rgba(0,0,0,0.35))" }}>📤</div>
+          <div style={{ fontSize: 96, lineHeight: 1, marginBottom: 10, filter: "drop-shadow(0 10px 22px rgba(0,0,0,0.35))" }}>
+            {submitError ? "⚠️" : "📤"}
+          </div>
           <p style={{ fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)", letterSpacing: ".02em", margin: 0 }}>
-            Enviando tus respuestas…
+            {submitError ? "No se pudo enviar" : "Enviando tus respuestas…"}
           </p>
+          {submitError && (
+            <div style={{ marginTop: 18, maxWidth: 360 }}>
+              <p style={{ fontSize: 14, opacity: 0.9, lineHeight: 1.5, margin: "0 0 18px" }}>{submitError}</p>
+              <button
+                className="qs-btn qs-btn--primary qs-btn--lg"
+                style={{ width: "100%" }}
+                onClick={handleRetrySubmit}
+              >
+                ↻ Reintentar envío
+              </button>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -842,14 +904,19 @@ function StudentExam({ examCode }) {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             {q.type !== "slide" && secondsLeft != null && (
-              <div style={{
-                background: secondsLeft <= 5 ? "var(--red-500)" : "rgba(0,0,0,0.25)",
-                padding: "4px 12px", borderRadius: 10, fontWeight: 800, fontSize: 16,
-                fontFamily: "var(--font-display)", minWidth: 56, textAlign: "center",
-                transition: "background 0.3s",
-              }}>
-                ⏱ {Math.ceil(secondsLeft)}s
-              </div>
+              window.MetaTimerBadge ? (
+                <window.MetaTimerBadge secondsLeft={secondsLeft}
+                  style={secondsLeft > 10 ? { background: "rgba(0,0,0,0.25)", color: "white" } : undefined} />
+              ) : (
+                <div style={{
+                  background: secondsLeft <= 5 ? "var(--red-500)" : "rgba(0,0,0,0.25)",
+                  padding: "4px 12px", borderRadius: 10, fontWeight: 800, fontSize: 16,
+                  fontFamily: "var(--font-display)", minWidth: 56, textAlign: "center",
+                  transition: "background 0.3s",
+                }}>
+                  ⏱ {Math.ceil(secondsLeft)}s
+                </div>
+              )
             )}
             <div style={{ fontSize: 14 }}>
               Pregunta {currentIdx + 1} de {totalQ}
@@ -877,7 +944,7 @@ function StudentExam({ examCode }) {
               </div>
               {q.slideTitle && (
                 <h2 style={{ fontSize: 24, marginBottom: 14, fontFamily: "var(--font-display)" }}>
-                  {q.slideTitle}
+                  <window.RichText text={q.slideTitle} />
                 </h2>
               )}
               {q.image && (
@@ -895,7 +962,7 @@ function StudentExam({ examCode }) {
               )}
               {q.slideBody && (
                 <div style={{ fontSize: 15, lineHeight: 1.7, whiteSpace: "pre-wrap", color: "var(--ink-800)" }}>
-                  {q.slideBody}
+                  <window.RichText text={q.slideBody} />
                 </div>
               )}
               {!q.slideTitle && !q.slideBody && !q.image && !q.video && (
@@ -910,7 +977,7 @@ function StudentExam({ examCode }) {
           ) : (
             <>
           <h2 style={{ fontSize: 22, marginBottom: (q.image || q.video) ? 12 : 20, lineHeight: 1.4 }}>
-            {q.text}
+            <window.RichText text={q.text} />
           </h2>
           {q.image && (
             <div style={{ textAlign: "center", marginBottom: q.video ? 12 : 20 }}>
@@ -942,7 +1009,7 @@ function StudentExam({ examCode }) {
                       fontSize: 15, fontWeight: 600, cursor: "pointer",
                       transition: "all 0.15s ease",
                     }}
-                  >{opt.text}</button>
+                  ><window.RichText text={opt.text} /></button>
                 );
               })}
             </div>
@@ -963,7 +1030,7 @@ function StudentExam({ examCode }) {
                       border: "2px solid " + (selected ? "var(--violet-600)" : "var(--ink-200)"),
                       fontSize: 16, fontWeight: 700, cursor: "pointer",
                     }}
-                  >{opt.text}</button>
+                  ><window.RichText text={opt.text} /></button>
                 );
               })}
             </div>
@@ -1000,7 +1067,7 @@ function StudentExam({ examCode }) {
                         background: selected ? "var(--violet-600)" : "transparent",
                         display: "grid", placeItems: "center", color: "white", fontSize: 14,
                       }}>{selected ? "✓" : ""}</span>
-                      {opt.text}
+                      <window.RichText text={opt.text} />
                     </button>
                   );
                 })}
@@ -1062,7 +1129,7 @@ function StudentExam({ examCode }) {
                         background: "var(--violet-100)", color: "var(--violet-700)",
                         display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13,
                       }}>{i + 1}</span>
-                      <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}>{it.text}</span>
+                      <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}><window.RichText text={it.text} /></span>
                       <button onClick={() => move(i, -1)} disabled={i === 0}
                         style={{
                           width: 32, height: 32, borderRadius: 8, border: "1px solid var(--ink-200)",
@@ -1207,7 +1274,7 @@ function OnlineResultsPanel({ onBack }) {
     // Construimos CSV (compatible con Excel y Google Sheets)
     const header = ["Nombre", "Compañero", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Preguntas respondidas", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Enviado"];
     selectedQuiz.questions.forEach((q, i) => {
-      header.push(`P${i+1}: ${(q.text || "").substring(0, 50)}`);
+      header.push(`P${i+1}: ${(window.richToPlain ? window.richToPlain(q.text) : (q.text || "")).substring(0, 50)}`);
       header.push(`P${i+1} ¿correcto?`);
       header.push(`P${i+1} puntos obtenidos`);
     });
@@ -1234,12 +1301,12 @@ function OnlineResultsPanel({ onBack }) {
           const userAns = det.userAnswer;
           if (q.type === "multi" || q.type === "truefalse") {
             const opt = (q.options || []).find(o => o.id === userAns);
-            answerText = opt ? opt.text : "(sin respuesta)";
+            answerText = opt ? (window.richToPlain ? window.richToPlain(opt.text) : opt.text) : "(sin respuesta)";
           } else if (q.type === "checks") {
             const arr = Array.isArray(userAns) ? userAns : [];
             answerText = arr.map(id => {
               const o = (q.options || []).find(x => x.id === id);
-              return o ? o.text : id;
+              return o ? (window.richToPlain ? window.richToPlain(o.text) : o.text) : id;
             }).join(" | ");
           } else if (q.type === "text") {
             answerText = userAns || "(sin respuesta)";
@@ -1316,7 +1383,7 @@ function OnlineResultsPanel({ onBack }) {
     rows.push(["Nota final (0-5)", ...filtered.map(s => s.score != null ? s.score.toFixed(2) : "PENDIENTE")]);
     rows.push([]);
     selectedQuiz.questions.filter(q => q.type !== "slide").forEach((q, i) => {
-      rows.push([`P${i + 1}: ${(q.text || "").substring(0, 80)}`, ...filtered.map(s => answerFor(s, q))]);
+      rows.push([`P${i + 1}: ${(window.richToPlain ? window.richToPlain(q.text) : (q.text || "")).substring(0, 80)}`, ...filtered.map(s => answerFor(s, q))]);
     });
 
     const csv = rows.map(r => r.map(esc).join(SEP)).join("\r\n");
@@ -1670,7 +1737,7 @@ function ReviewModal({ submission, quiz, onClose, onSaved }) {
                 <div style={{ fontSize: 12, color: "var(--ink-500)", marginBottom: 4 }}>
                   Pregunta {i + 1} · {isOpen ? "Respuesta abierta" : q.type}
                 </div>
-                <div style={{ fontWeight: 700, marginBottom: 8 }}>{q.text || "(sin enunciado)"}</div>
+                <div style={{ fontWeight: 700, marginBottom: 8 }}>{q.text ? <window.RichText text={q.text} /> : "(sin enunciado)"}</div>
                 <div style={{
                   padding: 10, borderRadius: 8, background: "var(--ink-50)",
                   fontSize: 14,

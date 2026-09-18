@@ -160,6 +160,8 @@ function LectioPresenter({ quiz, onExit }) {
   const [idx, setIdx] = useStateLec(0);
   const [revealed, setRevealed] = useStateLec(false);
   const [finished, setFinished] = useStateLec(false);
+  // Cuenta regresiva META (14-meta.js) antes de la primera diapositiva.
+  const [metaDone, setMetaDone] = useStateLec(false);
   const [themeId, setThemeId] = useStateLec(() => {
     try { return localStorage.getItem(LECTIO_THEME_STORAGE_KEY) || "dark"; } catch (e) { return "dark"; }
   });
@@ -190,7 +192,7 @@ function LectioPresenter({ quiz, onExit }) {
   // teclado o un "clicker" de presentaciones.
   useEffectLec(() => {
     const onKey = (e) => {
-      if (finished || !slides.length) return;
+      if (finished || !slides.length || !metaDone) return;
       if (e.key === "ArrowRight") { goNext(); }
       else if (e.key === "ArrowLeft") { goPrev(); }
       else if (e.key === " " || e.key === "r" || e.key === "R") { e.preventDefault(); setRevealed(v => !v); }
@@ -198,7 +200,7 @@ function LectioPresenter({ quiz, onExit }) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [finished, slides.length, goNext, goPrev, onExit]);
+  }, [finished, slides.length, metaDone, goNext, goPrev, onExit]);
 
   const toggleFullscreen = () => {
     try {
@@ -283,6 +285,9 @@ function LectioPresenter({ quiz, onExit }) {
   const vid = q.video ? youtubeId(q.video) : null;
   return (
     <div style={shellStyle}>
+      {!metaDone && (
+        <window.MetaCountdown mode="lectio" allowSkip onDone={() => setMetaDone(true)} />
+      )}
       {topBar(`· Pregunta ${safeIdx + 1} de ${slides.length}`)}
       <LectioThemeSwitcher theme={theme} onChange={setThemeId} />
       <div style={{ height: 6, background: theme.chipBg, borderRadius: 3, marginBottom: 22, overflow: "hidden", flexShrink: 0 }}>
@@ -292,7 +297,7 @@ function LectioPresenter({ quiz, onExit }) {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", maxWidth: 1040, margin: "0 auto", width: "100%" }}>
         <LectioCard theme={theme} key={q.id} style={{ padding: "34px 38px", marginBottom: 24 }}>
           <h1 style={{ fontSize: "clamp(24px, 3.4vw, 38px)", fontWeight: 700, lineHeight: 1.3, textAlign: "center", marginBottom: (q.image || vid) ? 20 : 0 }}>
-            {q.text || <span style={{ opacity: 0.5, fontStyle: "italic" }}>(Pregunta sin texto)</span>}
+            {q.text ? <window.RichText text={q.text} /> : <span style={{ opacity: 0.5, fontStyle: "italic" }}>(Pregunta sin texto)</span>}
           </h1>
           {q.image && (
             <div style={{ textAlign: "center", marginTop: 6, background: theme.surface2, borderRadius: 12, padding: 10 }}>
@@ -331,7 +336,7 @@ function LectioPresenter({ quiz, onExit }) {
                   background: letter.background, color: letter.color,
                 }}>{String.fromCharCode(65 + i)}</span>
                 <span style={{ flex: 1, fontSize: 23, fontWeight: 700, lineHeight: 1.35 }}>
-                  {o.text || <span style={{ opacity: 0.6, fontStyle: "italic" }}>Opción {String.fromCharCode(65 + i)}</span>}
+                  {o.text ? <window.RichText text={o.text} /> : <span style={{ opacity: 0.6, fontStyle: "italic" }}>Opción {String.fromCharCode(65 + i)}</span>}
                 </span>
                 {revealed && isCorrect && (
                   <span style={{

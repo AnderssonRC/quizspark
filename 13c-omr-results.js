@@ -353,7 +353,7 @@ function OMREditorModal({ entry, quiz, onClose, onSave, onAssignStudent, exclude
                 {(q.options || []).map((opt, oi) => {
                   const on = answers[qi] === oi;
                   return (
-                    <button key={opt.id} onClick={() => setAnswer(qi, oi)} title={opt.text || `Opción ${String.fromCharCode(65 + oi)}`} style={{
+                    <button key={opt.id} onClick={() => setAnswer(qi, oi)} title={(window.richToPlain ? window.richToPlain(opt.text) : opt.text) || `Opción ${String.fromCharCode(65 + oi)}`} style={{
                       width: 28, height: 28, borderRadius: 8, fontSize: 12, fontWeight: 800, cursor: "pointer",
                       background: on ? "#2563eb" : "var(--ink-50)", color: on ? "#fff" : "var(--ink-600)",
                       border: "1px solid " + (on ? "#2563eb" : "var(--ink-200)"),

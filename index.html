@@ -117,26 +117,38 @@
   -->
   <!-- Configuración + auth -->
   <script defer src="00-firebase.js?v=3"></script>
-  <script type="text/babel" data-presets="react" src="00b-auth.js?v=3"></script>
+  <script type="text/babel" data-presets="react" src="00b-auth.js?v=4"></script>
 
   <!-- Núcleo -->
   <script type="text/babel" data-presets="react" src="01-core.js?v=3"></script>
   <script type="text/babel" data-presets="react" src="02-tweaks.js?v=3"></script>
 
+  <!-- Texto con formato (negrita, color, centrado...) en enunciados y opciones; renderizado seguro sin innerHTML -->
+  <script type="text/babel" data-presets="react" src="17-richtext.js?v=2"></script>
+
+  <!-- META: espacio metacognitivo transversal (cuenta regresiva antes de cada modo) -->
+  <script type="text/babel" data-presets="react" src="14-meta.js?v=3"></script>
+
+  <!-- COMPETENCIA EXTREMA: ranking cada 3 preguntas + rachas y privilegios (sala en vivo) -->
+  <script type="text/babel" data-presets="react" src="15-extreme.js?v=2"></script>
+
+  <!-- Importar preguntas al editor (Excel/CSV con SheetJS bajo demanda, o texto con comandos) -->
+  <script type="text/babel" data-presets="react" src="16-import.js?v=1"></script>
+
   <!-- Creator -->
-  <script type="text/babel" data-presets="react" src="03-creator.js?v=19"></script>
+  <script type="text/babel" data-presets="react" src="03-creator.js?v=25"></script>
 
   <!-- Evaluación asincrónica online -->
-  <script type="text/babel" data-presets="react" src="08-online.js?v=13"></script>
+  <script type="text/babel" data-presets="react" src="08-online.js?v=18"></script>
 
   <!-- Sala en vivo -->
-  <script type="text/babel" data-presets="react" src="09-live.js?v=11"></script>
+  <script type="text/babel" data-presets="react" src="09-live.js?v=17"></script>
 
   <!-- Taller Evaluativo (modo de actividad nuevo, junto a Quiz y Encuesta) -->
-  <script type="text/babel" data-presets="react" src="10-workshop.js?v=13"></script>
+  <script type="text/babel" data-presets="react" src="10-workshop.js?v=16"></script>
 
   <!-- Lectio / Modo Sin Celular (presentación de diapositivas, sin sala en línea) -->
-  <script type="text/babel" data-presets="react" src="11-lectio.js?v=4"></script>
+  <script type="text/babel" data-presets="react" src="11-lectio.js?v=6"></script>
 
   <!-- Modo Lector de Respuesta (hojas OMR en PDF, geometría en SHEET_SPEC) -->
   <script type="text/babel" data-presets="react" src="12-omr.js?v=14"></script>
@@ -145,7 +157,7 @@
   <script type="text/babel" data-presets="react" src="13-omr-reader.js?v=16"></script>
 
   <!-- Lector OMR: tabla de resultados + editor + guardado (fórmula lineal propia, siempre 1 hoja) -->
-  <script type="text/babel" data-presets="react" src="13c-omr-results.js?v=11"></script>
+  <script type="text/babel" data-presets="react" src="13c-omr-results.js?v=12"></script>
 
   <!-- App principal -->
   <script type="text/babel" data-presets="react" src="07-app.js?v=4"></script>

@@ -500,9 +500,16 @@ function Editor({ quizId, onBack, onLaunch }) {
   // Paneles desplegables por pregunta (multimedia / corrección)
   const [showMedia, setShowMedia] = useStateC(false);
   const [showCorrection, setShowCorrection] = useStateC(false);
+  // Info extra plegable: bonus por rapidez (para no saturar el editor)
+  const [showBonus, setShowBonus] = useStateC(false);
+  // Campo con foco (enunciado u opción) al que aplica la barra de formato (17-richtext.js)
+  const fmtTargetRef = useRefC(null);
+  const registerFmtField = (el) => { fmtTargetRef.current = { el }; };
   const [saving, setSaving] = useStateC(false);
   const [saveStatus, setSaveStatus] = useStateC("");
   const [showPublish, setShowPublish] = useStateC(false);
+  // Importar preguntas desde Excel/CSV o texto con comandos (16-import.js)
+  const [showImport, setShowImport] = useStateC(false);
   const [loadingQuiz, setLoadingQuiz] = useStateC(false);
   // Modo Sin Celular: presentación de diapositivas local, sin sala en línea
   const [presenting, setPresenting] = useStateC(false);
@@ -555,7 +562,41 @@ function Editor({ quizId, onBack, onLaunch }) {
       .finally(() => setLoadingQuiz(false));
   }, [quizId]);
 
+  // Preguntas incompletas (sin opciones, sin correcta, sin enunciado). Solo se
+  // revisa AL GUARDAR: avisa y deja decidir. Devuelve [{ idx, issues }].
+  const findIncompleteQuestions = (qz) => {
+    const plain = (s) => (window.richToPlain ? window.richToPlain(s) : String(s || "")).trim();
+    const out = [];
+    (qz.questions || []).forEach((q, idx) => {
+      if (q.type === "slide") return;
+      const issues = [];
+      if (!plain(q.text)) issues.push("sin enunciado");
+      if (["multi", "truefalse", "checks", "poll"].includes(q.type)) {
+        const filled = (q.options || []).filter(o => plain(o.text));
+        if (filled.length === 0) issues.push("sin opciones de respuesta");
+        else if (filled.length === 1) issues.push("solo tiene una opción de respuesta");
+        else if (qz.mode !== "survey" && q.type !== "poll" && !filled.some(o => o.correct)) issues.push("sin respuesta correcta marcada");
+      }
+      if (q.type === "order" && (q.items || []).filter(i => plain(i.text)).length < 2) issues.push("faltan elementos para ordenar");
+      if (issues.length) out.push({ idx, issues });
+    });
+    return out;
+  };
+
+  // Devuelve el id guardado, null si falló, o false si el docente canceló
+  // en el aviso de preguntas incompletas.
   const handleSave = async () => {
+    const incomplete = findIncompleteQuestions(quiz);
+    if (incomplete.length) {
+      const list = incomplete.slice(0, 8).map(p => `• Pregunta ${p.idx + 1}: ${p.issues.join(", ")}`).join("\n");
+      const more = incomplete.length > 8 ? `\n…y ${incomplete.length - 8} más` : "";
+      const ok = window.confirm(`⚠️ Hay ${incomplete.length} pregunta${incomplete.length === 1 ? "" : "s"} incompleta${incomplete.length === 1 ? "" : "s"}:\n\n${list}${more}\n\n¿Guardar de todos modos?`);
+      if (!ok) {
+        setActiveIdx(incomplete[0].idx);
+        setCanvasView("questions");
+        return false;
+      }
+    }
     setSaving(true);
     setSaveStatus("");
     try {
@@ -593,6 +634,7 @@ function Editor({ quizId, onBack, onLaunch }) {
   // para no crear una sala apuntando a un quiz "new-..." inexistente.
   const handleLaunchClick = async () => {
     const savedId = await handleSave();
+    if (savedId === false) return; // el docente canceló por preguntas incompletas
     if (!savedId || String(savedId).startsWith("new-")) {
       alert("No se pudo guardar el quiz. Inténtalo de nuevo antes de iniciar la sala.");
       return;
@@ -626,6 +668,7 @@ function Editor({ quizId, onBack, onLaunch }) {
       return;
     }
     const savedId = await handleSave();
+    if (savedId === false) return; // el docente canceló por preguntas incompletas
     if (!savedId || String(savedId).startsWith("new-")) {
       alert("No se pudo guardar el quiz. Inténtalo de nuevo antes de exportar el PDF.");
       return;
@@ -690,6 +733,21 @@ function Editor({ quizId, onBack, onLaunch }) {
     setQuiz(qz => ({ ...qz, questions: [...qz.questions, q] }));
     setActiveIdx(quiz.questions.length);
     setShowMedia(false); setShowCorrection(false);
+  };
+
+  // Recibe las preguntas ya construidas por el importador (16-import.js).
+  // replace=true sustituye todas; si no, se agregan al final. Si el quiz
+  // solo tiene la pregunta vacía inicial, esa se reemplaza sola.
+  const handleImportQuestions = (newQs, replace) => {
+    const existing = quiz.questions || [];
+    const isEmptyQ = (q) => !q.text && !q.slideTitle && !(q.options || []).some(o => o.text) && !(q.items || []).some(i => i.text);
+    const onlyEmpty = existing.length === 1 && isEmptyQ(existing[0]);
+    const keep = (replace || onlyEmpty) ? [] : existing;
+    setQuiz(qz => ({ ...qz, questions: [...keep, ...newQs] }));
+    setActiveIdx(keep.length);
+    setShowMedia(false); setShowCorrection(false);
+    setCanvasView("questions");
+    setShowImport(false);
   };
 
   const duplicateQuestion = (idx) => {
@@ -829,6 +887,13 @@ function Editor({ quizId, onBack, onLaunch }) {
               );
             })}
           </div>
+          {/* Importar en lote desde Excel/CSV o texto con comandos (16-import.js) */}
+          <button onClick={() => setShowImport(true)} style={{
+            width: "100%", padding: "10px 8px", borderRadius: 12, marginTop: -8, marginBottom: 16,
+            background: "linear-gradient(135deg, var(--violet-50), var(--violet-100))",
+            border: "1px dashed var(--violet-400)", color: "var(--violet-700)",
+            fontSize: 12, fontWeight: 800, cursor: "pointer",
+          }}>📥 Importar desde Excel o texto</button>
           </>
           )}
 
@@ -854,7 +919,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                     <div style={{ fontSize: 13, fontWeight: 600, color: "var(--ink-900)",
                       overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2,
                       WebkitBoxOrient: "vertical", wordBreak: "break-word", lineHeight: 1.35 }}>
-                      {q.text || <span style={{ color: "var(--ink-400)", fontStyle: "italic" }}>Sin título</span>}
+                      {(window.richToPlain ? window.richToPlain(q.text) : q.text) || <span style={{ color: "var(--ink-400)", fontStyle: "italic" }}>Sin título</span>}
                     </div>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 2,
                       fontSize: 11, color: "var(--ink-500)", fontWeight: 600 }}>
@@ -993,21 +1058,28 @@ function Editor({ quizId, onBack, onLaunch }) {
             </>
           ) : (
             <>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, gap: 10, flexWrap: "wrap" }}>
               <span className="qs-chip">
                 {(()=>{const all=[...QUESTION_TYPES,...SURVEY_TYPES];const t=all.find(t=>t.id===active.type)||all[0];const Tico=I[t.icon];return <><Tico size={12}/> {t.label}</>;})()}
               </span>
-              <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--ink-500)", fontSize: 13, fontWeight: 600 }}>
-                <I.clock size={14}/>
-                <NumberField value={active.timer} fallback={60}
-                  onChange={v => updateQuestion({ timer: v })}
-                  style={{ width: 64, border: "1px solid var(--ink-200)", borderRadius: 8, padding: "4px 4px", textAlign: "center" }}/>
-                seg
-              </span>
+              {/* Tiempo: chips rápidos + campo libre (por defecto 1 min) */}
+              <TimerPicker value={active.timer} mode={quiz.mode} onChange={v => updateQuestion({ timer: v })} />
             </div>
 
-            {/* Accesos rápidos: Multimedia y Corrección siempre a la vista */}
-            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+            {/* Accesos rápidos: Multimedia, Corrección y (plegable) Bonus por rapidez */}
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+              {quiz.mode !== "survey" && quiz.mode !== "lectio" && (
+                <button onClick={() => setShowBonus(v => !v)}
+                  className="qs-btn qs-btn--sm"
+                  title="Ver cuántos puntos extra da responder rápido con este tiempo"
+                  style={{
+                    background: showBonus ? "var(--amber-500)" : "var(--ink-100)",
+                    color: showBonus ? "#1f1300" : "var(--ink-700)",
+                    border: "1px solid " + (showBonus ? "var(--amber-500)" : "var(--ink-200)"),
+                  }}>
+                  ⚡ Bonus rapidez {showBonus ? "▴" : "▾"}
+                </button>
+              )}
               <button onClick={() => { setShowMedia(v => !v); setShowCorrection(false); }}
                 className="qs-btn qs-btn--sm"
                 style={{
@@ -1027,6 +1099,11 @@ function Editor({ quizId, onBack, onLaunch }) {
                 💬 Corrección{active.feedback ? " ✓" : ""}
               </button>
             </div>
+
+            {/* Panel plegable: cuánto bonus por rapidez da el tiempo elegido */}
+            {showBonus && quiz.mode !== "survey" && quiz.mode !== "lectio" && (
+              <div className="qs-fade-in"><SpeedBonusHint q={active} /></div>
+            )}
 
             {/* Panel: MULTIMEDIA (los enlaces; la vista previa va junto a la pregunta) */}
             {showMedia && (
@@ -1098,11 +1175,19 @@ function Editor({ quizId, onBack, onLaunch }) {
               </div>
             )}
 
+            {/* Barra de formato (17-richtext.js): aplica al enunciado o a la opción con foco */}
+            {window.RichFormatToolbar && (
+              <div style={{ marginBottom: 8 }}>
+                <window.RichFormatToolbar targetRef={fmtTargetRef} />
+              </div>
+            )}
+
             <QuestionTextEditor
               key={active.id}
               questionKey={active.id}
               value={active.text}
               onChange={v => updateQuestion({ text: v })}
+              onFocusField={registerFmtField}
             />
 
             {/* Vista previa de multimedia, junto a la pregunta (como la verán los estudiantes) */}
@@ -1230,13 +1315,16 @@ function Editor({ quizId, onBack, onLaunch }) {
                       {/* Sin Celular: letra A/B/C/D (coincide con las columnas de la hoja OMR) */}
                       {quiz.mode === "lectio" ? String.fromCharCode(65 + i) : tileShape(i)}
                     </div>
-                    <AutoGrowTextarea value={o.text}
+                    {/* Opción WYSIWYG: se edita tal cual se proyecta (17-richtext.js) */}
+                    <window.RichEditable value={o.text}
                       onChange={v => updateOption(o.id, { text: v })}
+                      onFocusField={registerFmtField}
+                      singleLine
                       placeholder={`Opción ${String.fromCharCode(65 + i)}...`}
                       style={{
                         flex: 1, background: "rgba(255,255,255,.2)", color: "#fff",
-                        border: 0, outline: 0, padding: "8px 12px", borderRadius: 10,
-                        fontWeight: 600, fontSize: 15, minWidth: 0,
+                        border: 0, padding: "8px 12px", borderRadius: 10,
+                        fontWeight: 600, fontSize: 15, minWidth: 0, lineHeight: 1.35,
                       }}/>
                     {/* La marca de "correcta" solo en modo quiz; en encuesta no hay correcta */}
                     {quiz.mode !== "survey" && (
@@ -1308,11 +1396,15 @@ function Editor({ quizId, onBack, onLaunch }) {
                   <span style={{ fontSize: 11, color: "var(--ink-500)", fontWeight: 600, display: "block", marginBottom: 4 }}>Bonus VELOCIDAD</span>
                   <NumberField value={active.pointsSpeedBonus} fallback={0}
                     onChange={v => updateQuestion({ pointsSpeedBonus: v })}
+                    placeholder="5"
                     style={{ width: "100%", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--ink-200)", fontWeight: 700, fontSize: 16, color: "var(--amber-500)" }}/>
                 </label>
               </div>
               <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
-                ℹ️ Por defecto: 10 si acierta, 0 si falla. El bonus de velocidad solo aplica en modo En vivo.
+                ℹ️ Por defecto: 10 si acierta, 0 si falla. <b>En la sala En vivo el ranking siempre premia la
+                velocidad:</b> si dejas el bonus en 0, el marcador usa 5 puntos repartidos en décimas según el
+                tiempo restante (quien responde primero suma más; con 60 s, cada 1,2 s cuesta 0,1), pero ese bonus
+                por defecto <b>no afecta la nota</b>. Si pones un valor aquí, sí cuenta para la nota.
               </p>
             </div>
             )}
@@ -1514,6 +1606,9 @@ function Editor({ quizId, onBack, onLaunch }) {
       </div>
 
       {showSettings && <SettingsModal quiz={quiz} setQuiz={setQuiz} onClose={() => setShowSettings(false)}/>}
+      {showImport && window.ImportQuestionsModal && (
+        <window.ImportQuestionsModal quiz={quiz} onImport={handleImportQuestions} onClose={() => setShowImport(false)} />
+      )}
       {showPublish && (
         <window.QS.PublishModal
           quiz={quiz}
@@ -1532,7 +1627,7 @@ function Editor({ quizId, onBack, onLaunch }) {
 // de recortar el texto: se ajusta la altura al contenido (como ya hace
 // QuestionTextEditor con la pregunta), así una respuesta larga queda
 // completamente visible mientras se edita.
-function AutoGrowTextarea({ value, onChange, placeholder, style }) {
+function AutoGrowTextarea({ value, onChange, placeholder, style, onFocusField }) {
   const taRef = useRefC(null);
   const resize = () => {
     const el = taRef.current;
@@ -1544,6 +1639,7 @@ function AutoGrowTextarea({ value, onChange, placeholder, style }) {
   return (
     <textarea ref={taRef} rows={1} value={value}
       onChange={e => onChange(e.target.value)}
+      onFocus={e => onFocusField && onFocusField(e.target, onChange)}
       placeholder={placeholder}
       style={{ resize: "none", overflow: "hidden", lineHeight: 1.35, fontFamily: "inherit", ...style }}/>
   );
@@ -1592,6 +1688,73 @@ function Toggle({ label, defaultOn, value, onChange }) {
 // un "0" que hay que borrar aparte); el valor solo se confirma al padre
 // cuando es un número válido, y si se deja vacío al salir del campo, vuelve
 // al valor sugerido (fallback).
+// ---------- Selector de tiempo por pregunta ----------
+// Chips con los tiempos más usados + un campo libre. Por defecto 1 minuto
+// (5 min en Taller, que trae preguntas de desarrollo).
+const TIMER_PRESETS = {
+  default:  [15, 30, 60, 120, 180, 300],
+  workshop: [60, 120, 300, 600, 900],
+};
+function fmtTimerLabel(s) {
+  if (s < 60) return s + "s";
+  if (s % 60 === 0) return (s / 60) + " min";
+  return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
+}
+function TimerPicker({ value, onChange, mode }) {
+  const presets = TIMER_PRESETS[mode] || TIMER_PRESETS.default;
+  const fallback = mode === "workshop" ? 300 : 60;
+  const v = (value && value > 0) ? value : fallback;
+  const custom = !presets.includes(v);
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", color: "var(--ink-500)", fontSize: 12, fontWeight: 600 }}>
+      <I.clock size={14}/>
+      {presets.map(p => {
+        const on = p === v;
+        return (
+          <button key={p} onClick={() => onChange(p)} title={p + " segundos"} style={{
+            padding: "4px 8px", borderRadius: 999, fontSize: 11, fontWeight: 800, cursor: "pointer", lineHeight: 1,
+            background: on ? "var(--violet-600)" : "var(--ink-50)",
+            color: on ? "#fff" : "var(--ink-600)",
+            border: "1px solid " + (on ? "var(--violet-600)" : "var(--ink-200)"),
+          }}>{fmtTimerLabel(p)}</button>
+        );
+      })}
+      <NumberField value={v} fallback={fallback} min={5}
+        onChange={onChange}
+        title="Otro tiempo (segundos)"
+        style={{
+          width: 56, borderRadius: 999, padding: "3px 6px", textAlign: "center", fontSize: 12, fontWeight: 800,
+          border: "1px solid " + (custom ? "var(--violet-600)" : "var(--ink-200)"),
+          color: custom ? "var(--violet-700)" : "var(--ink-600)",
+        }}/>
+      seg
+    </span>
+  );
+}
+
+// ---------- Cuánto bonus por rapidez da el tiempo elegido ----------
+// Misma fórmula que calculatePoints en 09-live.js: si acierta, suma
+// bonus × (tiempo restante ÷ tiempo total), en décimas. El bonus por
+// defecto (5) es solo del ranking en vivo; uno explícito sí cuenta en la nota.
+function SpeedBonusHint({ q }) {
+  const total = (q.timer && q.timer > 0) ? q.timer : 60;
+  const explicit = Number(q.pointsSpeedBonus) > 0;
+  const bonus = explicit ? Number(q.pointsSpeedBonus) : (window.DEFAULT_SPEED_BONUS || 5);
+  const at = (secs) => Math.round(bonus * Math.max(0, 1 - secs / total) * 10) / 10;
+  const stepSecs = +(total / (bonus * 10)).toFixed(1);   // cada cuántos s se pierde 0,1
+  const samples = [Math.max(1, Math.round(total * 0.1)), Math.round(total * 0.5), Math.round(total * 0.9)];
+  return (
+    <div style={{
+      marginBottom: 14, padding: "8px 12px", borderRadius: 10, fontSize: 12, lineHeight: 1.55,
+      background: "rgba(245, 158, 11, 0.10)", border: "1px solid rgba(245, 158, 11, 0.35)", color: "var(--ink-700)",
+    }}>
+      ⚡ <b>Bonus por rapidez (sala en vivo):</b> hasta <b>+{bonus}</b> pts si acierta al instante; pierde 0,1 cada <b>{stepSecs} s</b>.
+      {" "}Ej.: responde a los {samples[0]} s → <b>+{at(samples[0])}</b> · {samples[1]} s → <b>+{at(samples[1])}</b> · {samples[2]} s → <b>+{at(samples[2])}</b>.
+      {!explicit && <span style={{ color: "var(--ink-500)" }}> (Bonus por defecto: solo cuenta para el ranking, no para la nota. Ponle un valor abajo en "Bonus VELOCIDAD" si quieres que sí cuente.)</span>}
+    </div>
+  );
+}
+
 function NumberField({ value, onChange, fallback = 0, ...rest }) {
   const [text, setText] = useStateC(String(value ?? fallback));
   useEffectC(() => { setText(String(value ?? fallback)); }, [value, fallback]);
@@ -1622,46 +1785,34 @@ function NumberField({ value, onChange, fallback = 0, ...rest }) {
 // perder el foco (clic en otra pregunta, en Guardar, etc. — todo eso quita
 // el foco del textarea ANTES de disparar su propia acción) y, como respaldo,
 // con un pequeño debounce mientras se escribe sin pausar.
-function QuestionTextEditor({ value, onChange, questionKey }) {
-  const [text, setText] = useStateC(value);
-  const taRef = useRefC(null);
-  const debounceRef = useRefC(null);
-  const onChangeRef = useRefC(onChange);
-  onChangeRef.current = onChange;
-
-  // Al cambiar de pregunta: reflejar su texto y reajustar el alto una vez.
-  useEffectC(() => { setText(value); }, [questionKey]);
-  useEffectC(() => {
-    const el = taRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = Math.max(80, el.scrollHeight) + "px";
-  }, [questionKey]);
-  useEffectC(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
-
-  const flush = (v) => {
-    if (debounceRef.current) { clearTimeout(debounceRef.current); debounceRef.current = null; }
-    onChangeRef.current(v);
-  };
-
+function QuestionTextEditor({ value, onChange, questionKey, onFocusField }) {
+  // Cuadro WYSIWYG (17-richtext.js): no es controlado, así que teclear no
+  // re-renderiza todo el editor; avisa con debounce y al perder el foco.
+  // Si el módulo no cargó, cae a un textarea plano.
+  if (!window.RichEditable) {
+    return (
+      <textarea defaultValue={value} key={questionKey}
+        onBlur={e => onChange(e.target.value)}
+        placeholder="Escribe tu pregunta aquí..."
+        style={{
+          width: "100%", border: "2px dashed var(--ink-200)", borderRadius: 16,
+          padding: 20, fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)",
+          resize: "vertical", outline: "none", minHeight: 80, marginBottom: 16,
+          background: "var(--ink-50)", color: "var(--ink-900)",
+        }}/>
+    );
+  }
   return (
-    <textarea value={text} ref={taRef}
-      onChange={e => {
-        const v = e.target.value;
-        setText(v);
-        e.target.style.height = "auto";
-        e.target.style.height = Math.max(80, e.target.scrollHeight) + "px";
-        if (debounceRef.current) clearTimeout(debounceRef.current);
-        debounceRef.current = setTimeout(() => flush(v), 300);
-      }}
-      onBlur={() => flush(text)}
-      placeholder="Escribe tu pregunta aquí..."
-      style={{
-        width: "100%", border: "2px dashed var(--ink-200)", borderRadius: 16,
-        padding: 20, fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)",
-        resize: "none", outline: "none", minHeight: 80, marginBottom: 16,
-        background: "var(--ink-50)", color: "var(--ink-900)", overflow: "hidden",
-      }}/>
+    <div style={{ marginBottom: 16 }}>
+      <window.RichEditable key={questionKey} value={value} onChange={onChange} onFocusField={onFocusField}
+        placeholder="Escribe tu pregunta aquí..." debounce={300}
+        style={{
+          width: "100%", border: "2px dashed var(--ink-200)", borderRadius: 16,
+          padding: 20, fontSize: 22, fontWeight: 700, fontFamily: "var(--font-display)",
+          minHeight: 80, background: "var(--ink-50)", color: "var(--ink-900)", lineHeight: 1.35,
+          boxSizing: "border-box",
+        }}/>
+    </div>
   );
 }
 
@@ -1672,7 +1823,10 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
   const isOmr = quiz.mode === "lectio";
   const mcCount = (quiz.questions || []).filter(q => q.type === "multi").length;
   const totalMaxPoints = isOmr ? mcCount : (quiz.questions || []).reduce((sum, q) => {
+    if (q.type === "slide") return sum;
     const correct = q.pointsCorrect ?? 10;
+    // Para la NOTA solo cuenta el bonus explícito; el bonus por defecto de la
+    // sala en vivo (5 pts) es solo del ranking (ver calculateGradePoints en 09-live.js).
     const bonus = q.pointsSpeedBonus ?? 0;
     return sum + correct + bonus;
   }, 0);
@@ -1728,6 +1882,30 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
             onChange={e => setQuiz({ ...quiz, password: e.target.value })}
             placeholder="Dejar vacío si no se requiere" />
         </Field>
+
+        {/* COMPETENCIA EXTREMA (15-extreme.js): solo para modos con sala en vivo y puntaje */}
+        {(quiz.mode === "quiz" || (quiz.mode === "workshop" && (quiz.workshopMode || "live") === "live")) && (
+          <div style={{
+            marginTop: 8, padding: 14, borderRadius: 14,
+            background: quiz.extremeMode ? "linear-gradient(135deg, #3b0a0a, #1a0505)" : "var(--ink-50)",
+            border: quiz.extremeMode ? "2px solid #ffd54f" : "1px solid var(--ink-200)",
+            color: quiz.extremeMode ? "#fff" : "inherit",
+          }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 12, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!quiz.extremeMode}
+                onChange={e => setQuiz({ ...quiz, extremeMode: e.target.checked })}
+                style={{ width: 20, height: 20, marginTop: 2, accentColor: "#ff5722" }} />
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>⚔️ Competencia Extrema (sala en vivo)</div>
+                <div style={{ fontSize: 13, lineHeight: 1.5, opacity: quiz.extremeMode ? .9 : 1, color: quiz.extremeMode ? "#fff" : "var(--ink-500)", marginTop: 4 }}>
+                  Ranking animado cada 3 preguntas. Con 3 aciertos seguidos el estudiante elige un
+                  <b> privilegio</b> entre 4 al azar (quitar puntos, recortar tiempo, sabotaje, escudo, pase libre…)
+                  y <b>tú lo apruebas o rechazas</b> desde la proyección.
+                </div>
+              </div>
+            </label>
+          </div>
+        )}
 
         {isOmr ? (
           <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid var(--ink-200)" }}>

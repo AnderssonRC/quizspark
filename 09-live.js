@@ -52,27 +52,60 @@ function shuffleArr(arr) {
 // isCorrect: si la respuesta del estudiante es correcta
 // secondsTaken: cuánto demoró en responder
 // totalSeconds: tiempo total de la pregunta
+//
+// BONUS DE VELOCIDAD SIEMPRE ACTIVO (sala en vivo): si la pregunta no trae
+// un bonus propio (o trae 0), se usa DEFAULT_SPEED_BONUS. Se otorga en
+// DÉCIMAS según el tiempo restante, así dos estudiantes que aciertan
+// casi nunca empatan: quien responde primero suma más. Esto es lo que
+// hace posible un ranking sin empates en la Competencia Extrema.
+const DEFAULT_SPEED_BONUS = 5;
+function speedBonusFor(q) {
+  const b = Number(q?.pointsSpeedBonus);
+  return b > 0 ? b : DEFAULT_SPEED_BONUS;
+}
+// Puntos con una sola décima (evita 47.300000001 al sumar en Firestore)
+function fmtPts(n) {
+  return Math.round((Number(n) || 0) * 10) / 10;
+}
+window.DEFAULT_SPEED_BONUS = DEFAULT_SPEED_BONUS;
+window.speedBonusFor = speedBonusFor;
+window.fmtPts = fmtPts;
+
 function calculatePoints(q, isCorrect, secondsTaken, totalSeconds) {
   const pCorrect = q.pointsCorrect ?? 10;
   const pWrong = q.pointsWrong ?? 0;
-  const pBonus = q.pointsSpeedBonus ?? 0;
+  const pBonus = speedBonusFor(q);
 
   if (!isCorrect) return pWrong;
 
-  // Si acertó: puntos base + bonus por velocidad proporcional
+  // Si acertó: puntos base + bonus por velocidad proporcional, en décimas.
+  // Ej.: pregunta de 60 s, bonus 5 → cada 1,2 s que tarda pierde 0,1.
   const ratio = Math.max(0, 1 - (secondsTaken / Math.max(1, totalSeconds)));
-  const bonus = Math.round(pBonus * ratio);
-  return pCorrect + bonus;
+  const bonus = Math.round(pBonus * ratio * 10) / 10;
+  return fmtPts(pCorrect + bonus);
 }
 
-// Calcular el máximo posible de un quiz (suma de pointsCorrect + pointsSpeedBonus)
+// PUNTOS PARA LA NOTA: igual que siempre (base + solo el bonus que el
+// docente configuró explícitamente). El bonus por defecto de 5 es SOLO para
+// el ranking en vivo: así un estudiante que acierta todo pero responde lento
+// sigue sacando 5.0, y no se infla la nota de quien responde rápido.
+function calculateGradePoints(q, isCorrect, secondsTaken, totalSeconds) {
+  const pCorrect = q.pointsCorrect ?? 10;
+  const pWrong = q.pointsWrong ?? 0;
+  const pBonus = q.pointsSpeedBonus ?? 0;
+  if (!isCorrect) return pWrong;
+  const ratio = Math.max(0, 1 - (secondsTaken / Math.max(1, totalSeconds)));
+  return pCorrect + Math.round(pBonus * ratio);
+}
+function gradeBonusFor(q) { return q?.pointsSpeedBonus ?? 0; }
+
+// Máximo posible PARA LA NOTA (base + bonus explícito), sin el bonus por defecto
 function calculateMaxPoints(quiz) {
   return (quiz.questions || []).reduce((sum, q) => {
     // Las diapositivas no califican
     if (q.type === "slide") return sum;
     const correct = q.pointsCorrect ?? 10;
-    const bonus = q.pointsSpeedBonus ?? 0;
-    return sum + correct + bonus;
+    return sum + correct + gradeBonusFor(q);
   }, 0);
 }
 
@@ -123,13 +156,15 @@ function buildLiveResultData(quiz, p, myAnswers, sessionCode, examDate) {
   const nonSlideQuestions = quiz.questions.filter(q => q.type !== "slide");
   const answeredIdxs = new Set(myAnswers.map(a => a.questionIdx));
   const correctCount = myAnswers.filter(a => a.correct).length;
-  const score = myAnswers.reduce((s, a) => s + (a.points || 0), 0);
+  // Para la nota se usan gradePoints (sin el bonus por defecto del ranking);
+  // respuestas viejas o calificadas a mano solo traen points.
+  const score = myAnswers.reduce((s, a) => s + (a.gradePoints ?? a.points ?? 0), 0);
 
   let fullMaxPoints = 0, pointsMaxAnswered = 0, answeredCount = 0;
   const gradeDetail = nonSlideQuestions.map((q) => {
     const realIdx = quiz.questions.findIndex(qq => qq.id === q.id);
     const ans = myAnswers.find(a => a.questionIdx === realIdx);
-    const pMax = (q.pointsCorrect ?? 10) + (q.pointsSpeedBonus ?? 0);
+    const pMax = (q.pointsCorrect ?? 10) + gradeBonusFor(q);
     fullMaxPoints += pMax;
     const attempted = answeredIdxs.has(realIdx);
     if (attempted) { pointsMaxAnswered += pMax; answeredCount++; }
@@ -140,7 +175,7 @@ function buildLiveResultData(quiz, p, myAnswers, sessionCode, examDate) {
       type: q.type,
       userAnswer: ans?.answer ?? null,
       correct: ans?.correct ?? false,
-      points: ans?.points ?? 0,
+      points: ans?.gradePoints ?? ans?.points ?? 0,
       pointsMax: pMax,
       attempted,
       needsReview,
@@ -527,7 +562,7 @@ function LiveAnswersPanel({ currentQ, answersThisQ, session }) {
               flex: 1, textAlign: "center", fontSize: 11, fontWeight: 700, color: "var(--ink-500)",
               overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0,
             }}>
-              {isScale ? lbl : `${tileShape(i)} ${lbl}`}
+              {isScale ? lbl : `${tileShape(i)} ${window.richToPlain ? window.richToPlain(lbl) : lbl}`}
             </div>
           ))}
         </div>
@@ -664,7 +699,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
         {/* Pregunta */}
         <div className="qs-card" style={{ padding: 32, marginBottom: 20, color: "var(--ink-900)" }}>
           <h1 style={{ fontSize: 32, textAlign: "center", marginBottom: (currentQ.image || currentQ.video) ? 16 : 24, lineHeight: 1.3 }}>
-            {currentQ.text}
+            <window.RichText text={currentQ.text} />
           </h1>
           {currentQ.image && (
             <div style={{ textAlign: "center", marginBottom: currentQ.video ? 12 : 24 }}>
@@ -712,7 +747,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                     color: "var(--ink-900)", fontWeight: 600, display: "flex", alignItems: "center", gap: 10,
                   }}>
                     <span style={{ width: 26, height: 26, borderRadius: "50%", background: "var(--violet-600)", color: "white", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13 }}>{i + 1}</span>
-                    {it.text}
+                    <window.RichText text={it.text} />
                   </div>
                 ))}
               </div>
@@ -735,7 +770,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                   padding: 20, borderRadius: 14, background: colors[i % 4],
                   color: "white", fontSize: 18, fontWeight: 700, textAlign: "center",
                   boxShadow: "var(--shadow-tile)",
-                }}>{opt.text}</div>
+                }}><window.RichText text={opt.text} /></div>
               );
             })}
           </div>
@@ -898,7 +933,7 @@ function HostSlide({ session, quiz, currentQ, onNext, onFinish }) {
         <div className="qs-card" style={{ padding: 32, color: "var(--ink-900)", marginBottom: 20 }}>
           {currentQ.slideTitle && (
             <h1 style={{ fontSize: 30, marginBottom: 16, fontFamily: "var(--font-display)" }}>
-              {currentQ.slideTitle}
+              <window.RichText text={currentQ.slideTitle} />
             </h1>
           )}
           {currentQ.image && (
@@ -916,7 +951,7 @@ function HostSlide({ session, quiz, currentQ, onNext, onFinish }) {
           )}
           {currentQ.slideBody && (
             <div style={{ fontSize: 16, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-              {currentQ.slideBody}
+              <window.RichText text={currentQ.slideBody} />
             </div>
           )}
           {!currentQ.slideTitle && !currentQ.slideBody && !currentQ.image && !currentQ.video && (
@@ -1001,7 +1036,7 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
           <p style={{ opacity: 0.7, fontSize: 13 }}>
             {isSurvey ? "Encuesta" : "Resultados"} — Pregunta {session.currentQuestionIdx + 1}
           </p>
-          <h2 style={{ fontSize: 26, marginTop: 4 }}>{currentQ.text}</h2>
+          <h2 style={{ fontSize: 26, marginTop: 4 }}><window.RichText text={currentQ.text} /></h2>
           {currentQ.image && (
             <div style={{ marginTop: 12 }}>
               <img src={currentQ.image} alt=""
@@ -1125,7 +1160,7 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
                 width: 26, height: 26, borderRadius: "50%", background: "var(--emerald-500)",
                 color: "white", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13, flexShrink: 0,
               }}>{i + 1}</span>
-              <span style={{ fontSize: 15, fontWeight: 600 }}>{it.text}</span>
+              <span style={{ fontSize: 15, fontWeight: 600 }}><window.RichText text={it.text} /></span>
             </div>
           ))}
         </div>
@@ -1248,7 +1283,7 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
               <div style={{ position: "relative", display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
                 <div style={{ fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 10 }}>
                   {highlightCorrect && <span style={{ fontSize: 22 }}>✓</span>}
-                  {opt.text}
+                  <window.RichText text={opt.text} />
                 </div>
                 <div style={{ fontWeight: 800, fontSize: 20 }}>{count}</div>
               </div>
@@ -1352,7 +1387,7 @@ function HostFinal({ session, quiz, onFinish }) {
                       {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
                     </div>
                     <div style={{ fontSize: 24, fontFamily: "var(--font-display)", fontWeight: 800 }}>
-                      {p.score} pts
+                      {fmtPts(p.score)} pts
                     </div>
                   </div>
                 </div>
@@ -1381,7 +1416,7 @@ function HostFinal({ session, quiz, onFinish }) {
                     {p.course}{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
                   </div>
                 </div>
-                <div style={{ fontWeight: 700, color: "var(--violet-700)" }}>{p.score} pts</div>
+                <div style={{ fontWeight: 700, color: "var(--violet-700)" }}>{fmtPts(p.score)} pts</div>
               </div>
             ))}
           </div>
@@ -1439,7 +1474,7 @@ function ParticipantsModal({ participants, onKick, onClose }) {
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
-                    {p.course} · {p.score || 0} pts{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
+                    {p.course} · {fmtPts(p.score)} pts{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
                   </div>
                 </div>
                 <button onClick={() => onKick(p.pid)} className="qs-btn qs-btn--sm" style={{
@@ -1509,6 +1544,9 @@ function LiveSessionHost({ quizId, onExit }) {
   const [answersByQuestion, setAnswersByQuestion] = useStateL({});
   const [showParticipants, setShowParticipants] = useStateL(false);
   const [pendingJoinRequests, setPendingJoinRequests] = useStateL([]);
+  // Cuenta regresiva META (14-meta.js) en la proyección, entre "Iniciar" y
+  // la primera pregunta. Los estudiantes siguen en el lobby mientras tanto.
+  const [metaCountdown, setMetaCountdown] = useStateL(false);
     // El id de sesión como ESTADO (no solo ref): garantiza que la suscripción
   // a Firestore se active apenas exista la sesión.
   const [sessionId, setSessionId] = useStateL(null);
@@ -1642,8 +1680,26 @@ function LiveSessionHost({ quizId, onExit }) {
   };
 
   // ---- Acciones ----
+  // "Iniciar" en el lobby: primero la cuenta regresiva META, sincronizada
+  // con los celulares. Se escribe en la sesión HASTA CUÁNDO dura, así cada
+  // estudiante muestra exactamente los mismos segundos que la proyección.
+  const META_COUNTDOWN_SECONDS = 5;
+  const startMetaCountdown = async () => {
+    setMetaCountdown(true);
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+        metaCountdownUntil: Date.now() + META_COUNTDOWN_SECONDS * 1000,
+      });
+    } catch (err) {
+      // Si no se pudo avisar a los celulares, la proyección igual cuenta
+      // y el quiz arranca normal al terminar.
+      console.error("Error avisando cuenta regresiva:", err);
+    }
+  };
+
   const startQuiz = async () => {
     await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+      metaCountdownUntil: null,
       status: "playing",
       currentQuestionIdx: 0,
       questionStartedAt: Date.now(),
@@ -1677,8 +1733,11 @@ function LiveSessionHost({ quizId, onExit }) {
   // Re-lanzar la pregunta actual: revierte puntos de quienes ya respondieron,
   // borra sus respuestas y reinicia el cronómetro. Sube questionVersion para
   // que el estudiante resetee su estado de "ya respondí".
-  const relaunchQuestion = async () => {
-    if (!confirm("¿Re-lanzar esta pregunta? Se borrarán las respuestas actuales y se reiniciará el tiempo.")) return;
+  // opts.silent: sin confirmación. opts.exceptPid: ese participante conserva
+  // su respuesta y puntos (privilegio "Otra vez" de Competencia Extrema).
+  const relaunchQuestion = async (opts = {}) => {
+    const { silent = false, exceptPid = null } = opts || {};
+    if (!silent && !confirm("¿Re-lanzar esta pregunta? Se borrarán las respuestas actuales y se reiniciará el tiempo.")) return;
     const qIdx = session.currentQuestionIdx;
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
     try {
@@ -1689,6 +1748,7 @@ function LiveSessionHost({ quizId, onExit }) {
       const scoreReverts = {};
       snap.docs.forEach(d => {
         const data = d.data();
+        if (exceptPid && data.participantId === exceptPid) return; // conserva su acierto
         // Solo revertir lo que ya se sumó al marcador (applied). Los pendientes
         // nunca se sumaron, así que no hay nada que revertir de ellos.
         const pts = data.applied ? (data.points || 0) : 0;
@@ -1706,6 +1766,7 @@ function LiveSessionHost({ quizId, onExit }) {
         questionVersion: (session.questionVersion || 0) + 1,
         status: "playing",
       };
+      if (exceptPid) updates["extremeEffects.repeatExempt"] = { by: exceptPid, qIdx, at: Date.now() };
       Object.entries(scoreReverts).forEach(([pid, delta]) => {
         updates[`participants.${pid}.score`] = firebase.firestore.FieldValue.increment(delta);
       });
@@ -1769,9 +1830,11 @@ function LiveSessionHost({ quizId, onExit }) {
   const revealCurrent = async () => {
     const qIdx = session.currentQuestionIdx;
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    let answerDocs = []; // se reutiliza para las rachas (sin volver a leer)
     try {
       // Aplicar los puntos en espera de esta pregunta al marcador de cada quien
       const snap = await ref.collection("answers").where("questionIdx", "==", qIdx).get();
+      answerDocs = snap.docs;
       const increments = {};
       const batch = window.QS.db.batch();
       let hasIncrements = false;
@@ -1792,11 +1855,48 @@ function LiveSessionHost({ quizId, onExit }) {
     } catch (err) {
       console.error("Error aplicando puntajes al revelar:", err);
     }
-    await ref.update({
-      status: "showResults",
-      revealedAt: Date.now(),
-      pausedAt: null,
-    });
+    const revealUpdates = { status: "showResults", revealedAt: Date.now(), pausedAt: null };
+    // COMPETENCIA EXTREMA (15-extreme.js): rachas y, si alguien llegó a 3
+    // seguidas, la oferta de privilegio. Va en la MISMA escritura del
+    // reveal: no cuesta lecturas ni escrituras extra.
+    if (quiz.extremeMode && quiz.mode !== "survey" && window.extremeStreakUpdates) {
+      const answersByPid = {};
+      answerDocs.forEach(d => { const a = d.data(); answersByPid[a.participantId] = a; });
+      const { updates, triggered } = window.extremeStreakUpdates(session, answersByPid);
+      Object.assign(revealUpdates, updates);
+      if (triggered.length && !session.privilegeOffer) {
+        revealUpdates.privilegeOffer = window.extremeBuildOffer(triggered[0], qIdx);
+        revealUpdates.privilegeQueue = triggered.slice(1);
+      }
+    }
+    await ref.update(revealUpdates);
+  };
+
+  // ---- COMPETENCIA EXTREMA: privilegios (el docente aprueba/rechaza) ----
+  const approvePrivilege = async () => {
+    const offer = session.privilegeOffer;
+    if (!offer || !offer.choice) return;
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    try {
+      const { updates, repeat } = window.extremeApprovalUpdates({ session, quiz, pid: offer.pid, privId: offer.choice, firebase });
+      Object.assign(updates, window.extremeAdvanceQueue(session));
+      if (repeat) { updates.privilegeOffer = null; updates.privilegeQueue = []; }
+      await ref.update(updates);
+      // "Otra vez": los demás repiten la pregunta; el ganador queda exento.
+      if (repeat) await relaunchQuestion({ silent: true, exceptPid: offer.pid });
+    } catch (err) {
+      console.error("Error aprobando privilegio:", err);
+      alert("No se pudo aplicar el privilegio: " + err.message);
+    }
+  };
+  const rejectPrivilege = async () => {
+    if (!session.privilegeOffer) return;
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current)
+        .update(window.extremeAdvanceQueue(session));
+    } catch (err) {
+      console.error("Error rechazando privilegio:", err);
+    }
   };
 
   // Calificar en vivo una respuesta abierta de un estudiante.
@@ -1824,6 +1924,7 @@ function LiveSessionHost({ quizId, onExit }) {
         gradeResult: result,
         correct: result === "correct",
         points,
+        gradePoints: points, // la nota manual cuenta igual para nota y ranking
       });
       // Ajustar el puntaje del participante por la diferencia
       const delta = points - prevPoints;
@@ -1850,7 +1951,7 @@ function LiveSessionHost({ quizId, onExit }) {
       if (!snap.exists) return;
       const prev = snap.data();
       const prevPoints = prev.graded ? (prev.points || 0) : 0;
-      await answerRef.update({ graded: true, points, correct: points >= 6 });
+      await answerRef.update({ graded: true, points, gradePoints: points, correct: points >= 6 });
       const delta = points - prevPoints;
       if (delta !== 0) {
         await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
@@ -1864,6 +1965,14 @@ function LiveSessionHost({ quizId, onExit }) {
 
   const goNext = async () => {
     const nextIdx = session.currentQuestionIdx + 1;
+    // COMPETENCIA EXTREMA: ranking animado cada 3 preguntas antes de avanzar.
+    if (quiz.extremeMode && session.status !== "ranking" && window.extremeRankingDue
+        && window.extremeRankingDue(quiz, session.currentQuestionIdx)) {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+        status: "ranking", privilegeOffer: null, privilegeQueue: [],
+      });
+      return;
+    }
     if (nextIdx >= quiz.questions.length) {
       // Terminar: primero guardar resultados de cada participante
       try {
@@ -1883,6 +1992,8 @@ function LiveSessionHost({ quizId, onExit }) {
         questionStartedAt: Date.now(),
         extraSeconds: 0,
         pausedAt: null,
+        privilegeOffer: null,
+        privilegeQueue: [],
       });
     }
   };
@@ -1951,7 +2062,20 @@ function LiveSessionHost({ quizId, onExit }) {
   const answersThisQ = answersByQuestion[currentIdx] || {};
 
   if (session.status === "lobby") {
-    return <HostLobby session={session} quiz={quiz} onStart={startQuiz} onCancel={cancelSession} onKick={kickParticipant} />;
+    return (
+      <>
+        <HostLobby session={session} quiz={quiz} onStart={startMetaCountdown} onCancel={cancelSession} onKick={kickParticipant} />
+        {metaCountdown && (
+          <window.MetaCountdown
+            mode="live"
+            seconds={META_COUNTDOWN_SECONDS}
+            background={quizBg(quiz.color)}
+            allowSkip
+            onDone={() => { setMetaCountdown(false); startQuiz(); }}
+          />
+        )}
+      </>
+    );
   }
 
   const participantsModal = showParticipants ? (
@@ -1969,6 +2093,26 @@ function LiveSessionHost({ quizId, onExit }) {
       onReject={rejectJoinRequest}
     />
   ) : null;
+
+  // COMPETENCIA EXTREMA (15-extreme.js): panel de aprobación de privilegios
+  // y aviso de efectos activos en la pregunta actual (proyección).
+  const isExtreme = !!quiz.extremeMode && quiz.mode !== "survey";
+  const extremePanel = isExtreme && session.privilegeOffer && window.ExtremeHostPanel ? (
+    <window.ExtremeHostPanel session={session} onApprove={approvePrivilege} onReject={rejectPrivilege} onSkip={rejectPrivilege} />
+  ) : null;
+  const extremeBanner = isExtreme && window.ExtremeEffectBanner ? (
+    <window.ExtremeEffectBanner session={session} quiz={quiz} me={null}
+      style={{ position: "fixed", top: 10, left: 0, right: 0, zIndex: 840, pointerEvents: "none", padding: "0 12px" }} />
+  ) : null;
+
+  if (isExtreme && session.status === "ranking" && window.ExtremeRanking) {
+    return (
+      <>
+        <window.ExtremeRanking session={session} quiz={quiz} onContinue={goNext} />
+        {joinRequestsBanner}
+      </>
+    );
+  }
 
   if (session.status === "playing") {
     // Si el elemento actual es una diapositiva: pantalla especial sin cronómetro
@@ -2001,9 +2145,11 @@ function LiveSessionHost({ quizId, onExit }) {
           answersThisQ={answersThisQ} totalParticipants={participants.length}
           onReveal={revealCurrent} onSkip={revealCurrent}
           onAddTime={() => addTime(30)} onFinish={finishNow}
-          onTogglePause={togglePause} onRelaunch={relaunchQuestion}
+          onTogglePause={togglePause} onRelaunch={() => relaunchQuestion()}
           onShowParticipants={() => setShowParticipants(true)}
         />
+        {extremeBanner}
+        {extremePanel}
         {participantsModal}
         {joinRequestsBanner}
       </>
@@ -2017,6 +2163,7 @@ function LiveSessionHost({ quizId, onExit }) {
         <>
           <window.WorkshopHostReveal session={session} quiz={quiz} currentQ={currentQ}
             answersThisQ={answersThisQ} onNext={goNext} onGradeWorkshop={gradeWorkshopAnswer} onFinish={finishNow} />
+          {extremePanel}
           {participantsModal}
           {joinRequestsBanner}
         </>
@@ -2026,6 +2173,7 @@ function LiveSessionHost({ quizId, onExit }) {
       <>
         <HostReveal session={session} quiz={quiz} currentQ={currentQ}
           answersThisQ={answersThisQ} onNext={goNext} onGradeLive={gradeLiveAnswer} onFinish={finishNow} />
+        {extremePanel}
         {participantsModal}
         {joinRequestsBanner}
       </>
@@ -2535,7 +2683,8 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   const [myAciertos, setMyAciertos] = useStateL(null);
   const [myAnswered, setMyAnswered] = useStateL(null);
   const [myPointsMaxAnswered, setMyPointsMaxAnswered] = useStateL(0);
-  const myScore = (session?.participants?.[participantId]?.score) || 0;
+  const [myGradePoints, setMyGradePoints] = useStateL(0); // puntos para la nota (sin bonus por defecto)
+  const myScore = fmtPts(session?.participants?.[participantId]?.score);
 
   // Cuando la sala termina/cancela, o si me expulsan, borrar la sesión
   // guardada para que no intente reconectar a esta sala.
@@ -2559,17 +2708,20 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
       .then(snap => {
         let correctCount = 0;
         let pointsMaxAnswered = 0;
+        let gradePointsSum = 0;
         snap.docs.forEach(d => {
           const data = d.data();
           if (data.correct) correctCount++;
+          gradePointsSum += data.gradePoints ?? data.points ?? 0;
           const q = quiz.questions[data.questionIdx];
           if (q && q.type !== "slide") {
-            pointsMaxAnswered += (q.pointsCorrect ?? 10) + (q.pointsSpeedBonus ?? 0);
+            pointsMaxAnswered += (q.pointsCorrect ?? 10) + gradeBonusFor(q);
           }
         });
         setMyAciertos(correctCount);
         setMyAnswered(snap.docs.length);
         setMyPointsMaxAnswered(pointsMaxAnswered);
+        setMyGradePoints(gradePointsSum);
       })
       .catch(err => console.error("Error contando aciertos:", err));
   }, [session?.status, quiz]);
@@ -2613,12 +2765,20 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     return () => unsub();
   }, [session?.status, session?.currentQuestionIdx, sessionId, participantId]);
 
+  // COMPETENCIA EXTREMA (15-extreme.js): efectos que me aplican en la
+  // pregunta actual (tijera, congelar, sabotaje, pase libre, doble...).
+  const isExtremeStudent = !!quiz?.extremeMode && quiz?.mode !== "survey";
+  const xfx = (isExtremeStudent && session && window.extremeEffectsFor)
+    ? window.extremeEffectsFor(session, session.currentQuestionIdx, participantId)
+    : {};
+  const myTimeCut = xfx.timecut ? (xfx.timecut.seconds || 0) : 0;
+
   // Cronómetro (respeta la pausa del docente)
   useEffectL(() => {
     if (!session || session.status !== "playing") return;
     const currentQ = quiz.questions[session.currentQuestionIdx];
     if (!currentQ) return;
-    const totalSec = (currentQ.timer || 60) + (session.extraSeconds || 0);
+    const totalSec = Math.max(5, (currentQ.timer || 60) + (session.extraSeconds || 0) - myTimeCut);
     const startedAt = session.questionStartedAt || Date.now();
     const isPaused = !!session.pausedAt;
     const tick = () => {
@@ -2632,7 +2792,40 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     if (isPaused) return;
     const id = setInterval(tick, 200);
     return () => clearInterval(id);
-  }, [session?.questionStartedAt, session?.status, session?.extraSeconds, session?.pausedAt]);
+  }, [session?.questionStartedAt, session?.status, session?.extraSeconds, session?.pausedAt, myTimeCut]);
+
+  // COMPETENCIA EXTREMA: "Pase libre" — la pregunta se gana sola (puntos base,
+  // sin bonus de velocidad) apenas arranca, sin que el estudiante responda.
+  useEffectL(() => {
+    if (!session || session.status !== "playing" || !xfx.freepass) return;
+    const qIdx = session.currentQuestionIdx;
+    if (answeredAtIdx === qIdx) return;
+    const currentQ = quiz.questions[qIdx];
+    if (!currentQ || currentQ.type === "slide") return;
+    const points = currentQ.pointsCorrect ?? 10;
+    setMyAnswer("🎫");
+    setAnsweredAtIdx(qIdx);
+    setMyResultThisQ({ correct: true, points, survey: false, pendingGrade: false });
+    window.QS.db.collection("liveSessions").doc(sessionId)
+      .collection("answers").doc(`${participantId}-${qIdx}`)
+      .set({
+        participantId, questionIdx: qIdx, answer: "🎫 pase libre",
+        correct: true, points, gradePoints: points, pendingPoints: points, applied: false, graded: false,
+        secondsTaken: 0, answeredAt: Date.now(), freePass: true,
+      })
+      .catch(err => console.error("Error aplicando pase libre:", err));
+  }, [session?.status, session?.currentQuestionIdx, xfx.freepass ? 1 : 0]);
+
+  // COMPETENCIA EXTREMA: el ganador de la racha elige su privilegio.
+  const choosePrivilege = async (id) => {
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionId).update({
+        "privilegeOffer.choice": id, "privilegeOffer.status": "chosen", "privilegeOffer.chosenAt": Date.now(),
+      });
+    } catch (err) {
+      console.error("Error eligiendo privilegio:", err);
+    }
+  };
 
   // El resultado del reveal se calcula directamente en el render desde
   // myResultThisQ (guardado en memoria al responder). No usamos efecto ni
@@ -2653,7 +2846,11 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     const isLiveGradedOpen = !isSurvey && currentQ.type === "text" && (currentQ.gradeMode || "live") === "live";
     // En encuesta o en abiertas-en-vivo no hay respuesta correcta automática ni puntaje
     const isCorrect = (isSurvey || isLiveGradedOpen) ? null : checkAnswer(currentQ, answer);
-    const points = (isSurvey || isLiveGradedOpen) ? 0 : calculatePoints(currentQ, isCorrect, secondsTaken, totalSec);
+    let points = (isSurvey || isLiveGradedOpen) ? 0 : calculatePoints(currentQ, isCorrect, secondsTaken, totalSec);
+    // Puntos para la NOTA (sin el bonus por defecto del ranking, ver calculateGradePoints)
+    const gradePoints = (isSurvey || isLiveGradedOpen) ? 0 : calculateGradePoints(currentQ, isCorrect, secondsTaken, totalSec);
+    // COMPETENCIA EXTREMA: "Doble o nada" — vale el doble si acierto (solo ranking).
+    if (xfx.double && isCorrect) points *= 2;
 
     setMyAnswer(answer);
     setAnsweredAtIdx(qIdx);
@@ -2669,7 +2866,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
       // el marcador del estudiante no delate si acertó antes del reveal.
       await answerRef.set({
         participantId, questionIdx: qIdx, answer,
-        correct: isCorrect, points,
+        correct: isCorrect, points, gradePoints,
         pendingPoints: (!isSurvey && !isLiveGradedOpen) ? points : 0,
         applied: false, // si ya se sumó al score
         graded: false,  // las abiertas-en-vivo las califica el docente
@@ -2722,11 +2919,27 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
 
   if (session.status === "lobby") {
     const me = session.participants?.[participantId];
+    // El docente presionó "Iniciar": cuenta regresiva META en el celular,
+    // con los mismos segundos que la proyección. Cuando la sesión pasa a
+    // "playing" este bloque deja de renderizarse y la cuenta desaparece
+    // sola: la pregunta arranca sin descontarle tiempo a nadie.
+    const metaLeftMs = (session.metaCountdownUntil || 0) - Date.now();
+    const metaSeconds = metaLeftMs > 300 ? Math.ceil(metaLeftMs / 1000) : 0;
     return (
       <div style={{
         minHeight: "100vh", display: "grid", placeItems: "center",
         background: quizBg(quiz?.color), color: "white", padding: 20,
       }}>
+        {metaSeconds > 0 && (
+          <window.MetaCountdown
+            key={session.metaCountdownUntil}
+            mode="live"
+            playful
+            seconds={metaSeconds}
+            background={quizBg(quiz?.color)}
+            onDone={() => { /* la sesión pasa a "playing" y esta pantalla se va sola */ }}
+          />
+        )}
         <div className="qs-card" style={{ padding: 32, textAlign: "center", maxWidth: 400, color: "var(--ink-900)" }}>
           <div style={{ fontSize: 48, marginBottom: 12 }} className="qs-bob">🎉</div>
           <h2 style={{ fontSize: 22, marginBottom: 8 }}>¡Estás dentro!</h2>
@@ -2761,7 +2974,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     // docente la asigna a mano tras revisar qué respondieron.
     const fullMaxPoints = calculateMaxPoints(quiz);
     const pointsMaxAnswered = myPointsMaxAnswered;
-    const scaledScore = pointsMaxAnswered > 0 ? (myScore / pointsMaxAnswered) * fullMaxPoints : 0;
+    const scaledScore = pointsMaxAnswered > 0 ? (myGradePoints / pointsMaxAnswered) * fullMaxPoints : 0;
     const myGrade = convertToGrade(scaledScore, fullMaxPoints, quiz.gradingScale);
     const passing = myGrade >= 3.0;
 
@@ -2835,6 +3048,18 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
 
   const currentQ = quiz.questions[session.currentQuestionIdx];
   if (!currentQ) return null;
+
+  // === COMPETENCIA EXTREMA: ranking cada 3 preguntas y elección de privilegio ===
+  if (isExtremeStudent && session.status === "ranking" && window.ExtremeRanking) {
+    return <window.ExtremeRanking session={session} quiz={quiz} myId={participantId} />;
+  }
+  if (isExtremeStudent && session.privilegeOffer && window.ExtremePrivilegePicker) {
+    const offer = session.privilegeOffer;
+    if (offer.pid === participantId) {
+      return <window.ExtremePrivilegePicker offer={offer} participant={session.participants?.[participantId]} onChoose={choosePrivilege} />;
+    }
+    return <window.ExtremeWaiting offer={offer} session={session} />;
+  }
 
   // === Mostrando respuesta correcta (el docente reveló) ===
   if (session.status === "showResults") {
@@ -2965,7 +3190,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
             <div className="qs-card" style={{ padding: 20, color: "var(--ink-900)" }}>
               {currentQ.slideTitle && (
                 <h2 style={{ fontSize: 22, marginBottom: 12, fontFamily: "var(--font-display)" }}>
-                  {currentQ.slideTitle}
+                  <window.RichText text={currentQ.slideTitle} />
                 </h2>
               )}
               {currentQ.image && (
@@ -2983,7 +3208,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
               )}
               {currentQ.slideBody && (
                 <div style={{ fontSize: 15, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                  {currentQ.slideBody}
+                  <window.RichText text={currentQ.slideBody} />
                 </div>
               )}
             </div>
@@ -2991,6 +3216,22 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         </div>
       );
     }
+
+    // COMPETENCIA EXTREMA: pantallas en las que NO respondo.
+    if (xfx.repeatExempt && window.ExtremeSkipScreen) {
+      return <window.ExtremeSkipScreen emoji="🔁" title="Ya la tienes ganada" desc="Los demás repiten esta pregunta. Tu acierto se conserva." />;
+    }
+    if (xfx.freepass && window.ExtremeSkipScreen) {
+      return <window.ExtremeSkipScreen emoji="🎫" title="Pase libre" desc="Esta pregunta la ganas sin responder." />;
+    }
+    // Congelar: los primeros N segundos no puedo responder.
+    const totalSecMe = Math.max(5, (currentQ.timer || 60) + (session.extraSeconds || 0) - myTimeCut);
+    const frozenLeft = xfx.freeze ? Math.ceil((xfx.freeze.seconds || 0) - (totalSecMe - secondsLeft)) : 0;
+    const frozen = frozenLeft > 0;
+    // Sabotaje: a los demás les desaparece la opción correcta (solo tiene
+    // sentido en opción múltiple / verdadero-falso).
+    const sabotaged = !!xfx.sabotage && (currentQ.type === "multi" || currentQ.type === "truefalse");
+    const visibleOptions = (currentQ.options || []).filter(o => !(sabotaged && o.correct));
 
     if (haveAnswered) {
       return (
@@ -3036,17 +3277,32 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
                   borderRadius: 10, fontWeight: 700, fontSize: 14,
                 }}>⭐ {myScore} pts</span>
               )}
-              <span style={{
-                background: session.pausedAt ? "var(--amber-400)" : "white",
-                color: session.pausedAt ? "#7c2d12" : (secondsLeft < 5 ? "var(--red-500)" : "var(--violet-700)"),
-                padding: "6px 14px",
-                borderRadius: 10, fontWeight: 800, fontFamily: "var(--font-display)",
-              }}>{session.pausedAt ? "⏸ Pausa" : Math.ceil(secondsLeft) + "s"}</span>
+              {window.MetaTimerBadge ? (
+                <window.MetaTimerBadge secondsLeft={secondsLeft} paused={!!session.pausedAt} />
+              ) : (
+                <span style={{
+                  background: session.pausedAt ? "var(--amber-400)" : "white",
+                  color: session.pausedAt ? "#7c2d12" : (secondsLeft < 5 ? "var(--red-500)" : "var(--violet-700)"),
+                  padding: "6px 14px",
+                  borderRadius: 10, fontWeight: 800, fontFamily: "var(--font-display)",
+                }}>{session.pausedAt ? "⏸ Pausa" : Math.ceil(secondsLeft) + "s"}</span>
+              )}
             </div>
           </div>
 
+          {isExtremeStudent && window.ExtremeEffectBanner && (
+            <window.ExtremeEffectBanner session={session} quiz={quiz} me={participantId} style={{ marginBottom: 12 }} />
+          )}
+          {frozen && (
+            <div style={{
+              textAlign: "center", marginBottom: 12, padding: "12px 14px", borderRadius: 14,
+              background: "linear-gradient(135deg, #4fc3f7, #0d47a1)", color: "white", fontWeight: 900, fontSize: 18,
+              boxShadow: "0 8px 24px rgba(13,71,161,.45)",
+            }}>❄️ Congelado · {frozenLeft}s</div>
+          )}
+
           <div className="qs-card" style={{ padding: 20, marginBottom: 16 }}>
-            <h2 style={{ fontSize: 20, lineHeight: 1.4 }}>{currentQ.text}</h2>
+            <h2 style={{ fontSize: 20, lineHeight: 1.4 }}><window.RichText text={currentQ.text} /></h2>
             {currentQ.image && (
               <div style={{ textAlign: "center", marginTop: 12 }}>
                 <img src={currentQ.image} alt=""
@@ -3064,15 +3320,17 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
 
           {(currentQ.type === "multi" || currentQ.type === "truefalse" || currentQ.type === "poll") && (
             <div style={{ display: "grid", gap: 10 }}>
-              {(currentQ.options || []).map((opt, i) => (
+              {visibleOptions.map((opt, i) => (
                 <button key={opt.id}
-                  onClick={() => submitAnswer(opt.id)}
+                  onClick={() => { if (!frozen) submitAnswer(opt.id); }}
+                  disabled={frozen}
                   style={{
                     padding: "18px 20px", borderRadius: 14, background: colors[i % 4],
                     color: "white", fontSize: 17, fontWeight: 700, textAlign: "left",
-                    border: "none", cursor: "pointer", boxShadow: "var(--shadow-tile)",
+                    border: "none", cursor: frozen ? "not-allowed" : "pointer", boxShadow: "var(--shadow-tile)",
+                    opacity: frozen ? 0.45 : 1, filter: frozen ? "grayscale(.6)" : "none",
                   }}
-                >{opt.text}</button>
+                ><window.RichText text={opt.text} /></button>
               ))}
             </div>
           )}
@@ -3153,7 +3411,7 @@ function CheckSelector({ options, colors, onSubmit }) {
                 border: isOn ? "4px solid white" : "4px solid transparent",
                 cursor: "pointer", opacity: isOn ? 1 : 0.7,
               }}
-            >{isOn ? "✓ " : ""}{opt.text}</button>
+            >{isOn ? "✓ " : ""}<window.RichText text={opt.text} /></button>
           );
         })}
       </div>
@@ -3247,7 +3505,7 @@ function OrderSelector({ items, onSubmit }) {
                 background: "var(--violet-100)", color: "var(--violet-700)",
                 display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13,
               }}>{i + 1}</span>
-              <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}>{it.text}</span>
+              <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}><window.RichText text={it.text} /></span>
               <button onClick={() => move(i, -1)} disabled={i === 0}
                 style={{
                   width: 32, height: 32, borderRadius: 8, border: "1px solid var(--ink-200)",
@@ -3532,7 +3790,7 @@ function LiveHistoryPanel({ onBack }) {
                         const maxC = Math.max(1, ...counts);
                         dist = labels.map((lbl, i) => (
                           <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                            <div style={{ flex: "0 0 45%", fontSize: 12, color: "var(--ink-700)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{lbl}</div>
+                            <div style={{ flex: "0 0 45%", fontSize: 12, color: "var(--ink-700)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{window.richToPlain ? window.richToPlain(lbl) : lbl}</div>
                             <div style={{ flex: 1, height: 14, background: "var(--ink-100)", borderRadius: 7, overflow: "hidden" }}>
                               <div style={{ height: "100%", width: (counts[i] / maxC) * 100 + "%", background: tileColor(i), borderRadius: 7, transition: "width .3s" }}/>
                             </div>
@@ -3543,7 +3801,7 @@ function LiveHistoryPanel({ onBack }) {
                       return (
                         <div key={q.id} style={{ marginBottom: 16 }}>
                           <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: "var(--ink-900)" }}>
-                            <span style={{ color: "var(--violet-700)" }}>P{qi + 1}.</span> {q.text}
+                            <span style={{ color: "var(--violet-700)" }}>P{qi + 1}.</span> {window.richToPlain ? window.richToPlain(q.text) : q.text}
                           </div>
                           {dist ? dist : (
                             <div style={{ display: "flex", flexDirection: "column", gap: 4, maxHeight: 180, overflowY: "auto" }}>
@@ -3582,7 +3840,7 @@ function LiveHistoryPanel({ onBack }) {
                           {p.course ? <span style={{ color: "var(--ink-400)", fontSize: 12 }}> · {p.course}</span> : null}
                           {p.partnerName ? <span style={{ color: "var(--ink-400)", fontSize: 12 }}> · 👥 {p.partnerName}</span> : null}
                         </div>
-                        <div style={{ fontWeight: 800, color: "var(--ink-700)", flexShrink: 0 }}>{p.score} pts</div>
+                        <div style={{ fontWeight: 800, color: "var(--ink-700)", flexShrink: 0 }}>{fmtPts(p.score)} pts</div>
                       </div>
                     ))}
                   </div>

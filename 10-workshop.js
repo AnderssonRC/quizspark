@@ -461,7 +461,7 @@ function WorkshopOrderAnswer({ items, value, onChange, colorInfo }) {
               width: 26, height: 26, borderRadius: "50%", background: hexToRgba(c.hex, 0.22), color: c.hex,
               display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13, flexShrink: 0,
             }}>{i + 1}</span>
-            <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}>{it.text}</span>
+            <span style={{ flex: 1, fontSize: 15, fontWeight: 600 }}><window.RichText text={it.text} /></span>
             <button onClick={() => move(i, -1)} disabled={i === 0}
               style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid " + WORKSHOP_BORDER, background: i === 0 ? "rgba(255,255,255,0.04)" : WORKSHOP_SURFACE, fontSize: 16, fontWeight: 800, color: i === 0 ? "rgba(255,255,255,0.3)" : c.hex }}>↑</button>
             <button onClick={() => move(i, 1)} disabled={i === order.length - 1}
@@ -488,7 +488,7 @@ function WorkshopQuestionCard({ q, answer, onAnswer, colorInfo }) {
         <div style={{ display: "inline-block", padding: "4px 10px", borderRadius: 10, background: hexToRgba(c.hex, 0.18), color: c.hex, fontSize: 12, fontWeight: 700, marginBottom: 14 }}>
           📋 Diapositiva
         </div>
-        {q.slideTitle && <h2 style={{ fontSize: 22, marginBottom: 12, fontFamily: WORKSHOP_FONT, fontWeight: 600 }}>{q.slideTitle}</h2>}
+        {q.slideTitle && <h2 style={{ fontSize: 22, marginBottom: 12, fontFamily: WORKSHOP_FONT, fontWeight: 600 }}><window.RichText text={q.slideTitle} /></h2>}
         {q.image && (
           <div style={{ textAlign: "center", marginBottom: 14, background: WORKSHOP_SURFACE_2, borderRadius: 10, padding: 8 }}>
             <img src={q.image} alt="" style={{ maxWidth: "100%", maxHeight: 300, width: "auto", borderRadius: 6, objectFit: "contain" }} />
@@ -500,7 +500,7 @@ function WorkshopQuestionCard({ q, answer, onAnswer, colorInfo }) {
               style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", border: 0 }} allowFullScreen />
           </div>
         )}
-        {q.slideBody && <div style={{ fontSize: 15, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{q.slideBody}</div>}
+        {q.slideBody && <div style={{ fontSize: 15, lineHeight: 1.7, whiteSpace: "pre-wrap" }}><window.RichText text={q.slideBody} /></div>}
         {!q.slideTitle && !q.slideBody && !q.image && !q.video && (
           <p style={{ color: WORKSHOP_TEXT_MUTED, fontStyle: "italic", textAlign: "center" }}>Esta diapositiva está vacía.</p>
         )}
@@ -509,7 +509,7 @@ function WorkshopQuestionCard({ q, answer, onAnswer, colorInfo }) {
   }
   return (
     <WorkshopCard style={{ padding: 28 }}>
-      <h2 style={{ fontSize: 20, marginBottom: (q.image || q.video) ? 12 : 20, lineHeight: 1.4, fontFamily: WORKSHOP_FONT, fontWeight: 500 }}>{q.text}</h2>
+      <h2 style={{ fontSize: 20, marginBottom: (q.image || q.video) ? 12 : 20, lineHeight: 1.4, fontFamily: WORKSHOP_FONT, fontWeight: 500 }}><window.RichText text={q.text} /></h2>
       {q.image && (
         <div style={{ textAlign: "center", marginBottom: q.video ? 12 : 20, background: WORKSHOP_SURFACE_2, borderRadius: 10, padding: 8 }}>
           <img src={q.image} alt="" style={{ maxWidth: "100%", maxHeight: 260, width: "auto", borderRadius: 6, objectFit: "contain" }} />
@@ -529,7 +529,7 @@ function WorkshopQuestionCard({ q, answer, onAnswer, colorInfo }) {
               background: answer === opt.id ? selectedBg : WORKSHOP_SURFACE_2, color: WORKSHOP_TEXT,
               border: "2px solid " + (answer === opt.id ? c.hex : WORKSHOP_BORDER),
               fontSize: 15, fontWeight: 600, cursor: "pointer",
-            }}>{opt.text}</button>
+            }}><window.RichText text={opt.text} /></button>
           ))}
         </div>
       )}
@@ -541,7 +541,7 @@ function WorkshopQuestionCard({ q, answer, onAnswer, colorInfo }) {
               background: answer === opt.id ? selectedBg : WORKSHOP_SURFACE_2, color: WORKSHOP_TEXT,
               border: "2px solid " + (answer === opt.id ? c.hex : WORKSHOP_BORDER),
               fontSize: 16, fontWeight: 700, cursor: "pointer",
-            }}>{opt.text}</button>
+            }}><window.RichText text={opt.text} /></button>
           ))}
         </div>
       )}
@@ -566,7 +566,7 @@ function WorkshopQuestionCard({ q, answer, onAnswer, colorInfo }) {
                   background: selected ? c.hex : "transparent",
                   display: "grid", placeItems: "center", color: "white", fontSize: 14,
                 }}>{selected ? "✓" : ""}</span>
-                {opt.text}
+                <window.RichText text={opt.text} />
               </button>
             );
           })}
@@ -609,8 +609,9 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
       return;
     }
     if (deadline && Date.now() > deadline) { setPhase("closed"); return; }
-    setStartedAt(Date.now());
-    setPhase("workshop");
+    // Antes del taller: cuenta regresiva META (14-meta.js). startedAt
+    // arranca recién cuando la cuenta llega a cero.
+    setPhase("meta");
   };
 
   const setAnswer = (qid, value) => setAnswers(a => ({ ...a, [qid]: value }));
@@ -766,6 +767,17 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
     );
   }
 
+  if (phase === "meta") {
+    return (
+      <window.MetaCountdown
+        mode="workshop"
+        playful
+        background={workshopAccentGradient(quiz.color)}
+        onDone={() => { setStartedAt(Date.now()); setPhase("workshop"); }}
+      />
+    );
+  }
+
   if (phase === "submitting") {
     return (
       <div style={{ ...shellStyle, display: "grid", placeItems: "center", color: WORKSHOP_TEXT, fontFamily: WORKSHOP_FONT }}>
@@ -882,7 +894,7 @@ function WorkshopHostSlide({ session, quiz, currentQ, onNext, onFinish }) {
         <WorkshopCard style={{ padding: 32, marginBottom: 20 }}>
           {currentQ.slideTitle && (
             <h1 style={{ fontSize: 30, marginBottom: 16, fontFamily: WORKSHOP_FONT, fontWeight: 600 }}>
-              {currentQ.slideTitle}
+              <window.RichText text={currentQ.slideTitle} />
             </h1>
           )}
           {currentQ.image && (
@@ -900,7 +912,7 @@ function WorkshopHostSlide({ session, quiz, currentQ, onNext, onFinish }) {
           )}
           {currentQ.slideBody && (
             <div style={{ fontSize: 16, lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-              {currentQ.slideBody}
+              <window.RichText text={currentQ.slideBody} />
             </div>
           )}
           {!currentQ.slideTitle && !currentQ.slideBody && !currentQ.image && !currentQ.video && (
@@ -934,7 +946,7 @@ function WorkshopHostReveal({ session, quiz, currentQ, answersThisQ, onNext, onG
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
         <div style={{ marginBottom: 20 }}>
           <p style={{ opacity: 0.75, fontSize: 13 }}>{quiz.cover || "🛠️"} Taller — Pregunta {session.currentQuestionIdx + 1} de {quiz.questions.length}</p>
-          <h2 style={{ fontSize: 26, marginTop: 4, fontFamily: WORKSHOP_FONT, fontWeight: 600 }}>{currentQ.text}</h2>
+          <h2 style={{ fontSize: 26, marginTop: 4, fontFamily: WORKSHOP_FONT, fontWeight: 600 }}><window.RichText text={currentQ.text} /></h2>
         </div>
         {inner}
         {!customFooter && (
@@ -974,7 +986,7 @@ function WorkshopHostReveal({ session, quiz, currentQ, answersThisQ, onNext, onG
             {(currentQ.items || []).map((it, i) => (
               <div key={it.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px", borderRadius: 10, background: hexToRgba(c.hex, 0.16), borderLeft: "4px solid " + c.hex }}>
                 <span style={{ width: 26, height: 26, borderRadius: "50%", background: c.hex, color: "white", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13, flexShrink: 0 }}>{i + 1}</span>
-                <span style={{ fontSize: 15, fontWeight: 600, color: WORKSHOP_TEXT }}>{it.text}</span>
+                <span style={{ fontSize: 15, fontWeight: 600, color: WORKSHOP_TEXT }}><window.RichText text={it.text} /></span>
               </div>
             ))}
           </div>
@@ -1008,7 +1020,7 @@ function WorkshopHostReveal({ session, quiz, currentQ, answersThisQ, onNext, onG
                 <div style={{ position: "absolute", inset: 0, width: widthPct + "%", background: "rgba(255,255,255,0.15)", transition: "width 0.6s ease" }} />
                 <div style={{ position: "relative", display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
                   <div style={{ fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 10 }}>
-                    {opt.correct && <span style={{ fontSize: 22 }}>✓</span>}{opt.text}
+                    {opt.correct && <span style={{ fontSize: 22 }}>✓</span>}<window.RichText text={opt.text} />
                   </div>
                   <div style={{ fontWeight: 800, fontSize: 20 }}>{count}</div>
                 </div>
