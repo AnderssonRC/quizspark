@@ -510,6 +510,8 @@ function Editor({ quizId, onBack, onLaunch }) {
   const [showPublish, setShowPublish] = useStateC(false);
   // Importar preguntas desde Excel/CSV o texto con comandos (16-import.js)
   const [showImport, setShowImport] = useStateC(false);
+  // Editor de activadores metacognitivos de Esmigol (14-meta.js)
+  const [showMetaTriggers, setShowMetaTriggers] = useStateC(false);
   const [loadingQuiz, setLoadingQuiz] = useStateC(false);
   // Modo Sin Celular: presentación de diapositivas local, sin sala en línea
   const [presenting, setPresenting] = useStateC(false);
@@ -1419,6 +1421,26 @@ function Editor({ quizId, onBack, onLaunch }) {
         <aside className="qs-editor-config">
           <h3 style={{ fontSize: 15, marginBottom: 14 }}>Configuración del Quiz</h3>
 
+          {/* Esmigol: activadores metacognitivos (14-meta.js). Transversal a
+              todos los modos, igual que la cuenta regresiva de MetaCountdown. */}
+          <button onClick={() => setShowMetaTriggers(true)} style={{
+            width: "100%", display: "flex", alignItems: "center", gap: 10,
+            padding: "10px 12px", borderRadius: 14, marginBottom: 18, cursor: "pointer",
+            background: "linear-gradient(135deg, #fff7ed, #fef3c7)",
+            border: "1px solid #fcd34d", textAlign: "left",
+          }}>
+            <span style={{ fontSize: 24 }}>🐶</span>
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: "#92400e" }}>
+                Esmigol · Activadores metacognitivos
+              </span>
+              <span style={{ display: "block", fontSize: 11, color: "#a16207" }}>
+                {quiz.metaTriggers?.enabled === false ? "Desactivado" : "Frases, posición y rostros"}
+              </span>
+            </span>
+            <span style={{ fontSize: 12, color: "#a16207", fontWeight: 700 }}>Editar ›</span>
+          </button>
+
           {quiz.mode !== "workshop" && (
           <Field label="Carátula del quiz">
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
@@ -1608,6 +1630,9 @@ function Editor({ quizId, onBack, onLaunch }) {
       {showSettings && <SettingsModal quiz={quiz} setQuiz={setQuiz} onClose={() => setShowSettings(false)}/>}
       {showImport && window.ImportQuestionsModal && (
         <window.ImportQuestionsModal quiz={quiz} onImport={handleImportQuestions} onClose={() => setShowImport(false)} />
+      )}
+      {showMetaTriggers && (
+        <MetaTriggersModal quiz={quiz} setQuiz={setQuiz} onClose={() => setShowMetaTriggers(false)} />
       )}
       {showPublish && (
         <window.QS.PublishModal
@@ -1812,6 +1837,271 @@ function QuestionTextEditor({ value, onChange, questionKey, onFocusField }) {
           minHeight: 80, background: "var(--ink-50)", color: "var(--ink-900)", lineHeight: 1.35,
           boxSizing: "border-box",
         }}/>
+    </div>
+  );
+}
+
+// ---------- Editor de activadores metacognitivos (Esmigol, 14-meta.js) ----------
+// Guarda todo en quiz.metaTriggers; no tiene guardado propio — como
+// SettingsModal, muta el quiz en memoria y la persistencia real ocurre con
+// el botón "💾 Guardar" del editor.
+const ESMIGOL_GROUP_DEFAULT_EXPRESSION = { tiempo: "pocotiempo-1", motivacion: "feliz-1", recuerdo: "pensativo-1" };
+
+function MetaTriggersModal({ quiz, setQuiz, onClose }) {
+  const groupOrder = window.ESMIGOL_TRIGGER_GROUP_ORDER || ["tiempo", "motivacion", "recuerdo"];
+  const positions = window.ESMIGOL_POSITIONS || [];
+  const fonts = window.ESMIGOL_FONT_OPTIONS || [];
+  const colors = window.ESMIGOL_TEXT_COLORS || [];
+  const expressions = window.ESMIGOL_EXPRESSION_LIST || [];
+  const aligns = window.ESMIGOL_TEXT_ALIGN_OPTIONS || [{ id: "left", label: "Izquierda" }, { id: "center", label: "Centrado" }];
+  const makeDefaults = () => (window.esmigolCloneDefaultTriggers
+    ? window.esmigolCloneDefaultTriggers()
+    : { enabled: true, position: "bottom-right", imageSize: 120, fontFamily: "", fontColor: "#1f1300", fontSize: 14, holdSeconds: 4, groups: {} });
+
+  // Sembrar quiz.metaTriggers la primera vez que se abre este editor, para
+  // que el resto de funciones siempre tengan un objeto real donde escribir.
+  useEffectC(() => {
+    if (!quiz.metaTriggers) setQuiz(q => ({ ...q, metaTriggers: makeDefaults() }));
+  }, []);
+  const cfg = quiz.metaTriggers || makeDefaults();
+
+  const patchCfg = (patch) => setQuiz(q => ({ ...q, metaTriggers: { ...(q.metaTriggers || makeDefaults()), ...patch } }));
+  const patchGroupPhrases = (groupId, phrases) => patchCfg({
+    groups: { ...cfg.groups, [groupId]: { ...cfg.groups[groupId], phrases } },
+  });
+  const updatePhrase = (groupId, phraseId, patch) => {
+    const list = (cfg.groups[groupId]?.phrases || []).map(p => p.id === phraseId ? { ...p, ...patch } : p);
+    patchGroupPhrases(groupId, list);
+  };
+  const deletePhrase = (groupId, phraseId) => {
+    const list = cfg.groups[groupId]?.phrases || [];
+    if (list.length <= 1) { alert("Debe quedar al menos una frase en el grupo."); return; }
+    patchGroupPhrases(groupId, list.filter(p => p.id !== phraseId));
+  };
+  const resetGroup = (groupId) => {
+    const def = window.ESMIGOL_TRIGGERS_DEFAULT?.groups?.[groupId];
+    if (!def) return;
+    if (!confirm("¿Restaurar las frases originales de este grupo? Se perderán los cambios y las frases nuevas de este grupo.")) return;
+    patchGroupPhrases(groupId, JSON.parse(JSON.stringify(def.phrases)));
+  };
+
+  const [activeGroup, setActiveGroup] = useStateC("tiempo");
+  const [newPhraseText, setNewPhraseText] = useStateC("");
+  const addPhrase = (groupId) => {
+    const text = newPhraseText.trim();
+    if (!text) return;
+    const list = [...(cfg.groups[groupId]?.phrases || []), {
+      id: "custom-" + Date.now(), text, expression: ESMIGOL_GROUP_DEFAULT_EXPRESSION[groupId] || "feliz-1",
+    }];
+    patchGroupPhrases(groupId, list);
+    setNewPhraseText("");
+  };
+
+  // Mini "simulación de celular": reutiliza el mismo <window.Esmigol> real
+  // (contained=true → position:absolute dentro del marco en vez de fixed
+  // sobre toda la pantalla), así lo que se ve aquí es EXACTAMENTE cómo se
+  // comporta en el celular del estudiante, no una maqueta aparte.
+  const [previewPhrase, setPreviewPhrase] = useStateC(null);
+  const [previewKey, setPreviewKey] = useStateC(0);
+  const runPreview = () => {
+    if (!window.esmigolPickPhrase) return;
+    const p = window.esmigolPickPhrase(cfg.groups, activeGroup, previewPhrase && previewPhrase.id);
+    if (!p) return;
+    setPreviewPhrase(p);
+    setPreviewKey(k => k + 1);
+  };
+
+  return (
+    <div onClick={onClose} style={{
+      position: "fixed", inset: 0, background: "rgba(20,16,43,.5)", zIndex: 100,
+      display: "grid", placeItems: "center", padding: 20, overflow: "auto",
+    }}>
+      <style>{`
+        @media (max-width: 640px) {
+          .qs-meta-triggers-grid { grid-template-columns: 1fr !important; }
+          .qs-meta-triggers-grid > div:first-child { justify-self: center; }
+        }
+      `}</style>
+      <div onClick={e => e.stopPropagation()} className="qs-card" style={{
+        padding: 28, maxWidth: 760, width: "100%", maxHeight: "92vh", overflowY: "auto",
+      }}>
+        <h2 style={{ fontSize: 22, margin: "0 0 4px" }}>🐶 Esmigol · Activadores metacognitivos</h2>
+        <p style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 16, lineHeight: 1.5 }}>
+          Frases cortas que Esmigol le muestra al estudiante en momentos clave (poco tiempo, ánimo,
+          recordatorios). Los tres grupos se van alternando.
+        </p>
+
+        <Toggle label="Activar Esmigol en este quiz" value={cfg.enabled !== false} onChange={v => patchCfg({ enabled: v })} />
+
+        <div className="qs-meta-triggers-grid" style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20, marginTop: 8, marginBottom: 24 }}>
+          {/* Mini simulación de celular: dónde y cómo aparece */}
+          <div>
+            <div style={{
+              width: 200, height: 360, margin: "0 auto", borderRadius: 30, border: "8px solid #1e1b2e",
+              background: "linear-gradient(135deg, var(--violet-500), var(--violet-900))",
+              position: "relative", overflow: "hidden", boxShadow: "0 10px 30px rgba(0,0,0,.35)",
+            }}>
+              <div style={{ position: "absolute", top: 8, left: "50%", transform: "translateX(-50%)", width: 56, height: 5, borderRadius: 3, background: "rgba(255,255,255,.35)" }} />
+              <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "rgba(255,255,255,.55)", fontSize: 12, fontWeight: 600, textAlign: "center", padding: 20 }}>
+                Pantalla del<br />estudiante
+              </div>
+              {previewPhrase && window.Esmigol && (
+                <window.Esmigol
+                  key={previewKey}
+                  texto={previewPhrase.text}
+                  expression={previewPhrase.expression}
+                  position={cfg.position}
+                  placement="above"
+                  imageSize={Math.max(34, Math.round((cfg.imageSize || 120) * 0.38))}
+                  fontFamily={cfg.fontFamily}
+                  fontColor={cfg.fontColor}
+                  fontSize={Math.max(9, Math.round((cfg.fontSize || 14) * 0.72))}
+                  textAlign={cfg.textAlign}
+                  holdMs={(cfg.holdSeconds || 4) * 1000}
+                  contained
+                  dismissOnClick
+                  onCerrar={() => setPreviewPhrase(null)}
+                />
+              )}
+            </div>
+            <button onClick={runPreview} className="qs-btn qs-btn--primary qs-btn--sm" style={{ width: 200, margin: "10px auto 0", display: "block" }}>
+              ▶ Probar "{cfg.groups[activeGroup]?.label || activeGroup}"
+            </button>
+            <p style={{ fontSize: 11, color: "var(--ink-500)", textAlign: "center", marginTop: 6 }}>
+              Se ve y se retira igual que en el celular del estudiante.
+            </p>
+          </div>
+
+          {/* Controles: posición, tamaño, tipografía, color, duración */}
+          <div>
+            <Field label="Posición en pantalla">
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {positions.map(p => (
+                  <button key={p.id} onClick={() => patchCfg({ position: p.id })} style={{
+                    padding: "8px 10px", borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: "pointer", textAlign: "left",
+                    background: cfg.position === p.id ? "var(--violet-600)" : "var(--ink-50)",
+                    color: cfg.position === p.id ? "#fff" : "var(--ink-700)",
+                    border: "1px solid " + (cfg.position === p.id ? "var(--violet-600)" : "var(--ink-200)"),
+                  }}>{p.icon} {p.label}</button>
+                ))}
+              </div>
+            </Field>
+
+            <Field label={`Tamaño de la imagen · ${cfg.imageSize || 120}px`}>
+              <input type="range" min={60} max={200} step={4} value={cfg.imageSize || 120}
+                onChange={e => patchCfg({ imageSize: +e.target.value })} style={{ width: "100%" }} />
+            </Field>
+
+            <Field label="Tipografía de la frase">
+              <select className="qs-input" value={cfg.fontFamily || fonts[0]?.value}
+                onChange={e => patchCfg({ fontFamily: e.target.value })}>
+                {fonts.map(f => <option key={f.id} value={f.value}>{f.label}</option>)}
+              </select>
+            </Field>
+
+            <Field label="Alineación del texto">
+              <div style={{ display: "flex", gap: 8 }}>
+                {aligns.map(a => {
+                  const on = (cfg.textAlign || "left") === a.id;
+                  // Mini icono: tres barras alineadas a la izquierda o al
+                  // centro, para ver de un vistazo qué hace cada botón.
+                  return (
+                    <button key={a.id} onClick={() => patchCfg({ textAlign: a.id })} title={a.label} style={{
+                      flex: 1, padding: "8px 10px", borderRadius: 10, cursor: "pointer",
+                      display: "flex", flexDirection: "column", gap: 3,
+                      alignItems: a.id === "center" ? "center" : "flex-start",
+                      background: on ? "var(--violet-600)" : "var(--ink-50)",
+                      border: "1px solid " + (on ? "var(--violet-600)" : "var(--ink-200)"),
+                    }}>
+                      {[16, 11, 14].map((w, i) => (
+                        <span key={i} style={{
+                          display: "block", height: 3, width: w, borderRadius: 2,
+                          background: on ? "#fff" : "var(--ink-400)",
+                        }} />
+                      ))}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+
+            <Field label="Color del texto">
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                {colors.map(c => (
+                  <button key={c} onClick={() => patchCfg({ fontColor: c })} title={c} style={{
+                    width: 26, height: 26, borderRadius: "50%", background: c, cursor: "pointer", padding: 0,
+                    border: "2px solid #fff",
+                    boxShadow: (cfg.fontColor || colors[0]) === c ? "0 0 0 3px var(--violet-400)" : "0 0 0 1px var(--ink-200)",
+                  }} />
+                ))}
+              </div>
+            </Field>
+
+            <Field label={`Tamaño de letra · ${cfg.fontSize || 14}px`}>
+              <input type="range" min={11} max={20} value={cfg.fontSize || 14}
+                onChange={e => patchCfg({ fontSize: +e.target.value })} style={{ width: "100%" }} />
+            </Field>
+
+            <Field label={`Tiempo visible · ${cfg.holdSeconds || 4}s (o hasta que le hagan clic)`}>
+              <input type="range" min={2} max={8} value={cfg.holdSeconds || 4}
+                onChange={e => patchCfg({ holdSeconds: +e.target.value })} style={{ width: "100%" }} />
+            </Field>
+          </div>
+        </div>
+
+        {/* Los tres grupos de frases */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+          {groupOrder.map(g => (
+            <button key={g} onClick={() => setActiveGroup(g)} style={{
+              padding: "8px 14px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer",
+              background: activeGroup === g ? "var(--violet-600)" : "var(--ink-50)",
+              color: activeGroup === g ? "#fff" : "var(--ink-700)",
+              border: "1px solid " + (activeGroup === g ? "var(--violet-600)" : "var(--ink-200)"),
+            }}>{cfg.groups[g]?.label || g}</button>
+          ))}
+          <button onClick={() => resetGroup(activeGroup)} className="qs-btn qs-btn--ghost qs-btn--sm" style={{ marginLeft: "auto" }}>
+            ↻ Restaurar frases originales
+          </button>
+        </div>
+
+        <div style={{ display: "grid", gap: 8, marginBottom: 10 }}>
+          {(cfg.groups[activeGroup]?.phrases || []).map(p => (
+            <div key={p.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {/* Miniatura REAL de Esmigol (no solo un emoji): se ve de una
+                  vez qué imagen acompaña a esta frase, y se cambia desde
+                  la misma cuadrícula de miniaturas. */}
+              {window.EsmigolExpressionPicker ? (
+                <window.EsmigolExpressionPicker value={p.expression}
+                  onChange={id => updatePhrase(activeGroup, p.id, { expression: id })} />
+              ) : (
+                <select value={p.expression} title="Rostro de Esmigol para esta frase"
+                  onChange={e => updatePhrase(activeGroup, p.id, { expression: e.target.value })}
+                  style={{ borderRadius: 8, border: "1px solid var(--ink-200)", padding: "6px 4px", fontSize: 16, background: "var(--ink-50)" }}>
+                  {expressions.map(ex => <option key={ex.id} value={ex.id}>{ex.emoji} {ex.label}</option>)}
+                </select>
+              )}
+              <input className="qs-input" value={p.text}
+                onChange={e => updatePhrase(activeGroup, p.id, { text: e.target.value })}
+                style={{ flex: 1 }} />
+              <button onClick={() => deletePhrase(activeGroup, p.id)} title="Eliminar frase" style={{
+                background: "transparent", border: "none", cursor: "pointer", color: "var(--red-500)", fontSize: 16,
+              }}>🗑️</button>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "flex", gap: 8 }}>
+          <input className="qs-input" placeholder="Nueva frase para este grupo..." value={newPhraseText}
+            onChange={e => setNewPhraseText(e.target.value)}
+            onKeyDown={e => e.key === "Enter" && addPhrase(activeGroup)}
+            style={{ flex: 1 }} />
+          <button onClick={() => addPhrase(activeGroup)} className="qs-btn qs-btn--ghost qs-btn--sm">+ Agregar</button>
+        </div>
+
+        <button onClick={onClose} className="qs-btn qs-btn--primary" style={{ width: "100%", marginTop: 24 }}>
+          Listo
+        </button>
+      </div>
     </div>
   );
 }

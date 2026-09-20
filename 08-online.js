@@ -886,6 +886,20 @@ function StudentExam({ examCode }) {
         ? Array.isArray(userAnswer) && userAnswer.length > 0
         : userAnswer !== undefined && userAnswer !== "");
 
+  // Esmigol (14-meta.js): reglas de aparición. En Encuesta no hay nota, así
+  // que no se ofrece `lowGrade` — el motor omite esa regla para este modo.
+  const esmigol = window.useEsmigolTriggers ? window.useEsmigolTriggers({
+    mode: quiz?.mode, cfg: window.esmigolConfigFor ? window.esmigolConfigFor(quiz) : quiz?.metaTriggers,
+    active: true,
+    questionId: q.id,
+    startedAt,
+    lowGrade: isSurvey ? undefined : () => {
+      const g = gradeSubmission(quiz, answers);
+      const min = window.ESMIGOL_LOW_GRADE_MIN || 2, ratio = window.ESMIGOL_LOW_GRADE_RATIO || 0.4;
+      return g.answered >= min && (g.correct / g.answered) < ratio;
+    },
+  }) : { node: null };
+
   return (
     <div style={{
       minHeight: "100vh",
@@ -1180,6 +1194,7 @@ function StudentExam({ examCode }) {
           </div>
         )}
       </div>
+      {esmigol.node}
     </div>
   );
 }
@@ -1256,6 +1271,8 @@ function OnlineResultsPanel({ onBack }) {
   const isWorkshop = selectedQuiz?.mode === "workshop";
   const isWorkshopOffline = isWorkshop && (selectedQuiz?.workshopMode || "live") === "offline";
 
+  const [deletingAll, setDeletingAll] = useStateO(false);
+
   const deleteSubmission = async (id) => {
     if (!confirm("¿Eliminar este registro? Esta acción no se puede deshacer.")) return;
     try {
@@ -1263,6 +1280,35 @@ function OnlineResultsPanel({ onBack }) {
       setSubmissions(submissions.filter(s => s.id !== id));
     } catch (err) {
       alert("Error al eliminar: " + err.message);
+    }
+  };
+
+  // Borrado masivo: elimina TODAS las filas visibles en la tabla (respeta
+  // los filtros de curso/fecha si están activos), acotado a la actividad
+  // seleccionada. Doble confirmación por ser irreversible y afectar notas.
+  const deleteAllSubmissions = async () => {
+    if (filtered.length === 0 || deletingAll) return;
+    const n = filtered.length;
+    const scopeNote = (filterCourse || filterDate) ? " (según el filtro que tienes activo)" : "";
+    if (!confirm(`⚠️ Vas a eliminar ${n} respuesta${n === 1 ? "" : "s"} de "${selectedQuiz.title}"${scopeNote}. Esta acción no se puede deshacer. ¿Continuar?`)) return;
+    const typed = prompt(`Para confirmar, escribe el número ${n}:`);
+    if (typed === null) return;
+    if (typed.trim() !== String(n)) { alert("El número no coincide. No se eliminó nada."); return; }
+    setDeletingAll(true);
+    try {
+      const ids = filtered.map(s => s.id);
+      // Firestore permite hasta 500 escrituras por lote: se trocea por seguridad.
+      for (let i = 0; i < ids.length; i += 450) {
+        const batch = window.QS.db.batch();
+        ids.slice(i, i + 450).forEach(id => batch.delete(window.QS.db.collection("results").doc(id)));
+        await batch.commit();
+      }
+      const idSet = new Set(ids);
+      setSubmissions(subs => subs.filter(s => !idSet.has(s.id)));
+    } catch (err) {
+      alert("Error al eliminar en lote: " + err.message);
+    } finally {
+      setDeletingAll(false);
     }
   };
 
@@ -1537,7 +1583,18 @@ function OnlineResultsPanel({ onBack }) {
                           <th style={{ padding: 12, fontSize: 12 }}>Puntos</th>
                           <th style={{ padding: 12, fontSize: 12 }}>Tiempo</th>
                           <th style={{ padding: 12, fontSize: 12 }}>Enviado</th>
-                          <th style={{ padding: 12, fontSize: 12, width: 40 }}></th>
+                          <th style={{ padding: 12, fontSize: 12, width: 40 }}>
+                            <button onClick={deleteAllSubmissions} disabled={deletingAll}
+                              title={`Borrar las ${filtered.length} filas visibles en la tabla`}
+                              style={{
+                                background: "transparent", border: "none",
+                                cursor: deletingAll ? "default" : "pointer",
+                                color: "var(--red-500)", fontSize: 15,
+                                opacity: deletingAll ? 0.5 : 1,
+                              }}>
+                              {deletingAll ? "⏳" : "🗑️"}
+                            </button>
+                          </th>
                         </tr>
                       </thead>
                       <tbody>

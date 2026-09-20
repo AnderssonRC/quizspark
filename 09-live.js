@@ -2877,6 +2877,38 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     }
   };
 
+  // ---------- Esmigol: reglas de aparición (motor en 14-meta.js) ----------
+  // OJO regla de los hooks: esto se llama SIEMPRE, nunca después de un
+  // return condicional — el motor ya sabe no hacer nada mientras `active`
+  // sea false (lobby, revelando resultados, sala terminada, etc.).
+  const liveQ = (session && quiz && quiz.questions) ? quiz.questions[session.currentQuestionIdx] : null;
+  const liveIsSurvey = quiz?.mode === "survey";
+  // Aciertos acumulados EN MEMORIA, sin lecturas extra a Firestore: se
+  // suman cada vez que se resuelve una pregunta propia (ver submitAnswer).
+  const liveTallyRef = useRefL({ correct: 0, graded: 0 });
+  useEffectL(() => {
+    if (!myResultThisQ || myResultThisQ.survey || myResultThisQ.pendingGrade) return;
+    liveTallyRef.current = {
+      correct: liveTallyRef.current.correct + (myResultThisQ.correct ? 1 : 0),
+      graded: liveTallyRef.current.graded + 1,
+    };
+  }, [myResultThisQ]);
+  const esmigol = window.useEsmigolTriggers ? window.useEsmigolTriggers({
+    mode: quiz?.mode, live: true,
+    cfg: window.esmigolConfigFor ? window.esmigolConfigFor(quiz) : quiz?.metaTriggers,
+    // Solo vigila mientras el estudiante tiene una pregunta pendiente por
+    // responder (no en diapositivas, no si ya respondió esta).
+    active: session?.status === "playing" && answeredAtIdx !== session?.currentQuestionIdx
+      && !(liveQ && liveQ.type === "slide"),
+    questionId: liveQ?.id,
+    startedAt: session?.startedAt,
+    lowGrade: liveIsSurvey ? undefined : () => {
+      const t = liveTallyRef.current;
+      const min = window.ESMIGOL_LOW_GRADE_MIN || 2, ratio = window.ESMIGOL_LOW_GRADE_RATIO || 0.4;
+      return t.graded >= min && (t.correct / t.graded) < ratio;
+    },
+  }) : { node: null };
+
   // ----- Render -----
   if (!session) {
     return (
@@ -3388,6 +3420,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
             <OrderSelector items={currentQ.items || []} onSubmit={(ids) => submitAnswer(ids)} />
           )}
         </div>
+        {esmigol.node}
       </div>
     );
   }

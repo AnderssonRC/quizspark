@@ -595,6 +595,29 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
 
   const questions = quiz.questions || [];
 
+  // ---------- Esmigol: reglas de aparición (motor en 14-meta.js) ----------
+  // Las tres reglas base (lentitud / motivar cada 5 min / nota muy baja)
+  // viven en useEsmigolTriggers; el Taller solo aporta sus señales: la
+  // pregunta actual y cómo calcular "nota muy baja" con sus preguntas
+  // cerradas (las de texto libre no se autocalifican, no cuentan aquí).
+  const esmigolQ = questions[currentIdx];
+  const esmigol = window.useEsmigolTriggers ? window.useEsmigolTriggers({
+    mode: quiz.mode, cfg: window.esmigolConfigFor ? window.esmigolConfigFor(quiz) : quiz.metaTriggers,
+    active: phase === "workshop",
+    questionId: esmigolQ && esmigolQ.id,
+    startedAt,
+    lowGrade: () => {
+      let correct = 0, graded = 0;
+      questions.forEach(qq => {
+        if (qq.type === "slide" || qq.type === "text" || !isAnswered(qq)) return;
+        graded++;
+        if (checkClosedWorkshopAnswer(qq, answers[qq.id])) correct++;
+      });
+      const min = window.ESMIGOL_LOW_GRADE_MIN || 2, ratio = window.ESMIGOL_LOW_GRADE_RATIO || 0.4;
+      return graded >= min && (correct / graded) < ratio;
+    },
+  }) : { node: null };
+
   // Vigilar el cierre por fecha límite mientras el estudiante trabaja
   useEffectW(() => {
     if (!deadline || phase === "closed" || phase === "done") return;
@@ -866,6 +889,8 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
           </div>
         )}
       </div>
+
+      {esmigol.node}
     </div>
   );
 }

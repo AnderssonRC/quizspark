@@ -16,7 +16,7 @@
 //   LectioPresenter — pantalla de presentación tipo diapositivas,
 //   usada por el Editor cuando quiz.mode === "lectio".
 // ============================================================
-const { useState: useStateLec, useEffect: useEffectLec, useCallback: useCallbackLec } = React;
+const { useState: useStateLec, useEffect: useEffectLec, useCallback: useCallbackLec, useRef: useRefLec } = React;
 
 // ---- Temas de proyección ----
 // El salón de clase no siempre tiene las mismas condiciones de luz: un
@@ -202,6 +202,19 @@ function LectioPresenter({ quiz, onExit }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [finished, slides.length, metaDone, goNext, goPrev, onExit]);
 
+  // Esmigol (14-meta.js): reglas de aparición. Este modo es presentación
+  // manejada por el DOCENTE (no hay respuestas digitales de estudiantes),
+  // así que solo aplican la regla 1 (mucho tiempo en la misma diapositiva)
+  // y la 2 (motivar cada 5 min) — no hay "nota" en vivo que ofrecer para
+  // la regla 3, así que se omite `lowGrade` y el motor la deja apagada.
+  const presentationStartedAtRef = useRefLec(Date.now());
+  const esmigol = window.useEsmigolTriggers ? window.useEsmigolTriggers({
+    mode: quiz.mode, cfg: window.esmigolConfigFor ? window.esmigolConfigFor(quiz) : quiz.metaTriggers,
+    active: metaDone && !finished && slides.length > 0,
+    questionId: q?.id,
+    startedAt: presentationStartedAtRef.current,
+  }) : { node: null };
+
   const toggleFullscreen = () => {
     try {
       if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
@@ -365,6 +378,7 @@ function LectioPresenter({ quiz, onExit }) {
           background: theme.accent2, color: theme.id === "contrast" ? "#000" : (theme.id === "bw" ? "#fff" : "#04141f"), fontWeight: 800,
         }}>{isLast ? "🏁 Finalizar" : "Siguiente ▶"}</button>
       </div>
+      {esmigol.node}
     </div>
   );
 }

@@ -298,3 +298,541 @@ function MetaTimerBadge({ secondsLeft, paused = false, style }) {
   );
 }
 window.MetaTimerBadge = MetaTimerBadge;
+
+// ---------- Esmigol: mascota guía ----------
+// Personaje que aparece en una esquina con un mensaje corto, para
+// acompañar/orientar al estudiante en cualquier pantalla (no solo en el
+// countdown). Las imágenes viven en la raíz del proyecto, igual que
+// apple-touch-icon.png / logo-res-cogitas.png (sin carpeta assets/ propia
+// todavía) — versionadas con ?v=1.0.0 para poder invalidar caché al subir
+// una expresión nueva sin tocar el número de versión del script en index.html.
+const ESMIGOL_ASSET_VERSION = "1.0.0";
+const ESMIGOL_EXPRESSIONS = {
+  default:         "esmigol-cuerpo-completo.webp",
+  "pocotiempo-1":  "esmigol-pocotiempo-1.webp",
+  "pensativo-1":   "esmigol-pensativo-1.webp",
+  "sorprendido-1": "esmigol-sorprendido-1.webp",
+  "feliz-1":       "esmigol-feliz-1.webp",
+  "dormido-1":     "esmigol-dormido-1.webp",
+  "enojado-1":     "esmigol-enojado-1.webp",
+  "confundido-1":  "esmigol-confundido-1.webp",
+};
+// Lista en el mismo orden en que están guardados los rostros — se usa para
+// construir los selectores del editor (17-richtext.js sigue el mismo patrón
+// de exponer listas + mapa junto al helper que las resuelve).
+const ESMIGOL_EXPRESSION_LIST = [
+  { id: "pocotiempo-1",  emoji: "⏰", label: "Poco tiempo" },
+  { id: "pensativo-1",   emoji: "🤔", label: "Pensativo" },
+  { id: "sorprendido-1", emoji: "😮", label: "Sorprendido" },
+  { id: "feliz-1",       emoji: "😄", label: "Feliz" },
+  { id: "dormido-1",     emoji: "😴", label: "Dormido" },
+  { id: "enojado-1",     emoji: "😠", label: "Enojado" },
+  { id: "confundido-1",  emoji: "😵", label: "Confundido" },
+];
+function esmigolImageSrc(expression = "default") {
+  const file = ESMIGOL_EXPRESSIONS[expression] || ESMIGOL_EXPRESSIONS.default;
+  return `${file}?v=${ESMIGOL_ASSET_VERSION}`;
+}
+
+// ---------- Dónde aparece en pantalla ----------
+const ESMIGOL_POSITIONS = [
+  { id: "bottom-right", label: "Abajo · derecha",  icon: "◢" },
+  { id: "bottom-left",  label: "Abajo · izquierda", icon: "◣" },
+  { id: "top-right",    label: "Arriba · derecha",  icon: "◥" },
+  { id: "top-left",     label: "Arriba · izquierda", icon: "◤" },
+];
+function esmigolPositionStyle(position, offset = 16) {
+  const id = ESMIGOL_POSITIONS.some(p => p.id === position) ? position : "bottom-right";
+  const style = {};
+  style[id.indexOf("top") === 0 ? "top" : "bottom"] = offset;
+  style[id.indexOf("left") >= 0 ? "left" : "right"] = offset;
+  return style;
+}
+
+// ---------- Tipografía y color del texto (editable en el editor) ----------
+const ESMIGOL_FONT_OPTIONS = [
+  { id: "display", label: "Poppins (por defecto)", value: "var(--font-display, 'Poppins', 'Segoe UI', system-ui, sans-serif)" },
+  { id: "fredoka", label: "Fredoka (redondeada)",   value: "'Fredoka', system-ui, sans-serif" },
+  { id: "system",  label: "Del sistema",            value: "system-ui, sans-serif" },
+  { id: "mono",    label: "Monoespaciada",          value: "ui-monospace, Consolas, monospace" },
+];
+const ESMIGOL_TEXT_COLORS = ["#1f1300", "#7c3aed", "#dc2626", "#059669", "#d97706", "#0891b2"];
+const ESMIGOL_TEXT_ALIGN_OPTIONS = [
+  { id: "left",   label: "Izquierda" },
+  { id: "center", label: "Centrado" },
+];
+
+// ---------- Los tres grupos de frases que se alternan ----------
+// Cada frase trae un rostro por defecto (editable frase por frase en el
+// editor); "expression" debe ser uno de los ids de ESMIGOL_EXPRESSION_LIST.
+const ESMIGOL_TRIGGER_GROUP_ORDER = ["tiempo", "motivacion", "recuerdo"];
+const ESMIGOL_TRIGGER_GROUPS_DEFAULT = {
+  tiempo: {
+    label: "⏰ Tiempo",
+    phrases: [
+      { id: "tiempo-1", text: "Corre que te queda poco ¡TIEMPO!",                         expression: "pocotiempo-1" },
+      { id: "tiempo-2", text: "¡Ey!, más rápido que se agota el tiempo",                   expression: "pocotiempo-1" },
+      { id: "tiempo-3", text: "¡Bu!, te has demorado mucho…",                              expression: "sorprendido-1" },
+      { id: "tiempo-4", text: "¿Hasta qué hora? Responde ya…",                             expression: "enojado-1" },
+      { id: "tiempo-5", text: "Un caracol es mil veces más rápido, ironía, ¿Entiendes?",   expression: "confundido-1" },
+      { id: "tiempo-6", text: "Ey, me dormí al ver que no avanzas…",                       expression: "dormido-1" },
+      { id: "tiempo-7", text: "Tardas demasiado",                                          expression: "enojado-1" },
+    ],
+  },
+  motivacion: {
+    label: "💪 Motivación",
+    phrases: [
+      { id: "motivacion-1", text: "Animo… Tú puedes.",                                          expression: "feliz-1" },
+      { id: "motivacion-2", text: "Mmmm… Otros se han parado de peores escenarios",              expression: "pensativo-1" },
+      { id: "motivacion-3", text: "¿Rendirse? Eso no es una opción…",                            expression: "feliz-1" },
+      { id: "motivacion-4", text: "¿Ya entiendes por qué es importante estudiar? Estudia…",      expression: "pensativo-1" },
+      { id: "motivacion-5", text: "¡Ey! no es momento para lamentarse",                          expression: "feliz-1" },
+    ],
+  },
+  recuerdo: {
+    label: "🧠 Recuerdo",
+    phrases: [
+      { id: "recuerdo-1", text: "Anota esa pregunta",                                    expression: "pensativo-1" },
+      { id: "recuerdo-2", text: "Recuerda…Leer bien importa",                             expression: "pensativo-1" },
+      { id: "recuerdo-3", text: "Preguntar no te hace menos… Pregunta",                   expression: "feliz-1" },
+      { id: "recuerdo-4", text: "Un paso a la vez: verifica antes de enviar",              expression: "pensativo-1" },
+      { id: "recuerdo-5", text: "Memorizar es importante y necesario para comprender",     expression: "pensativo-1" },
+    ],
+  },
+};
+// Configuración completa por defecto de "activadores metacognitivos" — lo
+// que trae un quiz que nunca abrió el editor de Esmigol (quiz.metaTriggers).
+const ESMIGOL_TRIGGERS_DEFAULT = {
+  enabled: true,
+  position: "bottom-right",
+  imageSize: 120,
+  fontFamily: ESMIGOL_FONT_OPTIONS[0].value,
+  fontColor: ESMIGOL_TEXT_COLORS[0],
+  fontSize: 14,
+  textAlign: "left",
+  holdSeconds: 4,
+  groups: ESMIGOL_TRIGGER_GROUPS_DEFAULT,
+};
+function esmigolCloneDefaultTriggers() {
+  return JSON.parse(JSON.stringify(ESMIGOL_TRIGGERS_DEFAULT));
+}
+// Elige una frase al azar de un grupo, evitando repetir la anterior si hay
+// más de una para elegir. Uso futuro (disparo real en cada modo) y del
+// botón "Probar" del editor.
+function esmigolPickPhrase(groups, groupId, avoidId) {
+  const list = (groups && groups[groupId] && groups[groupId].phrases) || [];
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+  let pick;
+  do { pick = list[Math.floor(Math.random() * list.length)]; } while (pick.id === avoidId);
+  return pick;
+}
+
+// Máquina de estados simple: "enter" (desliza+fade) → "type" (letra por
+// letra) → "hold" (quieto, leyendo) → "exit" (se retira) → desmontado.
+const ESMIGOL_TYPE_MS = 28;   // por letra
+const ESMIGOL_HOLD_MS = 2200; // pausa tras terminar de escribir (por defecto fuera de los activadores)
+const ESMIGOL_EXIT_MS = 380;  // duración de la salida (debe calzar con qs-esmigol-exit)
+
+// Props añadidas para los activadores metacognitivos (todas opcionales,
+// compatibles con el ejemplo de uso mínimo de la ronda anterior):
+//   position       uno de ESMIGOL_POSITIONS (default "bottom-right")
+//   placement      "side" (burbuja al lado, comportamiento original) |
+//                  "above" (burbuja ENCIMA de Esmigol, con colita — lo que
+//                  piden los activadores)
+//   imageSize      alto en px de la imagen (default 120)
+//   fontFamily/fontColor/fontSize   tipografía de la burbuja
+//   holdMs         cuánto se queda visible ya escrito (default 2200; los
+//                  activadores pasan holdSeconds*1000, 4000 por defecto)
+//   dismissOnClick si true (default), un clic en cualquier parte del
+//                  personaje lo retira de inmediato — "o al darle clic"
+//   contained      true para incrustarlo dentro de un contenedor con
+//                  position:relative (la mini-simulación de celular del
+//                  editor) en vez de position:fixed sobre toda la pantalla
+function Esmigol({
+  texto = "", visible = true, onCerrar, expression = "default",
+  position = "bottom-right", placement = "side",
+  imageSize = 120, fontFamily, fontColor, fontSize = 14, textAlign = "left",
+  holdMs = ESMIGOL_HOLD_MS, dismissOnClick = true, contained = false,
+}) {
+  const [phase, setPhase] = useStateMeta(visible ? "enter" : "idle");
+  const [shown, setShown] = useStateMeta("");
+  const reducedMotion = useMemoMeta(() => {
+    try { return window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches; }
+    catch (e) { return false; }
+  }, []);
+
+  // Aparecer/ocultar según la prop `visible`.
+  useEffectMeta(() => {
+    if (visible) { setPhase("enter"); setShown(reducedMotion ? texto : ""); }
+    else if (phase !== "idle") setPhase("exit");
+  }, [visible]);
+
+  // "enter" es solo la animación de entrada; al terminar pasa a "type".
+  useEffectMeta(() => {
+    if (phase !== "enter") return;
+    const id = setTimeout(() => setPhase("type"), reducedMotion ? 0 : 260);
+    return () => clearTimeout(id);
+  }, [phase]);
+
+  // Tecleo letra por letra (se salta si hay reduced-motion: el texto ya
+  // se puso completo al entrar).
+  useEffectMeta(() => {
+    if (phase !== "type" || reducedMotion) { if (phase === "type") setPhase("hold"); return; }
+    if (shown.length >= texto.length) { setPhase("hold"); return; }
+    const id = setTimeout(() => setShown(texto.slice(0, shown.length + 1)), ESMIGOL_TYPE_MS);
+    return () => clearTimeout(id);
+  }, [phase, shown, texto, reducedMotion]);
+
+  // Tras un momento leyendo, se retira sola (salvo que ya la hayan ocultado
+  // o que hagan clic antes — ver `skip`).
+  useEffectMeta(() => {
+    if (phase !== "hold") return;
+    const id = setTimeout(() => setPhase("exit"), holdMs);
+    return () => clearTimeout(id);
+  }, [phase, holdMs]);
+
+  // "exit" desmonta al terminar la animación y avisa con onCerrar.
+  useEffectMeta(() => {
+    if (phase !== "exit") return;
+    const id = setTimeout(() => { setPhase("idle"); onCerrar && onCerrar(); }, reducedMotion ? 0 : ESMIGOL_EXIT_MS);
+    return () => clearTimeout(id);
+  }, [phase]);
+
+  if (phase === "idle") return null;
+  const exiting = phase === "exit";
+  // Clic en el personaje: se retira ya (desde cualquier fase activa), sin
+  // esperar los 4 segundos — así el useEffect de "hold" de arriba queda
+  // cancelado automáticamente al cambiar `phase`.
+  const skip = () => { if (!dismissOnClick || phase === "exit") return; setPhase("exit"); };
+
+  const above = placement === "above";
+  const isLeft = String(position).indexOf("left") >= 0;
+  const posStyle = esmigolPositionStyle(position, contained ? 8 : 16);
+  // De qué lado entra/sale: desde el borde de pantalla más cercano a la
+  // esquina elegida, para que nunca "aparezca" cruzando toda la pantalla.
+  const dx = isLeft ? -40 : 40;
+  const font = fontFamily || ESMIGOL_FONT_OPTIONS[0].value;
+  const color = fontColor || ESMIGOL_TEXT_COLORS[0];
+
+  return (
+    <div onClick={skip} style={{
+      position: contained ? "absolute" : "fixed", ...posStyle, zIndex: 850,
+      pointerEvents: dismissOnClick ? "auto" : "none",
+      cursor: dismissOnClick ? "pointer" : "default",
+    }}>
+      <style>{`
+        @keyframes qs-esmigol-enter { from { transform: translateX(var(--esmigol-dx, 40px)); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+        @keyframes qs-esmigol-exit { from { transform: translateX(0); opacity: 1; } to { transform: translateX(var(--esmigol-dx, 40px)); opacity: 0; } }
+        @keyframes qs-esmigol-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+        @keyframes qs-esmigol-caret { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
+        @media (max-width: 480px) {
+          /* Móvil: SIEMPRE burbuja encima de la imagen, sin importar el
+             modo elegido en el editor — el DOM va [burbuja, (colita), imagen],
+             así que "column" (no "column-reverse") deja la burbuja arriba. */
+          .qs-esmigol-wrap { flex-direction: column !important; align-items: center !important; gap: 6px !important; }
+          .qs-esmigol-img { height: 92px !important; }
+        }
+      `}</style>
+
+      <div className="qs-esmigol-wrap" style={{
+        "--esmigol-dx": dx + "px",
+        display: "flex",
+        flexDirection: above ? "column" : (isLeft ? "row-reverse" : "row"),
+        alignItems: above ? "center" : "flex-end",
+        gap: above ? 6 : 10,
+        animation: reducedMotion
+          ? `qs-esmigol-${exiting ? "exit" : "enter"} 0.01s linear forwards`
+          : `qs-esmigol-${exiting ? "exit" : "enter"} ${exiting ? ESMIGOL_EXIT_MS : 320}ms ease both`,
+      }}>
+        <div className="qs-esmigol-bubble" role="status" aria-live="polite" style={{
+          maxWidth: 240, background: "#fff", color,
+          borderRadius: 16, padding: "10px 14px", fontSize, fontWeight: 600, lineHeight: 1.4,
+          boxShadow: "0 8px 22px rgba(0,0,0,0.25)",
+          fontFamily: font, textAlign: textAlign === "center" ? "center" : "left",
+        }}>
+          {(reducedMotion ? texto : shown) || " "}
+          {!reducedMotion && phase === "type" && (
+            <span aria-hidden="true" style={{ animation: "qs-esmigol-caret 0.9s step-end infinite" }}>▍</span>
+          )}
+        </div>
+
+        {/* Colita del globo, solo cuando la burbuja va ENCIMA del personaje */}
+        {above && (
+          <div aria-hidden="true" style={{
+            width: 0, height: 0, margin: "-4px 0 -2px",
+            borderLeft: "7px solid transparent", borderRight: "7px solid transparent",
+            borderTop: "8px solid #fff",
+          }} />
+        )}
+
+        <img
+          className="qs-esmigol-img"
+          src={esmigolImageSrc(expression)}
+          alt="Esmigol, el perrito guía de Desafíate, saludando"
+          style={{
+            height: imageSize, width: "auto", display: "block",
+            filter: "drop-shadow(0 10px 14px rgba(0,0,0,0.35))",
+            animation: reducedMotion ? "none" : "qs-esmigol-bob 2.4s ease-in-out infinite",
+          }}
+        />
+      </div>
+    </div>
+  );
+}
+window.Esmigol = Esmigol;
+
+// ---------- Selector visual de rostro (con miniaturas REALES) ----------
+// Se usa en el editor de activadores: en vez de un <select> de solo texto,
+// muestra la imagen de miniatura ya elegida y, al abrir, una cuadrícula con
+// las 7 miniaturas reales — así se ve de una vez qué imagen acompaña a cada
+// frase, no solo su nombre. Con portal a document.body (mismo patrón que
+// OMRStudentPicker en 13c-omr-results.js) para que el menú nunca quede
+// recortado por el scroll del modal que lo contiene.
+function EsmigolExpressionPicker({ value, onChange, size = 30 }) {
+  const btnRef = useRefMeta(null);
+  const [open, setOpen] = useStateMeta(false);
+  const [rect, setRect] = useStateMeta(null);
+  const list = ESMIGOL_EXPRESSION_LIST;
+  const current = list.find(e => e.id === value) || list[0];
+
+  const openMenu = () => {
+    if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
+    setOpen(true);
+  };
+  const pick = (id) => { onChange(id); setOpen(false); };
+
+  return (
+    <>
+      <button ref={btnRef} type="button" onClick={() => (open ? setOpen(false) : openMenu())}
+        title={current.label} style={{
+          display: "flex", alignItems: "center", gap: 6, padding: "4px 8px 4px 4px",
+          borderRadius: 10, border: "1px solid var(--ink-200)", background: "var(--ink-50)", cursor: "pointer",
+        }}>
+        <img src={esmigolImageSrc(current.id)} alt={current.label}
+          style={{ width: size, height: size, objectFit: "contain" }} />
+        <span style={{ fontSize: 11, fontWeight: 700, color: "var(--ink-600)" }}>▾</span>
+      </button>
+
+      {open && window.ReactDOM && ReactDOM.createPortal(
+        <>
+          {/* Capa invisible: cerrar al hacer clic afuera */}
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
+          <div className="qs-card" style={{
+            position: "fixed",
+            top: rect ? Math.min(rect.bottom + 4, window.innerHeight - 190) : 0,
+            left: rect ? Math.min(rect.left, window.innerWidth - 200) : 0,
+            width: 190, zIndex: 9999, padding: 10,
+            display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6,
+          }}>
+            {list.map(ex => (
+              <button key={ex.id} type="button" onClick={() => pick(ex.id)} title={ex.label} style={{
+                display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
+                padding: 4, borderRadius: 10, cursor: "pointer",
+                background: ex.id === value ? "var(--violet-100)" : "transparent",
+                border: "2px solid " + (ex.id === value ? "var(--violet-500)" : "transparent"),
+              }}>
+                <img src={esmigolImageSrc(ex.id)} alt={ex.label} style={{ width: 40, height: 40, objectFit: "contain" }} />
+                <span style={{ fontSize: 9, fontWeight: 700, color: "var(--ink-600)", textAlign: "center", lineHeight: 1.15 }}>{ex.label}</span>
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body
+      )}
+    </>
+  );
+}
+window.EsmigolExpressionPicker = EsmigolExpressionPicker;
+
+window.ESMIGOL_EXPRESSIONS = ESMIGOL_EXPRESSIONS;
+window.ESMIGOL_EXPRESSION_LIST = ESMIGOL_EXPRESSION_LIST;
+window.ESMIGOL_POSITIONS = ESMIGOL_POSITIONS;
+window.ESMIGOL_FONT_OPTIONS = ESMIGOL_FONT_OPTIONS;
+window.ESMIGOL_TEXT_COLORS = ESMIGOL_TEXT_COLORS;
+window.ESMIGOL_TEXT_ALIGN_OPTIONS = ESMIGOL_TEXT_ALIGN_OPTIONS;
+window.ESMIGOL_TRIGGER_GROUP_ORDER = ESMIGOL_TRIGGER_GROUP_ORDER;
+window.ESMIGOL_TRIGGERS_DEFAULT = ESMIGOL_TRIGGERS_DEFAULT;
+window.esmigolCloneDefaultTriggers = esmigolCloneDefaultTriggers;
+window.esmigolPickPhrase = esmigolPickPhrase;
+window.esmigolImageSrc = esmigolImageSrc;
+
+// ============================================================
+// MOTOR DE REGLAS DE APARICIÓN (transversal a todos los modos)
+// ------------------------------------------------------------
+// Las tres reglas base viven AQUÍ una sola vez (antes estaban copiadas
+// dentro del Taller); cada modo solo aporta sus propias "señales"
+// (pregunta actual, cuándo arrancó, cómo calcular si la nota va muy baja)
+// y el motor decide cuándo mostrar a Esmigol.
+//
+//   Regla 1 "tiempo":      lleva más de ~1:15 sin cambiar de pregunta.
+//   Regla 2 "motivacion":  cada 5 minutos desde que arrancó.
+//   Regla 3 "recuerdo":    nota muy baja (el modo decide cómo se calcula;
+//                          si el modo no pasa `lowGrade`, esta regla se
+//                          omite — así Encuesta, por ejemplo, no la usa).
+//
+// AGREGAR UNA REGLA NUEVA — dos formas, sin tocar este archivo:
+//   1) Solo para un modo: pasarla en `rules` al llamar useEsmigolTriggers.
+//   2) Para TODOS los modos a la vez, desde cualquier archivo (incluso
+//      uno nuevo que se cargue después): window.esmigolRegisterRule({...}).
+// Forma de una regla:
+//   {
+//     id: "identificador-único",
+//     group: "tiempo" | "motivacion" | "recuerdo",  // qué frase alterna
+//     once: true,        // (opcional, default true) solo se dispara una vez
+//     cooldownMs: 0,      // (opcional) o en vez de "once", espaciarla
+//     modes: ["quiz","survey","workshop","lectio"], // (opcional) limitar a
+//                          // ciertos modos; si se omite, aplica a todos
+//     test(ctx) { return true/false; },
+//       // ctx = { mode, live, now, startedAt, questionId,
+//       //         elapsedOnQuestionMs, elapsedTotalMs }
+//   }
+// Ejemplo real (pégalo en cualquier archivo cargado después de 14-meta.js):
+//   window.esmigolRegisterRule({
+//     id: "diez-minutos-sin-parar", group: "motivacion", cooldownMs: 600000,
+//     test: (ctx) => ctx.elapsedTotalMs > 0 && ctx.elapsedTotalMs % 600000 < 5000,
+//   });
+const ESMIGOL_SLOW_MS = 75000;             // "un minuto o 1:30" → punto medio
+const ESMIGOL_MOTIVATE_MS = 5 * 60 * 1000; // "cada cinco minutos"
+const ESMIGOL_LOW_GRADE_RATIO = 0.4;       // "nota muy baja" → menos del 40%
+const ESMIGOL_LOW_GRADE_MIN = 2;           // con al menos 2 respuestas calificables
+
+const ESMIGOL_CUSTOM_RULES = [];
+// Registro público de reglas nuevas — ver el bloque de comentarios de
+// arriba para la forma exacta. Se puede llamar desde cualquier archivo,
+// en cualquier momento (incluso antes de que exista ningún quiz en pantalla).
+function esmigolRegisterRule(rule) {
+  if (!rule || !rule.id || typeof rule.test !== "function") {
+    console.error("Regla de Esmigol inválida (necesita id y test):", rule);
+    return;
+  }
+  const i = ESMIGOL_CUSTOM_RULES.findIndex(r => r.id === rule.id);
+  if (i >= 0) ESMIGOL_CUSTOM_RULES[i] = rule; else ESMIGOL_CUSTOM_RULES.push(rule);
+}
+window.esmigolRegisterRule = esmigolRegisterRule;
+window.ESMIGOL_CUSTOM_RULES = ESMIGOL_CUSTOM_RULES;
+
+// Hook principal. Cada modo lo llama con sus propias señales y solo
+// necesita renderizar `.node` en algún punto de su árbol.
+//   mode         "quiz" | "survey" | "workshop" | "lectio" (= quiz.mode)
+//   cfg          quiz.metaTriggers (o el objeto por defecto si no existe)
+//   active       ¿debe vigilar ahora mismo? (false en pantallas de espera,
+//                resultados, lobby, etc. — así no dispara fuera de lugar)
+//   questionId   cambia → reinicia el reloj de la regla 1
+//   startedAt    marca de tiempo (ms) en que arrancó la actividad
+//   lowGrade     () => boolean — el modo decide cómo calcularlo; si se
+//                omite, la regla 3 queda desactivada para ese modo
+//   rules        reglas EXTRA propias de este modo (ver comentario arriba)
+//   live         true si es una sesión de sala en vivo (informativo, va en ctx)
+function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade, rules, live = false }) {
+  const enabled = !!cfg && cfg.enabled !== false;
+  const [phrase, setPhrase] = useStateMeta(null);
+  const lastPhraseIdRef = useRefMeta(null);
+  const questionEnteredAtRef = useRefMeta(Date.now());
+  const slowNudgedRef = useRefMeta(new Set());
+  const lastMotivateAtRef = useRefMeta(null);
+  const lowGradeFiredRef = useRefMeta(false);
+  const firedOnceRef = useRefMeta({});     // por id de regla extra → ya disparó ("once")
+  const lastFiredAtRef = useRefMeta({});   // por id de regla extra → último disparo (cooldownMs)
+  // Las funciones/arreglos que llegan por props suelen ser literales nuevos
+  // en cada render (una arrow function, un array inline); se guardan en
+  // refs para que el intervalo de abajo no tenga que recrearse a cada rato
+  // y siempre lea la versión más reciente.
+  const lowGradeRef = useRefMeta(lowGrade); lowGradeRef.current = lowGrade;
+  const rulesRef = useRefMeta(rules); rulesRef.current = rules;
+
+  useEffectMeta(() => { questionEnteredAtRef.current = Date.now(); }, [questionId]);
+
+  const fire = (groupId) => {
+    if (!enabled || !cfg.groups || !window.esmigolPickPhrase) return false;
+    const p = window.esmigolPickPhrase(cfg.groups, groupId, lastPhraseIdRef.current);
+    if (!p) return false;
+    lastPhraseIdRef.current = p.id;
+    setPhrase(p);
+    return true;
+  };
+
+  useEffectMeta(() => {
+    if (!active || !enabled) return;
+    const tick = () => {
+      if (phrase) return; // ya hay un mensaje en pantalla: no encimar otro
+      const now = Date.now();
+      const elapsedOnQuestionMs = now - questionEnteredAtRef.current;
+      const elapsedTotalMs = startedAt ? now - startedAt : 0;
+
+      // Regla 1: tarda mucho sin cambiar de pregunta/paso.
+      if (questionId != null && !slowNudgedRef.current.has(questionId) && elapsedOnQuestionMs >= ESMIGOL_SLOW_MS) {
+        slowNudgedRef.current.add(questionId);
+        if (fire("tiempo")) return;
+      }
+
+      // Regla 3: nota muy baja (si el modo la ofrece).
+      if (!lowGradeFiredRef.current && typeof lowGradeRef.current === "function") {
+        let isLow = false;
+        try { isLow = !!lowGradeRef.current(); } catch (e) { isLow = false; }
+        if (isLow) {
+          lowGradeFiredRef.current = true;
+          if (fire("recuerdo")) return;
+        }
+      }
+
+      // Reglas extra: las propias del modo + las registradas globalmente
+      // (filtradas por `modes`, si las traen).
+      const ctx = { mode, live, now, startedAt, questionId, elapsedOnQuestionMs, elapsedTotalMs };
+      const extra = [...(rulesRef.current || []), ...ESMIGOL_CUSTOM_RULES]
+        .filter(r => !r.modes || r.modes.includes(mode));
+      for (const r of extra) {
+        const once = r.once !== false; // por defecto true
+        if (once && firedOnceRef.current[r.id]) continue;
+        if (r.cooldownMs && lastFiredAtRef.current[r.id] && (now - lastFiredAtRef.current[r.id]) < r.cooldownMs) continue;
+        let hit = false;
+        try { hit = !!r.test(ctx); } catch (e) { console.error("Error en regla de Esmigol '" + r.id + "':", e); }
+        if (!hit) continue;
+        if (once) firedOnceRef.current[r.id] = true;
+        lastFiredAtRef.current[r.id] = now;
+        if (fire(r.group || "recuerdo")) return;
+      }
+
+      // Regla 2: motivar cada cinco minutos desde que arrancó.
+      const base = lastMotivateAtRef.current || startedAt || now;
+      if (startedAt && (now - base) >= ESMIGOL_MOTIVATE_MS) {
+        lastMotivateAtRef.current = now;
+        fire("motivacion");
+      }
+    };
+    const id = setInterval(tick, 5000);
+    return () => clearInterval(id);
+  }, [active, enabled, cfg, mode, live, questionId, startedAt, phrase]);
+
+  const dismiss = () => setPhrase(null);
+  const node = (phrase && enabled && window.Esmigol) ? (
+    <Esmigol
+      texto={phrase.text}
+      expression={phrase.expression}
+      position={cfg?.position || "bottom-right"}
+      placement="above"
+      imageSize={cfg?.imageSize || 120}
+      fontFamily={cfg?.fontFamily}
+      fontColor={cfg?.fontColor}
+      fontSize={cfg?.fontSize || 14}
+      textAlign={cfg?.textAlign || "left"}
+      holdMs={(cfg?.holdSeconds || 4) * 1000}
+      onCerrar={dismiss}
+    />
+  ) : null;
+
+  return { phrase, dismiss, node };
+}
+window.useEsmigolTriggers = useEsmigolTriggers;
+window.ESMIGOL_SLOW_MS = ESMIGOL_SLOW_MS;
+window.ESMIGOL_MOTIVATE_MS = ESMIGOL_MOTIVATE_MS;
+window.ESMIGOL_LOW_GRADE_RATIO = ESMIGOL_LOW_GRADE_RATIO;
+window.ESMIGOL_LOW_GRADE_MIN = ESMIGOL_LOW_GRADE_MIN;
+
+// Config efectiva de un quiz: lo que configuró el docente, o los valores
+// por defecto si nunca abrió el editor de Esmigol. Cada modo debería usar
+// esto en vez de leer quiz.metaTriggers directamente.
+function esmigolConfigFor(quiz) {
+  return (quiz && quiz.metaTriggers) || ESMIGOL_TRIGGERS_DEFAULT;
+}
+window.esmigolConfigFor = esmigolConfigFor;
