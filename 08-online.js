@@ -6,7 +6,7 @@
 //   - StudentExam: pantalla del estudiante (sin login)
 //   - OnlineResultsPanel: panel del profesor para ver respuestas
 // ============================================================
-const { useState: useStateO, useEffect: useEffectO } = React;
+const { useState: useStateO, useEffect: useEffectO, useRef: useRefO } = React;
 
 // ---------- Helpers ----------
 
@@ -426,6 +426,12 @@ function StudentExam({ examCode }) {
   const [questionsOrder, setQuestionsOrder] = useStateO([]); // preguntas (posiblemente mezcladas)
   const [currentIdx, setCurrentIdx] = useStateO(0);
   const [answers, setAnswers] = useStateO({});
+  // El cronómetro de abajo arma su intervalo UNA vez por pregunta (no se
+  // reinicia cada vez que se elige una opción); esta ref le deja leer
+  // siempre la respuesta más reciente al momento exacto en que se acaba
+  // el tiempo, en vez de la que había cuando arrancó la pregunta.
+  const answersRef = useRefO(answers);
+  answersRef.current = answers;
   const [startedAt, setStartedAt] = useStateO(null);
   const [result, setResult] = useStateO(null);
   // Cronómetro por pregunta: cuándo arrancó la pregunta actual y cuánto queda
@@ -528,6 +534,14 @@ function StudentExam({ examCode }) {
       setSecondsLeft(prev => (prev != null && Math.ceil(left) === Math.ceil(prev) ? prev : left));
       if (left <= 0) {
         clearInterval(interval);
+        // Esmigol (Quiz, regla nueva): no contestó a tiempo → que le apure.
+        if (quiz?.mode === "quiz") {
+          const ua = answersRef.current[q.id];
+          const wasAnswered = q.type === "checks" || q.type === "order"
+            ? Array.isArray(ua) && ua.length > 0
+            : ua !== undefined && ua !== "";
+          if (!wasAnswered) esmigolRef.current.fireNow("tiempo");
+        }
         // Se acabó el tiempo: avanzar (la respuesta queda como está, sin marcar)
         if (currentIdx < questionsOrder.length - 1) {
           setCurrentIdx(currentIdx + 1);
@@ -547,8 +561,13 @@ function StudentExam({ examCode }) {
   const submitPayload = async (submission) => {
     await window.QS.db.collection("results").add(submission);
     try { localStorage.removeItem(pendingSubmissionKey()); } catch (e) { /* almacenamiento no disponible: no es crítico */ }
-    setResult(gradeSubmission(quiz, submission.answers));
+    const grade = gradeSubmission(quiz, submission.answers);
+    setResult(grade);
     setPhase("done");
+    // Esmigol (Quiz, regla nueva): al terminar, felicita si superó la mitad
+    // del puntaje, o anima para la próxima si no. `percent` ya es el
+    // porcentaje de puntos ganados sobre lo respondido.
+    if (quiz?.mode === "quiz") esmigol.fireNow(grade.percent > 50 ? "logro" : "motivacion");
   };
 
   const handleSubmit = async () => {
@@ -641,6 +660,39 @@ function StudentExam({ examCode }) {
   // la pantalla usa quiz.mode real (la pista nunca decide nada más).
   const isSurvey = quiz?.mode === "survey";
   const activityNoun = studentActivityNoun(quiz?.mode);
+
+  // ---------- Esmigol: reglas de aparición (motor en 14-meta.js) ----------
+  // OJO regla de los hooks: esto se llama SIEMPRE, antes de cualquiera de
+  // los "if (phase === ...) return" de abajo — nunca metida adentro de una
+  // de esas ramas, o React cuenta un número distinto de hooks según la
+  // fase y revienta ("Rendered fewer hooks than expected").
+  const esmigolQ = questionsOrder[currentIdx];
+  // Regla nueva, solo Quiz: "falla más de dos" — se recalcula junto con la
+  // de nota muy baja (misma llamada a gradeSubmission, sin costo extra).
+  const isQuizMode = quiz?.mode === "quiz";
+  const esmigol = window.useEsmigolTriggers ? window.useEsmigolTriggers({
+    mode: quiz?.mode, cfg: window.esmigolConfigFor ? window.esmigolConfigFor(quiz) : quiz?.metaTriggers,
+    active: phase === "exam",
+    questionId: esmigolQ?.id,
+    startedAt,
+    lowGrade: isSurvey ? undefined : () => {
+      const g = gradeSubmission(quiz, answers);
+      const min = window.ESMIGOL_LOW_GRADE_MIN || 2, ratio = window.ESMIGOL_LOW_GRADE_RATIO || 0.4;
+      return g.answered >= min && (g.correct / g.answered) < ratio;
+    },
+    rules: !isQuizMode ? undefined : [{
+      id: "quiz-falla-mas-de-dos", group: "motivacion", once: true,
+      test: () => {
+        const g = gradeSubmission(quiz, answers);
+        return (g.answered - g.correct) > 2;
+      },
+    }],
+  }) : { node: null, fireNow: () => {} };
+  // Misma razón que answersRef: el temporizador de más abajo arma su
+  // efecto una sola vez por pregunta, así que llama a fireNow a través de
+  // esta ref para no quedarse con una versión vieja de `esmigol`.
+  const esmigolRef = useRefO(esmigol);
+  esmigolRef.current = esmigol;
 
   if (phase === "workshop") {
     return <window.WorkshopOfflineFlow quiz={quiz} onExit={() => window.location.href = baseUrlNoQuery()} />;
@@ -870,6 +922,7 @@ function StudentExam({ examCode }) {
             Tu profesor podrá ver el detalle de tus respuestas.
           </p>
         </div>
+        {esmigol.node}
       </div>
     );
   }
@@ -885,20 +938,6 @@ function StudentExam({ examCode }) {
     : (q.type === "checks" || q.type === "order"
         ? Array.isArray(userAnswer) && userAnswer.length > 0
         : userAnswer !== undefined && userAnswer !== "");
-
-  // Esmigol (14-meta.js): reglas de aparición. En Encuesta no hay nota, así
-  // que no se ofrece `lowGrade` — el motor omite esa regla para este modo.
-  const esmigol = window.useEsmigolTriggers ? window.useEsmigolTriggers({
-    mode: quiz?.mode, cfg: window.esmigolConfigFor ? window.esmigolConfigFor(quiz) : quiz?.metaTriggers,
-    active: true,
-    questionId: q.id,
-    startedAt,
-    lowGrade: isSurvey ? undefined : () => {
-      const g = gradeSubmission(quiz, answers);
-      const min = window.ESMIGOL_LOW_GRADE_MIN || 2, ratio = window.ESMIGOL_LOW_GRADE_RATIO || 0.4;
-      return g.answered >= min && (g.correct / g.answered) < ratio;
-    },
-  }) : { node: null };
 
   return (
     <div style={{

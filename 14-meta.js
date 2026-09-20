@@ -365,7 +365,7 @@ const ESMIGOL_TEXT_ALIGN_OPTIONS = [
 // ---------- Los tres grupos de frases que se alternan ----------
 // Cada frase trae un rostro por defecto (editable frase por frase en el
 // editor); "expression" debe ser uno de los ids de ESMIGOL_EXPRESSION_LIST.
-const ESMIGOL_TRIGGER_GROUP_ORDER = ["tiempo", "motivacion", "recuerdo"];
+const ESMIGOL_TRIGGER_GROUP_ORDER = ["tiempo", "motivacion", "recuerdo", "logro"];
 const ESMIGOL_TRIGGER_GROUPS_DEFAULT = {
   tiempo: {
     label: "⏰ Tiempo",
@@ -397,6 +397,19 @@ const ESMIGOL_TRIGGER_GROUPS_DEFAULT = {
       { id: "recuerdo-3", text: "Preguntar no te hace menos… Pregunta",                   expression: "feliz-1" },
       { id: "recuerdo-4", text: "Un paso a la vez: verifica antes de enviar",              expression: "pensativo-1" },
       { id: "recuerdo-5", text: "Memorizar es importante y necesario para comprender",     expression: "pensativo-1" },
+    ],
+  },
+  // Grupo nuevo: felicitación al terminar un quiz con más de la mitad del
+  // puntaje (regla propia de Quiz, ver 08-online.js). Separado de
+  // "motivacion" porque el tono es distinto: celebrar un logro ya hecho,
+  // no empujar a seguir intentando.
+  logro: {
+    label: "🏆 Logro",
+    phrases: [
+      { id: "logro-1", text: "¡Excelente! Te luciste en este quiz.",       expression: "feliz-1" },
+      { id: "logro-2", text: "¡Wow! Ibas que volabas.",                    expression: "feliz-1" },
+      { id: "logro-3", text: "Esa nota se ve muy bien en ti.",             expression: "feliz-1" },
+      { id: "logro-4", text: "¡Lo lograste! Esto se ve genial.",           expression: "feliz-1" },
     ],
   },
 };
@@ -531,12 +544,22 @@ function Esmigol({
              modo elegido en el editor — el DOM va [burbuja, (colita), imagen],
              así que "column" (no "column-reverse") deja la burbuja arriba. */
           .qs-esmigol-wrap { flex-direction: column !important; align-items: center !important; gap: 6px !important; }
-          .qs-esmigol-img { height: 92px !important; }
+          /* Antes esto era un 92px fijo que tapaba SIEMPRE el tamaño
+             configurado en el editor (por eso "en el celular no se agranda
+             mucho" aunque en el editor sí). Ahora respeta el tamaño
+             elegido, con un tope para que no invada una pantalla chica. */
+          .qs-esmigol-img { height: min(var(--esmigol-img-size, 120px), 140px) !important; }
         }
       `}</style>
 
       <div className="qs-esmigol-wrap" style={{
         "--esmigol-dx": dx + "px",
+        // El tamaño configurado en el editor viaja como variable CSS para
+        // que la regla de móvil (abajo) pueda usarlo con min() en vez de
+        // taparlo con un número fijo — así si el docente lo agranda, en el
+        // celular también se nota más grande (con un tope para no invadir
+        // la pantalla).
+        "--esmigol-img-size": imageSize + "px",
         display: "flex",
         flexDirection: above ? "column" : (isLeft ? "row-reverse" : "row"),
         alignItems: above ? "center" : "flex-end",
@@ -571,7 +594,7 @@ function Esmigol({
           src={esmigolImageSrc(expression)}
           alt="Esmigol, el perrito guía de Desafíate, saludando"
           style={{
-            height: imageSize, width: "auto", display: "block",
+            height: "var(--esmigol-img-size)", width: "auto", display: "block",
             filter: "drop-shadow(0 10px 14px rgba(0,0,0,0.35))",
             animation: reducedMotion ? "none" : "qs-esmigol-bob 2.4s ease-in-out infinite",
           }}
@@ -805,6 +828,10 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
   }, [active, enabled, cfg, mode, live, questionId, startedAt, phrase]);
 
   const dismiss = () => setPhrase(null);
+  // Disparo puntual, para eventos exactos (se acabó el tiempo, terminó la
+  // actividad...) en vez de esperar al siguiente tick de 5 s. Respeta el
+  // mismo "no encimar mensajes": si ya hay uno en pantalla, no hace nada.
+  const fireNow = (groupId) => { if (phrase) return false; return fire(groupId); };
   const node = (phrase && enabled && window.Esmigol) ? (
     <Esmigol
       texto={phrase.text}
@@ -821,7 +848,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
     />
   ) : null;
 
-  return { phrase, dismiss, node };
+  return { phrase, dismiss, node, fireNow };
 }
 window.useEsmigolTriggers = useEsmigolTriggers;
 window.ESMIGOL_SLOW_MS = ESMIGOL_SLOW_MS;

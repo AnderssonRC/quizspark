@@ -1845,10 +1845,10 @@ function QuestionTextEditor({ value, onChange, questionKey, onFocusField }) {
 // Guarda todo en quiz.metaTriggers; no tiene guardado propio — como
 // SettingsModal, muta el quiz en memoria y la persistencia real ocurre con
 // el botón "💾 Guardar" del editor.
-const ESMIGOL_GROUP_DEFAULT_EXPRESSION = { tiempo: "pocotiempo-1", motivacion: "feliz-1", recuerdo: "pensativo-1" };
+const ESMIGOL_GROUP_DEFAULT_EXPRESSION = { tiempo: "pocotiempo-1", motivacion: "feliz-1", recuerdo: "pensativo-1", logro: "feliz-1" };
 
 function MetaTriggersModal({ quiz, setQuiz, onClose }) {
-  const groupOrder = window.ESMIGOL_TRIGGER_GROUP_ORDER || ["tiempo", "motivacion", "recuerdo"];
+  const groupOrder = window.ESMIGOL_TRIGGER_GROUP_ORDER || ["tiempo", "motivacion", "recuerdo", "logro"];
   const positions = window.ESMIGOL_POSITIONS || [];
   const fonts = window.ESMIGOL_FONT_OPTIONS || [];
   const colors = window.ESMIGOL_TEXT_COLORS || [];
