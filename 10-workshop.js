@@ -616,6 +616,16 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
       const min = window.ESMIGOL_LOW_GRADE_MIN || 2, ratio = window.ESMIGOL_LOW_GRADE_RATIO || 0.4;
       return graded >= min && (correct / graded) < ratio;
     },
+    highGrade: () => {
+      let correct = 0, graded = 0;
+      questions.forEach(qq => {
+        if (qq.type === "slide" || qq.type === "text" || !isAnswered(qq)) return;
+        graded++;
+        if (checkClosedWorkshopAnswer(qq, answers[qq.id])) correct++;
+      });
+      const min = window.ESMIGOL_HIGH_GRADE_MIN || 3, ratio = window.ESMIGOL_HIGH_GRADE_RATIO || 0.8;
+      return graded >= min && (correct / graded) >= ratio;
+    },
   }) : { node: null };
 
   // Vigilar el cierre por fecha límite mientras el estudiante trabaja

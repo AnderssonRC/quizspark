@@ -429,16 +429,20 @@ const ESMIGOL_TRIGGERS_DEFAULT = {
 function esmigolCloneDefaultTriggers() {
   return JSON.parse(JSON.stringify(ESMIGOL_TRIGGERS_DEFAULT));
 }
-// Elige una frase al azar de un grupo, evitando repetir la anterior si hay
-// más de una para elegir. Uso futuro (disparo real en cada modo) y del
-// botón "Probar" del editor.
-function esmigolPickPhrase(groups, groupId, avoidId) {
+// Elige una frase al azar de un grupo, evitando las ya usadas en esta
+// sesión (para que Esmigol no repita frase mientras tenga otras sin usar
+// en ese grupo). `avoid` acepta un solo id (compatibilidad con el botón
+// "Probar" del editor) o un Set con varios ids (uso real en cada modo).
+// Si ya se usaron todas las del grupo, se reinicia el ciclo con el grupo
+// completo en vez de quedarse sin frase.
+function esmigolPickPhrase(groups, groupId, avoid) {
   const list = (groups && groups[groupId] && groups[groupId].phrases) || [];
   if (!list.length) return null;
-  if (list.length === 1) return list[0];
-  let pick;
-  do { pick = list[Math.floor(Math.random() * list.length)]; } while (pick.id === avoidId);
-  return pick;
+  const avoidSet = avoid instanceof Set ? avoid : new Set(avoid ? [avoid] : []);
+  let pool = list.filter(p => !avoidSet.has(p.id));
+  if (!pool.length) pool = list; // ya se usaron todas: reiniciar el ciclo
+  if (pool.length === 1) return pool[0];
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 // Máquina de estados simple: "enter" (desliza+fade) → "type" (letra por
@@ -529,7 +533,7 @@ function Esmigol({
   const color = fontColor || ESMIGOL_TEXT_COLORS[0];
 
   return (
-    <div onClick={skip} style={{
+    <div className="qs-esmigol-outer" onClick={skip} style={{
       position: contained ? "absolute" : "fixed", ...posStyle, zIndex: 850,
       pointerEvents: dismissOnClick ? "auto" : "none",
       cursor: dismissOnClick ? "pointer" : "default",
@@ -540,15 +544,21 @@ function Esmigol({
         @keyframes qs-esmigol-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
         @keyframes qs-esmigol-caret { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
         @media (max-width: 480px) {
+          /* Móvil: en vez de quedar pegado a una esquina (poco espacio,
+             se ve recortado), la caja completa se centra horizontalmente,
+             conservando si va arriba o abajo según lo configurado. */
+          .qs-esmigol-outer {
+            left: 50% !important; right: auto !important;
+            transform: translateX(-50%);
+          }
           /* Móvil: SIEMPRE burbuja encima de la imagen, sin importar el
              modo elegido en el editor — el DOM va [burbuja, (colita), imagen],
              así que "column" (no "column-reverse") deja la burbuja arriba. */
           .qs-esmigol-wrap { flex-direction: column !important; align-items: center !important; gap: 6px !important; }
-          /* Antes esto era un 92px fijo que tapaba SIEMPRE el tamaño
-             configurado en el editor (por eso "en el celular no se agranda
-             mucho" aunque en el editor sí). Ahora respeta el tamaño
-             elegido, con un tope para que no invada una pantalla chica. */
-          .qs-esmigol-img { height: min(var(--esmigol-img-size, 120px), 140px) !important; }
+          /* Respeta el tamaño elegido en el editor (hasta el máximo del
+             control deslizante, 200px) — antes había un tope fijo de
+             92px/140px que apenas dejaba notar el cambio. */
+          .qs-esmigol-img { height: min(var(--esmigol-img-size, 120px), 200px) !important; }
         }
       `}</style>
 
@@ -719,6 +729,8 @@ const ESMIGOL_SLOW_MS = 75000;             // "un minuto o 1:30" → punto medio
 const ESMIGOL_MOTIVATE_MS = 5 * 60 * 1000; // "cada cinco minutos"
 const ESMIGOL_LOW_GRADE_RATIO = 0.4;       // "nota muy baja" → menos del 40%
 const ESMIGOL_LOW_GRADE_MIN = 2;           // con al menos 2 respuestas calificables
+const ESMIGOL_HIGH_GRADE_RATIO = 0.8;      // "va muy bien" → 80% o más de aciertos
+const ESMIGOL_HIGH_GRADE_MIN = 3;          // con al menos 3 respuestas calificables
 
 const ESMIGOL_CUSTOM_RULES = [];
 // Registro público de reglas nuevas — ver el bloque de comentarios de
@@ -745,16 +757,23 @@ window.ESMIGOL_CUSTOM_RULES = ESMIGOL_CUSTOM_RULES;
 //   startedAt    marca de tiempo (ms) en que arrancó la actividad
 //   lowGrade     () => boolean — el modo decide cómo calcularlo; si se
 //                omite, la regla 3 queda desactivada para ese modo
+//   highGrade    () => boolean — igual que lowGrade pero para "va muy
+//                bien" (regla 4, felicita con el grupo "logro"); si se
+//                omite, esa regla queda desactivada para ese modo
 //   rules        reglas EXTRA propias de este modo (ver comentario arriba)
 //   live         true si es una sesión de sala en vivo (informativo, va en ctx)
-function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade, rules, live = false }) {
+function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade, highGrade, rules, live = false }) {
   const enabled = !!cfg && cfg.enabled !== false;
   const [phrase, setPhrase] = useStateMeta(null);
-  const lastPhraseIdRef = useRefMeta(null);
+  // Ids de TODAS las frases ya mostradas en esta sesión (no solo la
+  // anterior): así Esmigol no repite frase mientras el grupo tenga otras
+  // sin usar (ver esmigolPickPhrase).
+  const usedPhraseIdsRef = useRefMeta(new Set());
   const questionEnteredAtRef = useRefMeta(Date.now());
   const slowNudgedRef = useRefMeta(new Set());
   const lastMotivateAtRef = useRefMeta(null);
   const lowGradeFiredRef = useRefMeta(false);
+  const highGradeFiredRef = useRefMeta(false);
   const firedOnceRef = useRefMeta({});     // por id de regla extra → ya disparó ("once")
   const lastFiredAtRef = useRefMeta({});   // por id de regla extra → último disparo (cooldownMs)
   // Las funciones/arreglos que llegan por props suelen ser literales nuevos
@@ -762,6 +781,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
   // refs para que el intervalo de abajo no tenga que recrearse a cada rato
   // y siempre lea la versión más reciente.
   const lowGradeRef = useRefMeta(lowGrade); lowGradeRef.current = lowGrade;
+  const highGradeRef = useRefMeta(highGrade); highGradeRef.current = highGrade;
   const rulesRef = useRefMeta(rules); rulesRef.current = rules;
   // `cfg` llega recalculado (objeto NUEVO) en cada render — por ejemplo
   // esmigolConfigFor() arma un objeto de fusión distinto cada vez que se
@@ -774,26 +794,18 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
 
   useEffectMeta(() => { questionEnteredAtRef.current = Date.now(); }, [questionId]);
 
-  // DIAGNÓSTICO TEMPORAL: registra en la consola (F12) cada intento de
-  // mostrar a Esmigol y por qué no se mostró, si fue el caso. Se puede
-  // quitar una vez confirmado qué está pasando.
   const fire = (groupId) => {
     const c = cfgRef.current;
-    if (!c) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: sin configuración (cfg vacío)"); return false; }
-    if (c.enabled === false) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: enabled=false en quiz.metaTriggers"); return false; }
-    if (!c.groups) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: cfg.groups no existe"); return false; }
-    if (!window.esmigolPickPhrase) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: esmigolPickPhrase no cargó"); return false; }
-    const p = window.esmigolPickPhrase(c.groups, groupId, lastPhraseIdRef.current);
-    if (!p) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: el grupo '" + groupId + "' no tiene frases", c.groups[groupId]); return false; }
-    lastPhraseIdRef.current = p.id;
-    console.info("[Esmigol] ✅ mostrando frase del grupo '" + groupId + "':", p.text);
+    if (!c || c.enabled === false || !c.groups || !window.esmigolPickPhrase) return false;
+    const p = window.esmigolPickPhrase(c.groups, groupId, usedPhraseIdsRef.current);
+    if (!p) return false;
+    usedPhraseIdsRef.current.add(p.id);
     setPhrase(p);
     return true;
   };
 
   useEffectMeta(() => {
-    if (!active || !enabled) { console.info("[Esmigol] reloj NO armado (active=" + active + ", enabled=" + enabled + ")"); return; }
-    console.info("[Esmigol] reloj armado (revisa reglas cada 5s) para questionId=" + questionId);
+    if (!active || !enabled) return;
     const tick = () => {
       if (phrase) return; // ya hay un mensaje en pantalla: no encimar otro
       const now = Date.now();
@@ -813,6 +825,17 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
         if (isLow) {
           lowGradeFiredRef.current = true;
           if (fire("recuerdo")) return;
+        }
+      }
+
+      // Regla 4: va muy bien (si el modo la ofrece) — felicita a mitad de
+      // camino, no solo al terminar.
+      if (!highGradeFiredRef.current && typeof highGradeRef.current === "function") {
+        let isHigh = false;
+        try { isHigh = !!highGradeRef.current(); } catch (e) { isHigh = false; }
+        if (isHigh) {
+          highGradeFiredRef.current = true;
+          if (fire("logro")) return;
         }
       }
 
@@ -848,11 +871,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
   // Disparo puntual, para eventos exactos (se acabó el tiempo, terminó la
   // actividad...) en vez de esperar al siguiente tick de 5 s. Respeta el
   // mismo "no encimar mensajes": si ya hay uno en pantalla, no hace nada.
-  const fireNow = (groupId) => {
-    if (phrase) { console.warn("[Esmigol] fireNow('" + groupId + "') ignorado: ya hay un mensaje en pantalla", phrase); return false; }
-    console.info("[Esmigol] fireNow('" + groupId + "') llamado (enabled=" + enabled + ")");
-    return fire(groupId);
-  };
+  const fireNow = (groupId) => { if (phrase) return false; return fire(groupId); };
   const node = (phrase && enabled && window.Esmigol) ? (
     <Esmigol
       texto={phrase.text}
@@ -876,6 +895,8 @@ window.ESMIGOL_SLOW_MS = ESMIGOL_SLOW_MS;
 window.ESMIGOL_MOTIVATE_MS = ESMIGOL_MOTIVATE_MS;
 window.ESMIGOL_LOW_GRADE_RATIO = ESMIGOL_LOW_GRADE_RATIO;
 window.ESMIGOL_LOW_GRADE_MIN = ESMIGOL_LOW_GRADE_MIN;
+window.ESMIGOL_HIGH_GRADE_RATIO = ESMIGOL_HIGH_GRADE_RATIO;
+window.ESMIGOL_HIGH_GRADE_MIN = ESMIGOL_HIGH_GRADE_MIN;
 
 // Config efectiva de un quiz: lo que configuró el docente, o los valores
 // por defecto si nunca abrió el editor de Esmigol. Cada modo debería usar

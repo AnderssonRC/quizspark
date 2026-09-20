@@ -2725,10 +2725,8 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         // Esmigol (Quiz, regla nueva — también en vivo): al terminar la
         // sala, felicita si superó la mitad del puntaje, o anima para la
         // próxima si no. Mismo umbral que en el modo asincrónico (08-online.js).
-        console.error("[Esmigol] ►►► SALA TERMINADA ◄◄◄ quiz.mode=" + quiz.mode);
         if (quiz.mode === "quiz" && esmigolRef.current) {
           const percent = pointsMaxAnswered > 0 ? Math.round((gradePointsSum / pointsMaxAnswered) * 100) : 0;
-          console.info("[Esmigol] percent=" + percent);
           esmigolRef.current.fireNow(percent > 50 ? "logro" : "motivacion");
         }
       })
@@ -2916,14 +2914,15 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
       const min = window.ESMIGOL_LOW_GRADE_MIN || 2, ratio = window.ESMIGOL_LOW_GRADE_RATIO || 0.4;
       return t.graded >= min && (t.correct / t.graded) < ratio;
     },
+    highGrade: liveIsSurvey ? undefined : () => {
+      const t = liveTallyRef.current;
+      const min = window.ESMIGOL_HIGH_GRADE_MIN || 3, ratio = window.ESMIGOL_HIGH_GRADE_RATIO || 0.8;
+      return t.graded >= min && (t.correct / t.graded) >= ratio;
+    },
     // Regla nueva, solo Quiz: "falla más de dos".
     rules: (liveIsSurvey || quiz?.mode !== "quiz") ? undefined : [{
       id: "live-falla-mas-de-dos", group: "motivacion", once: true,
-      test: () => {
-        const wrong = liveTallyRef.current.graded - liveTallyRef.current.correct;
-        if (wrong > 0) console.info("[Esmigol] falladas hasta ahora (sala en vivo): " + wrong);
-        return wrong > 2;
-      },
+      test: () => (liveTallyRef.current.graded - liveTallyRef.current.correct) > 2,
     }],
   }) : { node: null, fireNow: () => {} };
   // El efecto que cuenta aciertos al terminar la sala (más arriba) y el
@@ -2941,7 +2940,6 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     if (quiz?.mode !== "quiz" || session?.status !== "showResults") return;
     if (!liveQ || liveQ.type === "slide") return;
     if (answeredAtIdx === session.currentQuestionIdx) return; // sí respondió
-    console.info("[Esmigol] no respondiste esta pregunta a tiempo (sala en vivo)");
     esmigolRef.current.fireNow("tiempo");
   }, [session?.status]);
 
