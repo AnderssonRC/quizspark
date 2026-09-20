@@ -451,6 +451,12 @@ function StudentExam({ examCode }) {
         }
         const doc = snap.docs[0];
         const data = { id: doc.id, ...doc.data() };
+        // Quizzes creados ANTES de que existiera el campo "mode" (cuando
+        // solo existía el modo Quiz) no lo traen guardado: sin esto,
+        // quiz.mode queda undefined y todo lo que compara contra "quiz"
+        // (incluidas las reglas nuevas de Esmigol) se salta en silencio.
+        // El editor (03-creator.js) ya hace esta misma normalización.
+        if (!data.mode) data.mode = "quiz";
         if (!data.isPublished) {
           setErrorMsg("Esta evaluación está cerrada. Contacta a tu profesor.");
           setPhase("error");
@@ -535,11 +541,13 @@ function StudentExam({ examCode }) {
       if (left <= 0) {
         clearInterval(interval);
         // Esmigol (Quiz, regla nueva): no contestó a tiempo → que le apure.
+        console.info("[Esmigol] se acabó el tiempo de una pregunta. quiz.mode=" + quiz?.mode);
         if (quiz?.mode === "quiz") {
           const ua = answersRef.current[q.id];
           const wasAnswered = q.type === "checks" || q.type === "order"
             ? Array.isArray(ua) && ua.length > 0
             : ua !== undefined && ua !== "";
+          console.info("[Esmigol] ¿respondió esta pregunta a tiempo?", wasAnswered);
           if (!wasAnswered) esmigolRef.current.fireNow("tiempo");
         }
         // Se acabó el tiempo: avanzar (la respuesta queda como está, sin marcar)
@@ -567,6 +575,9 @@ function StudentExam({ examCode }) {
     // Esmigol (Quiz, regla nueva): al terminar, felicita si superó la mitad
     // del puntaje, o anima para la próxima si no. `percent` ya es el
     // porcentaje de puntos ganados sobre lo respondido.
+    // console.error a propósito (aunque no es un error real): así se ve en
+    // rojo y ningún filtro de "solo Info/Warnings" de la consola lo oculta.
+    console.error("[Esmigol] ►►► QUIZ TERMINADO ◄◄◄ quiz.mode=" + quiz?.mode + " percent=" + grade.percent);
     if (quiz?.mode === "quiz") esmigol.fireNow(grade.percent > 50 ? "logro" : "motivacion");
   };
 
@@ -684,7 +695,9 @@ function StudentExam({ examCode }) {
       id: "quiz-falla-mas-de-dos", group: "motivacion", once: true,
       test: () => {
         const g = gradeSubmission(quiz, answers);
-        return (g.answered - g.correct) > 2;
+        const wrong = g.answered - g.correct;
+        if (wrong > 0) console.info("[Esmigol] falladas hasta ahora: " + wrong + " (respondidas " + g.answered + ", correctas " + g.correct + ")");
+        return wrong > 2;
       },
     }],
   }) : { node: null, fireNow: () => {} };

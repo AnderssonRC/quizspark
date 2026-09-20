@@ -2722,6 +2722,15 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         setMyAnswered(snap.docs.length);
         setMyPointsMaxAnswered(pointsMaxAnswered);
         setMyGradePoints(gradePointsSum);
+        // Esmigol (Quiz, regla nueva — también en vivo): al terminar la
+        // sala, felicita si superó la mitad del puntaje, o anima para la
+        // próxima si no. Mismo umbral que en el modo asincrónico (08-online.js).
+        console.error("[Esmigol] ►►► SALA TERMINADA ◄◄◄ quiz.mode=" + quiz.mode);
+        if (quiz.mode === "quiz" && esmigolRef.current) {
+          const percent = pointsMaxAnswered > 0 ? Math.round((gradePointsSum / pointsMaxAnswered) * 100) : 0;
+          console.info("[Esmigol] percent=" + percent);
+          esmigolRef.current.fireNow(percent > 50 ? "logro" : "motivacion");
+        }
       })
       .catch(err => console.error("Error contando aciertos:", err));
   }, [session?.status, quiz]);
@@ -2907,7 +2916,34 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
       const min = window.ESMIGOL_LOW_GRADE_MIN || 2, ratio = window.ESMIGOL_LOW_GRADE_RATIO || 0.4;
       return t.graded >= min && (t.correct / t.graded) < ratio;
     },
-  }) : { node: null };
+    // Regla nueva, solo Quiz: "falla más de dos".
+    rules: (liveIsSurvey || quiz?.mode !== "quiz") ? undefined : [{
+      id: "live-falla-mas-de-dos", group: "motivacion", once: true,
+      test: () => {
+        const wrong = liveTallyRef.current.graded - liveTallyRef.current.correct;
+        if (wrong > 0) console.info("[Esmigol] falladas hasta ahora (sala en vivo): " + wrong);
+        return wrong > 2;
+      },
+    }],
+  }) : { node: null, fireNow: () => {} };
+  // El efecto que cuenta aciertos al terminar la sala (más arriba) y el
+  // que detecta "no contestó a tiempo" (más abajo) llaman a fireNow desde
+  // dentro de un then()/otro efecto: se guarda por ref para no quedarse
+  // con una versión vieja de `esmigol` (mismo motivo que en 08-online.js).
+  const esmigolRef = useRefL(esmigol);
+  esmigolRef.current = esmigol;
+
+  // Esmigol (Quiz, regla nueva): no contestó a tiempo. En la sala en vivo
+  // no hay un "left<=0" local (el docente decide cuándo revelar) — el
+  // momento real en que el estudiante "se quedó sin tiempo" es cuando el
+  // docente revela sin que él haya respondido esta pregunta.
+  useEffectL(() => {
+    if (quiz?.mode !== "quiz" || session?.status !== "showResults") return;
+    if (!liveQ || liveQ.type === "slide") return;
+    if (answeredAtIdx === session.currentQuestionIdx) return; // sí respondió
+    console.info("[Esmigol] no respondiste esta pregunta a tiempo (sala en vivo)");
+    esmigolRef.current.fireNow("tiempo");
+  }, [session?.status]);
 
   // ----- Render -----
   if (!session) {
@@ -3074,6 +3110,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
 
           <button onClick={onExit} className="qs-btn qs-btn--primary qs-btn--lg" style={{ width: "100%" }}>Salir</button>
         </div>
+        {esmigol.node}
       </div>
     );
   }
@@ -3198,6 +3235,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
             {isLast ? (isSurvey ? "Esperando el cierre..." : "Esperando ranking final...") : "Esperando siguiente pregunta..."}
           </p>
         </div>
+        {esmigol.node}
       </div>
     );
   }
@@ -3245,6 +3283,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
               )}
             </div>
           </div>
+          {esmigol.node}
         </div>
       );
     }
@@ -3286,6 +3325,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
               </div>
             </div>
           </div>
+          {esmigol.node}
         </div>
       );
     }

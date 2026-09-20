@@ -763,20 +763,37 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
   // y siempre lea la versión más reciente.
   const lowGradeRef = useRefMeta(lowGrade); lowGradeRef.current = lowGrade;
   const rulesRef = useRefMeta(rules); rulesRef.current = rules;
+  // `cfg` llega recalculado (objeto NUEVO) en cada render — por ejemplo
+  // esmigolConfigFor() arma un objeto de fusión distinto cada vez que se
+  // llama. Si ese objeto entrara en las dependencias del reloj de abajo,
+  // el intervalo se destruiría y volvería a crear en CADA render (el
+  // examen re-renderiza ~1 vez por segundo por el cronómetro), y el tick
+  // de 5 s nunca llegaría a completarse — Esmigol dejaría de aparecer por
+  // completo. Por eso se lee por esta ref, igual que lowGrade/rules.
+  const cfgRef = useRefMeta(cfg); cfgRef.current = cfg;
 
   useEffectMeta(() => { questionEnteredAtRef.current = Date.now(); }, [questionId]);
 
+  // DIAGNÓSTICO TEMPORAL: registra en la consola (F12) cada intento de
+  // mostrar a Esmigol y por qué no se mostró, si fue el caso. Se puede
+  // quitar una vez confirmado qué está pasando.
   const fire = (groupId) => {
-    if (!enabled || !cfg.groups || !window.esmigolPickPhrase) return false;
-    const p = window.esmigolPickPhrase(cfg.groups, groupId, lastPhraseIdRef.current);
-    if (!p) return false;
+    const c = cfgRef.current;
+    if (!c) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: sin configuración (cfg vacío)"); return false; }
+    if (c.enabled === false) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: enabled=false en quiz.metaTriggers"); return false; }
+    if (!c.groups) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: cfg.groups no existe"); return false; }
+    if (!window.esmigolPickPhrase) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: esmigolPickPhrase no cargó"); return false; }
+    const p = window.esmigolPickPhrase(c.groups, groupId, lastPhraseIdRef.current);
+    if (!p) { console.warn("[Esmigol] fire('" + groupId + "') bloqueado: el grupo '" + groupId + "' no tiene frases", c.groups[groupId]); return false; }
     lastPhraseIdRef.current = p.id;
+    console.info("[Esmigol] ✅ mostrando frase del grupo '" + groupId + "':", p.text);
     setPhrase(p);
     return true;
   };
 
   useEffectMeta(() => {
-    if (!active || !enabled) return;
+    if (!active || !enabled) { console.info("[Esmigol] reloj NO armado (active=" + active + ", enabled=" + enabled + ")"); return; }
+    console.info("[Esmigol] reloj armado (revisa reglas cada 5s) para questionId=" + questionId);
     const tick = () => {
       if (phrase) return; // ya hay un mensaje en pantalla: no encimar otro
       const now = Date.now();
@@ -825,13 +842,17 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
     };
     const id = setInterval(tick, 5000);
     return () => clearInterval(id);
-  }, [active, enabled, cfg, mode, live, questionId, startedAt, phrase]);
+  }, [active, enabled, mode, live, questionId, startedAt, phrase]);
 
   const dismiss = () => setPhrase(null);
   // Disparo puntual, para eventos exactos (se acabó el tiempo, terminó la
   // actividad...) en vez de esperar al siguiente tick de 5 s. Respeta el
   // mismo "no encimar mensajes": si ya hay uno en pantalla, no hace nada.
-  const fireNow = (groupId) => { if (phrase) return false; return fire(groupId); };
+  const fireNow = (groupId) => {
+    if (phrase) { console.warn("[Esmigol] fireNow('" + groupId + "') ignorado: ya hay un mensaje en pantalla", phrase); return false; }
+    console.info("[Esmigol] fireNow('" + groupId + "') llamado (enabled=" + enabled + ")");
+    return fire(groupId);
+  };
   const node = (phrase && enabled && window.Esmigol) ? (
     <Esmigol
       texto={phrase.text}
@@ -860,6 +881,14 @@ window.ESMIGOL_LOW_GRADE_MIN = ESMIGOL_LOW_GRADE_MIN;
 // por defecto si nunca abrió el editor de Esmigol. Cada modo debería usar
 // esto en vez de leer quiz.metaTriggers directamente.
 function esmigolConfigFor(quiz) {
-  return (quiz && quiz.metaTriggers) || ESMIGOL_TRIGGERS_DEFAULT;
+  const saved = quiz && quiz.metaTriggers;
+  if (!saved) return ESMIGOL_TRIGGERS_DEFAULT;
+  // Completar con los grupos por defecto los que falten: una configuración
+  // guardada ANTES de que existiera un grupo nuevo (p. ej. "logro") no lo
+  // trae, y sin este relleno esa regla fallaría en silencio para siempre
+  // en ese quiz aunque el catálogo se actualice después. Los grupos que sí
+  // están guardados (con las frases propias del docente) se respetan tal cual.
+  const groups = { ...ESMIGOL_TRIGGERS_DEFAULT.groups, ...(saved.groups || {}) };
+  return { ...ESMIGOL_TRIGGERS_DEFAULT, ...saved, groups };
 }
 window.esmigolConfigFor = esmigolConfigFor;
