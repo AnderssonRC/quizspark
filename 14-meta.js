@@ -335,14 +335,27 @@ function esmigolImageSrc(expression = "default") {
 }
 
 // ---------- Dónde aparece en pantalla ----------
+// "bottom-center" (abajo, en la mitad) es la posición por defecto: no
+// tapa la pregunta. "Arriba · centro" y las esquinas quedan como
+// alternativas. (Hubo un "center" a media pantalla que se retiró porque
+// tapaba todo; si alguna config lo trae, se trata como "bottom-center".)
 const ESMIGOL_POSITIONS = [
-  { id: "bottom-right", label: "Abajo · derecha",  icon: "◢" },
-  { id: "bottom-left",  label: "Abajo · izquierda", icon: "◣" },
-  { id: "top-right",    label: "Arriba · derecha",  icon: "◥" },
-  { id: "top-left",     label: "Arriba · izquierda", icon: "◤" },
+  { id: "bottom-center", label: "Abajo · centro",        icon: "▼" },
+  { id: "top-center",    label: "Arriba · centro",       icon: "▲" },
+  { id: "bottom-right",  label: "Abajo · derecha",       icon: "◢" },
+  { id: "bottom-left",   label: "Abajo · izquierda",     icon: "◣" },
+  { id: "top-right",     label: "Arriba · derecha",      icon: "◥" },
+  { id: "top-left",      label: "Arriba · izquierda",    icon: "◤" },
 ];
+const ESMIGOL_DEFAULT_POSITION = "bottom-center";
+function esmigolIsCentered(position) {
+  return position === "top-center" || position === "bottom-center"
+    || !ESMIGOL_POSITIONS.some(p => p.id === position); // desconocida/"center" → abajo centro
+}
 function esmigolPositionStyle(position, offset = 16) {
-  const id = ESMIGOL_POSITIONS.some(p => p.id === position) ? position : "bottom-right";
+  const id = ESMIGOL_POSITIONS.some(p => p.id === position) ? position : ESMIGOL_DEFAULT_POSITION;
+  if (id === "top-center") return { top: offset, left: "50%", transform: "translateX(-50%)" };
+  if (id === "bottom-center") return { bottom: offset, left: "50%", transform: "translateX(-50%)" };
   const style = {};
   style[id.indexOf("top") === 0 ? "top" : "bottom"] = offset;
   style[id.indexOf("left") >= 0 ? "left" : "right"] = offset;
@@ -413,11 +426,53 @@ const ESMIGOL_TRIGGER_GROUPS_DEFAULT = {
     ],
   },
 };
-// Configuración completa por defecto de "activadores metacognitivos" — lo
-// que trae un quiz que nunca abrió el editor de Esmigol (quiz.metaTriggers).
+// ---------- Dónde puede aparecer (modos de la plataforma) ----------
+// La clave es la que usa el motor: `live ? "live" : mode` (ver
+// esmigolModeKey). "Sala en vivo" cubre quiz y encuesta en vivo.
+const ESMIGOL_MODE_LIST = [
+  { id: "quiz",     emoji: "⚡", label: "Quiz online",          desc: "Examen con enlace, cada estudiante a su ritmo" },
+  { id: "survey",   emoji: "💬", label: "Encuesta online",      desc: "Encuesta con enlace (no califica)" },
+  { id: "workshop", emoji: "🛠️", label: "Taller evaluativo",   desc: "Taller paso a paso" },
+  { id: "live",     emoji: "🎮", label: "Sala en vivo",         desc: "Quiz o encuesta en vivo, en el celular del estudiante" },
+  { id: "lectio",   emoji: "📵", label: "Modo Sin Celular",     desc: "Presentación proyectada por el docente" },
+];
+function esmigolModeKey(mode, live) {
+  return live ? "live" : (mode || "quiz");
+}
+
+// ---------- Cuándo aparece (momentos) ----------
+// Cada momento dispara un grupo de frases. `modes` = en qué modos existe
+// ese momento (según las señales que cada modo le da al motor); sirve para
+// mostrarle al docente dónde puede aparecer cada uno. `defaultOn: false`
+// = momento nuevo que no existía antes y queda apagado hasta activarlo.
+const ESMIGOL_MOMENT_LIST = [
+  { id: "inicio",      emoji: "🚀", label: "Al empezar la actividad",               group: "motivacion", modes: ["quiz", "survey", "workshop", "live", "lectio"], defaultOn: false },
+  { id: "lento",       emoji: "🐢", label: "Tarda mucho en una pregunta (~1:15)",    group: "tiempo",     modes: ["quiz", "survey", "workshop", "live", "lectio"] },
+  { id: "sinTiempo",   emoji: "⏰", label: "Se le acaba el tiempo sin responder",    group: "tiempo",     modes: ["quiz", "live"] },
+  { id: "vaMal",       emoji: "📉", label: "Va mal (menos del 40 % de aciertos)",    group: "recuerdo",   modes: ["quiz", "workshop", "live"] },
+  { id: "fallaVarias", emoji: "❌", label: "Falla más de dos preguntas",             group: "motivacion", modes: ["quiz", "live"] },
+  { id: "vaBien",      emoji: "📈", label: "Va muy bien (80 % o más de aciertos)",   group: "logro",      modes: ["quiz", "workshop", "live"] },
+  { id: "periodico",   emoji: "🔁", label: "Cada 5 minutos, para dar ánimo",         group: "motivacion", modes: ["quiz", "survey", "workshop", "live", "lectio"] },
+  { id: "finalBien",   emoji: "🏆", label: "Al terminar con más de la mitad",        group: "logro",      modes: ["quiz", "live"] },
+  { id: "finalMal",    emoji: "🌱", label: "Al terminar con la mitad o menos",       group: "motivacion", modes: ["quiz", "live"] },
+];
+const ESMIGOL_MODES_DEFAULT = ESMIGOL_MODE_LIST.reduce((o, m) => { o[m.id] = true; return o; }, {});
+const ESMIGOL_MOMENTS_DEFAULT = ESMIGOL_MOMENT_LIST.reduce((o, m) => { o[m.id] = m.defaultOn !== false; return o; }, {});
+
+// Configuración completa por defecto de "activadores metacognitivos".
+// Desde el dashboard el docente la edita UNA vez para todos sus quizzes
+// (users/{uid}.esmigolConfig); al guardar se copia a quiz.metaTriggers de
+// cada quiz, que es lo que lee el estudiante (sin sesión, no puede leer
+// la colección users).
 const ESMIGOL_TRIGGERS_DEFAULT = {
   enabled: true,
-  position: "bottom-right",
+  modes: ESMIGOL_MODES_DEFAULT,
+  moments: ESMIGOL_MOMENTS_DEFAULT,
+  position: ESMIGOL_DEFAULT_POSITION,
+  // 2 = ya existe la posición "center". Una config sin esta marca que
+  // traiga "bottom-right" (el antiguo valor por defecto) se muestra
+  // centrada; ver esmigolConfigFor.
+  layoutVersion: 2,
   imageSize: 120,
   fontFamily: ESMIGOL_FONT_OPTIONS[0].value,
   fontColor: ESMIGOL_TEXT_COLORS[0],
@@ -453,7 +508,7 @@ const ESMIGOL_EXIT_MS = 380;  // duración de la salida (debe calzar con qs-esmi
 
 // Props añadidas para los activadores metacognitivos (todas opcionales,
 // compatibles con el ejemplo de uso mínimo de la ronda anterior):
-//   position       uno de ESMIGOL_POSITIONS (default "bottom-right")
+//   position       uno de ESMIGOL_POSITIONS (default "center")
 //   placement      "side" (burbuja al lado, comportamiento original) |
 //                  "above" (burbuja ENCIMA de Esmigol, con colita — lo que
 //                  piden los activadores)
@@ -468,9 +523,10 @@ const ESMIGOL_EXIT_MS = 380;  // duración de la salida (debe calzar con qs-esmi
 //                  editor) en vez de position:fixed sobre toda la pantalla
 function Esmigol({
   texto = "", visible = true, onCerrar, expression = "default",
-  position = "bottom-right", placement = "side",
+  position = ESMIGOL_DEFAULT_POSITION, placement = "side",
   imageSize = 120, fontFamily, fontColor, fontSize = 14, textAlign = "left",
   holdMs = ESMIGOL_HOLD_MS, dismissOnClick = true, contained = false,
+  bubbleMaxWidth, // opcional: ancho máximo de la burbuja (la vista previa lo escala)
 }) {
   const [phase, setPhase] = useStateMeta(visible ? "enter" : "idle");
   const [shown, setShown] = useStateMeta("");
@@ -524,11 +580,19 @@ function Esmigol({
   const skip = () => { if (!dismissOnClick || phase === "exit") return; setPhase("exit"); };
 
   const above = placement === "above";
-  const isLeft = String(position).indexOf("left") >= 0;
+  const centered = esmigolIsCentered(position);
+  const isLeft = !centered && String(position).indexOf("left") >= 0;
   const posStyle = esmigolPositionStyle(position, contained ? 8 : 16);
   // De qué lado entra/sale: desde el borde de pantalla más cercano a la
   // esquina elegida, para que nunca "aparezca" cruzando toda la pantalla.
-  const dx = isLeft ? -40 : 40;
+  // Centrado: entra desde el borde de abajo (o de arriba si va arriba),
+  // creciendo desde el 85 %.
+  const dx = centered ? 0 : (isLeft ? -40 : 40);
+  const dy = centered ? (position === "top-center" ? -40 : 40) : 0;
+  const s0 = centered ? 0.85 : 1;
+  // La burbuja crece junto con la imagen, para que una frase larga no
+  // quede apretada al lado de un Esmigol grande.
+  const bubbleMax = bubbleMaxWidth || Math.max(240, Math.round(imageSize * 1.8));
   const font = fontFamily || ESMIGOL_FONT_OPTIONS[0].value;
   const color = fontColor || ESMIGOL_TEXT_COLORS[0];
 
@@ -539,8 +603,8 @@ function Esmigol({
       cursor: dismissOnClick ? "pointer" : "default",
     }}>
       <style>{`
-        @keyframes qs-esmigol-enter { from { transform: translateX(var(--esmigol-dx, 40px)); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-        @keyframes qs-esmigol-exit { from { transform: translateX(0); opacity: 1; } to { transform: translateX(var(--esmigol-dx, 40px)); opacity: 0; } }
+        @keyframes qs-esmigol-enter { from { transform: translate(var(--esmigol-dx, 40px), var(--esmigol-dy, 0px)) scale(var(--esmigol-s0, 1)); opacity: 0; } to { transform: none; opacity: 1; } }
+        @keyframes qs-esmigol-exit { from { transform: none; opacity: 1; } to { transform: translate(var(--esmigol-dx, 40px), var(--esmigol-dy, 0px)) scale(var(--esmigol-s0, 1)); opacity: 0; } }
         @keyframes qs-esmigol-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
         @keyframes qs-esmigol-caret { 0%,49% { opacity: 1; } 50%,100% { opacity: 0; } }
         @media (max-width: 480px) {
@@ -555,15 +619,17 @@ function Esmigol({
              modo elegido en el editor — el DOM va [burbuja, (colita), imagen],
              así que "column" (no "column-reverse") deja la burbuja arriba. */
           .qs-esmigol-wrap { flex-direction: column !important; align-items: center !important; gap: 6px !important; }
-          /* Respeta el tamaño elegido en el editor (hasta el máximo del
-             control deslizante, 200px) — antes había un tope fijo de
-             92px/140px que apenas dejaba notar el cambio. */
-          .qs-esmigol-img { height: min(var(--esmigol-img-size, 120px), 200px) !important; }
+          /* Respeta el tamaño elegido en el editor; el único tope es que
+             no pase del 40 % del alto de la pantalla (antes había un tope
+             fijo de 200px que dejaba igual los tamaños grandes). */
+          .qs-esmigol-img { height: min(var(--esmigol-img-size, 120px), 40vh) !important; }
         }
       `}</style>
 
       <div className="qs-esmigol-wrap" style={{
         "--esmigol-dx": dx + "px",
+        "--esmigol-dy": dy + "px",
+        "--esmigol-s0": s0,
         // El tamaño configurado en el editor viaja como variable CSS para
         // que la regla de móvil (abajo) pueda usarlo con min() en vez de
         // taparlo con un número fijo — así si el docente lo agranda, en el
@@ -579,7 +645,7 @@ function Esmigol({
           : `qs-esmigol-${exiting ? "exit" : "enter"} ${exiting ? ESMIGOL_EXIT_MS : 320}ms ease both`,
       }}>
         <div className="qs-esmigol-bubble" role="status" aria-live="polite" style={{
-          maxWidth: 240, background: "#fff", color,
+          maxWidth: `min(${bubbleMax}px, 88vw)`, background: "#fff", color,
           borderRadius: 16, padding: "10px 14px", fontSize, fontWeight: 600, lineHeight: 1.4,
           boxShadow: "0 8px 22px rgba(0,0,0,0.25)",
           fontFamily: font, textAlign: textAlign === "center" ? "center" : "left",
@@ -686,6 +752,9 @@ window.ESMIGOL_TEXT_COLORS = ESMIGOL_TEXT_COLORS;
 window.ESMIGOL_TEXT_ALIGN_OPTIONS = ESMIGOL_TEXT_ALIGN_OPTIONS;
 window.ESMIGOL_TRIGGER_GROUP_ORDER = ESMIGOL_TRIGGER_GROUP_ORDER;
 window.ESMIGOL_TRIGGERS_DEFAULT = ESMIGOL_TRIGGERS_DEFAULT;
+window.ESMIGOL_MODE_LIST = ESMIGOL_MODE_LIST;
+window.ESMIGOL_MOMENT_LIST = ESMIGOL_MOMENT_LIST;
+window.esmigolModeKey = esmigolModeKey;
 window.esmigolCloneDefaultTriggers = esmigolCloneDefaultTriggers;
 window.esmigolPickPhrase = esmigolPickPhrase;
 window.esmigolImageSrc = esmigolImageSrc;
@@ -716,6 +785,8 @@ window.esmigolImageSrc = esmigolImageSrc;
 //     cooldownMs: 0,      // (opcional) o en vez de "once", espaciarla
 //     modes: ["quiz","survey","workshop","lectio"], // (opcional) limitar a
 //                          // ciertos modos; si se omite, aplica a todos
+//     moment: "fallaVarias", // (opcional) id de ESMIGOL_MOMENT_LIST: si el
+//                          // docente apaga ese momento, la regla no dispara
 //     test(ctx) { return true/false; },
 //       // ctx = { mode, live, now, startedAt, questionId,
 //       //         elapsedOnQuestionMs, elapsedTotalMs }
@@ -763,7 +834,10 @@ window.ESMIGOL_CUSTOM_RULES = ESMIGOL_CUSTOM_RULES;
 //   rules        reglas EXTRA propias de este modo (ver comentario arriba)
 //   live         true si es una sesión de sala en vivo (informativo, va en ctx)
 function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade, highGrade, rules, live = false }) {
-  const enabled = !!cfg && cfg.enabled !== false;
+  // Apagado en general, o apagado solo en este modo (pestaña "Dónde
+  // aparece" del editor del dashboard).
+  const enabled = !!cfg && cfg.enabled !== false
+    && !(cfg.modes && cfg.modes[esmigolModeKey(mode, live)] === false);
   const [phrase, setPhrase] = useStateMeta(null);
   // Ids de TODAS las frases ya mostradas en esta sesión (no solo la
   // anterior): así Esmigol no repite frase mientras el grupo tenga otras
@@ -774,6 +848,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
   const lastMotivateAtRef = useRefMeta(null);
   const lowGradeFiredRef = useRefMeta(false);
   const highGradeFiredRef = useRefMeta(false);
+  const startFiredRef = useRefMeta(false);
   const firedOnceRef = useRefMeta({});     // por id de regla extra → ya disparó ("once")
   const lastFiredAtRef = useRefMeta({});   // por id de regla extra → último disparo (cooldownMs)
   // Las funciones/arreglos que llegan por props suelen ser literales nuevos
@@ -794,15 +869,37 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
 
   useEffectMeta(() => { questionEnteredAtRef.current = Date.now(); }, [questionId]);
 
-  const fire = (groupId) => {
+  // ¿El docente dejó activo este momento? (pestaña "Cuándo aparece").
+  // Sin `moments` guardados (config vieja) se usan los valores por defecto.
+  const momentOn = (momentId) => {
+    if (!momentId) return true;
+    const m = cfgRef.current && cfgRef.current.moments;
+    const v = m && m[momentId];
+    return v === undefined ? ESMIGOL_MOMENTS_DEFAULT[momentId] !== false : v !== false;
+  };
+
+  const fire = (groupId, momentId) => {
     const c = cfgRef.current;
     if (!c || c.enabled === false || !c.groups || !window.esmigolPickPhrase) return false;
+    if (c.modes && c.modes[esmigolModeKey(mode, live)] === false) return false;
+    if (!momentOn(momentId)) return false;
     const p = window.esmigolPickPhrase(c.groups, groupId, usedPhraseIdsRef.current);
     if (!p) return false;
     usedPhraseIdsRef.current.add(p.id);
     setPhrase(p);
     return true;
   };
+
+  // Momento "inicio": una sola vez, poco después de que la actividad
+  // arranca (tras la cuenta regresiva), sin esperar al tick de 5 s.
+  useEffectMeta(() => {
+    if (!active || !enabled || startFiredRef.current) return;
+    const id = setTimeout(() => {
+      startFiredRef.current = true;
+      fire("motivacion", "inicio");
+    }, 1500);
+    return () => clearTimeout(id);
+  }, [active, enabled]);
 
   useEffectMeta(() => {
     if (!active || !enabled) return;
@@ -815,7 +912,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
       // Regla 1: tarda mucho sin cambiar de pregunta/paso.
       if (questionId != null && !slowNudgedRef.current.has(questionId) && elapsedOnQuestionMs >= ESMIGOL_SLOW_MS) {
         slowNudgedRef.current.add(questionId);
-        if (fire("tiempo")) return;
+        if (fire("tiempo", "lento")) return;
       }
 
       // Regla 3: nota muy baja (si el modo la ofrece).
@@ -824,7 +921,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
         try { isLow = !!lowGradeRef.current(); } catch (e) { isLow = false; }
         if (isLow) {
           lowGradeFiredRef.current = true;
-          if (fire("recuerdo")) return;
+          if (fire("recuerdo", "vaMal")) return;
         }
       }
 
@@ -835,7 +932,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
         try { isHigh = !!highGradeRef.current(); } catch (e) { isHigh = false; }
         if (isHigh) {
           highGradeFiredRef.current = true;
-          if (fire("logro")) return;
+          if (fire("logro", "vaBien")) return;
         }
       }
 
@@ -853,14 +950,14 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
         if (!hit) continue;
         if (once) firedOnceRef.current[r.id] = true;
         lastFiredAtRef.current[r.id] = now;
-        if (fire(r.group || "recuerdo")) return;
+        if (fire(r.group || "recuerdo", r.moment)) return;
       }
 
       // Regla 2: motivar cada cinco minutos desde que arrancó.
       const base = lastMotivateAtRef.current || startedAt || now;
       if (startedAt && (now - base) >= ESMIGOL_MOTIVATE_MS) {
         lastMotivateAtRef.current = now;
-        fire("motivacion");
+        fire("motivacion", "periodico");
       }
     };
     const id = setInterval(tick, 5000);
@@ -871,12 +968,14 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
   // Disparo puntual, para eventos exactos (se acabó el tiempo, terminó la
   // actividad...) en vez de esperar al siguiente tick de 5 s. Respeta el
   // mismo "no encimar mensajes": si ya hay uno en pantalla, no hace nada.
-  const fireNow = (groupId) => { if (phrase) return false; return fire(groupId); };
+  // `momentId` (opcional) = id de ESMIGOL_MOMENT_LIST, para respetar si el
+  // docente lo apagó.
+  const fireNow = (groupId, momentId) => { if (phrase) return false; return fire(groupId, momentId); };
   const node = (phrase && enabled && window.Esmigol) ? (
     <Esmigol
       texto={phrase.text}
       expression={phrase.expression}
-      position={cfg?.position || "bottom-right"}
+      position={cfg?.position || ESMIGOL_DEFAULT_POSITION}
       placement="above"
       imageSize={cfg?.imageSize || 120}
       fontFamily={cfg?.fontFamily}
@@ -910,6 +1009,25 @@ function esmigolConfigFor(quiz) {
   // en ese quiz aunque el catálogo se actualice después. Los grupos que sí
   // están guardados (con las frases propias del docente) se respetan tal cual.
   const groups = { ...ESMIGOL_TRIGGERS_DEFAULT.groups, ...(saved.groups || {}) };
-  return { ...ESMIGOL_TRIGGERS_DEFAULT, ...saved, groups };
+  // Igual con los modos y momentos: una config guardada antes de que
+  // existieran trae todo encendido como antes (y "inicio" apagado).
+  const modes = { ...ESMIGOL_MODES_DEFAULT, ...(saved.modes || {}) };
+  const moments = { ...ESMIGOL_MOMENTS_DEFAULT, ...(saved.moments || {}) };
+  // Antes no existía "centro" y todo quedaba en "bottom-right" por
+  // defecto: esas configs viejas pasan a "Abajo · centro". Una esquina
+  // elegida después (layoutVersion 2) se respeta tal cual. El "center" a
+  // media pantalla ya no existe: también pasa a "Abajo · centro".
+  const oldDefault = !saved.layoutVersion && (!saved.position || saved.position === "bottom-right");
+  const position = (oldDefault || !ESMIGOL_POSITIONS.some(p => p.id === saved.position))
+    ? ESMIGOL_DEFAULT_POSITION : saved.position;
+  return { ...ESMIGOL_TRIGGERS_DEFAULT, ...saved, groups, modes, moments, position, layoutVersion: 2 };
 }
 window.esmigolConfigFor = esmigolConfigFor;
+
+// Config global del docente (dashboard): la guardada en su perfil, o los
+// valores por defecto. Misma fusión que esmigolConfigFor.
+function esmigolUserConfig(userData) {
+  const saved = userData && userData.esmigolConfig;
+  return esmigolConfigFor(saved ? { metaTriggers: saved } : null);
+}
+window.esmigolUserConfig = esmigolUserConfig;

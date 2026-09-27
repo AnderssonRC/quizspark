@@ -546,7 +546,7 @@ function StudentExam({ examCode }) {
           const wasAnswered = q.type === "checks" || q.type === "order"
             ? Array.isArray(ua) && ua.length > 0
             : ua !== undefined && ua !== "";
-          if (!wasAnswered) esmigolRef.current.fireNow("tiempo");
+          if (!wasAnswered) esmigolRef.current.fireNow("tiempo", "sinTiempo");
         }
         // Se acabó el tiempo: avanzar (la respuesta queda como está, sin marcar)
         if (currentIdx < questionsOrder.length - 1) {
@@ -573,7 +573,10 @@ function StudentExam({ examCode }) {
     // Esmigol (Quiz, regla nueva): al terminar, felicita si superó la mitad
     // del puntaje, o anima para la próxima si no. `percent` ya es el
     // porcentaje de puntos ganados sobre lo respondido.
-    if (quiz?.mode === "quiz") esmigol.fireNow(grade.percent > 50 ? "logro" : "motivacion");
+    if (quiz?.mode === "quiz") {
+      const good = grade.percent > 50;
+      esmigol.fireNow(good ? "logro" : "motivacion", good ? "finalBien" : "finalMal");
+    }
   };
 
   const handleSubmit = async () => {
@@ -692,7 +695,7 @@ function StudentExam({ examCode }) {
       return g.answered >= min && (g.correct / g.answered) >= ratio;
     },
     rules: !isQuizMode ? undefined : [{
-      id: "quiz-falla-mas-de-dos", group: "motivacion", once: true,
+      id: "quiz-falla-mas-de-dos", group: "motivacion", once: true, moment: "fallaVarias",
       test: () => {
         const g = gradeSubmission(quiz, answers);
         return (g.answered - g.correct) > 2;

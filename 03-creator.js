@@ -172,6 +172,9 @@ function TopNav({ active, onNav, onLaunch, user, onLogout, onAdmin }) {
 function Dashboard({ onOpenEditor, onLaunch, onResults }) {
   const [quizzes, setQuizzes] = useStateC([]);
   const [loadingQuizzes, setLoadingQuizzes] = useStateC(true);
+  // Estudio de Esmigol (config global para todos los quizzes)
+  const [showEsmigol, setShowEsmigol] = useStateC(false);
+  const [, setEsmigolVersion] = useStateC(0);
   const userData = window.QS.currentUserData;
   const userName = userData?.name || "Profesor";
   const firstName = userName.split(" ")[0];
@@ -197,6 +200,7 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
             publishCode: data.publishCode || null,
             mode: data.mode || "quiz",
             updatedAt: data.updatedAt || 0,
+            metaTriggers: data.metaTriggers || null,
           };
         });
         list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -320,6 +324,18 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
         </div>
         <div style={{ position: "absolute", right: 80, bottom: -20, fontSize: 90, opacity: .35 }}>🎯</div>
       </div>
+
+      {/* Esmigol: se configura aquí una vez para todos los quizzes */}
+      <EsmigolDashboardCard onEdit={() => setShowEsmigol(true)} />
+      {showEsmigol && (
+        <EsmigolStudioModal
+          // Semilla: el quiz más reciente con config propia (la lista ya
+          // viene ordenada por updatedAt descendente).
+          seedQuiz={quizzes.find(q => q.metaTriggers) || null}
+          onSaved={() => setEsmigolVersion(v => v + 1)}
+          onClose={() => setShowEsmigol(false)}
+        />
+      )}
 
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 16, marginBottom: 32 }}>
@@ -510,8 +526,6 @@ function Editor({ quizId, onBack, onLaunch }) {
   const [showPublish, setShowPublish] = useStateC(false);
   // Importar preguntas desde Excel/CSV o texto con comandos (16-import.js)
   const [showImport, setShowImport] = useStateC(false);
-  // Editor de activadores metacognitivos de Esmigol (14-meta.js)
-  const [showMetaTriggers, setShowMetaTriggers] = useStateC(false);
   const [loadingQuiz, setLoadingQuiz] = useStateC(false);
   // Modo Sin Celular: presentación de diapositivas local, sin sala en línea
   const [presenting, setPresenting] = useStateC(false);
@@ -609,6 +623,11 @@ function Editor({ quizId, onBack, onLaunch }) {
       const isNewId = String(quiz.id).startsWith("new-") || !quiz.id;
       const effectiveId = isNewId ? savedIdRef.current : quiz.id;
       const data = { ...quiz, ownerId: uid, updatedAt: Date.now() };
+      // Esmigol se configura desde el dashboard, una vez para todos los
+      // quizzes: cada quiz guarda una copia (el estudiante no puede leer
+      // el perfil del docente). Sin config global, se deja la que ya traía.
+      const esmigolCfg = window.QS.currentUserData?.esmigolConfig;
+      if (esmigolCfg) data.metaTriggers = esmigolCfg;
       let savedId = effectiveId || quiz.id;
       if (!effectiveId) {
         const docRef = await window.QS.db.collection("quizzes").add(data);
@@ -1421,26 +1440,6 @@ function Editor({ quizId, onBack, onLaunch }) {
         <aside className="qs-editor-config">
           <h3 style={{ fontSize: 15, marginBottom: 14 }}>Configuración del Quiz</h3>
 
-          {/* Esmigol: activadores metacognitivos (14-meta.js). Transversal a
-              todos los modos, igual que la cuenta regresiva de MetaCountdown. */}
-          <button onClick={() => setShowMetaTriggers(true)} style={{
-            width: "100%", display: "flex", alignItems: "center", gap: 10,
-            padding: "10px 12px", borderRadius: 14, marginBottom: 18, cursor: "pointer",
-            background: "linear-gradient(135deg, #fff7ed, #fef3c7)",
-            border: "1px solid #fcd34d", textAlign: "left",
-          }}>
-            <span style={{ fontSize: 24 }}>🐶</span>
-            <span style={{ flex: 1 }}>
-              <span style={{ display: "block", fontSize: 13, fontWeight: 800, color: "#92400e" }}>
-                Esmigol · Activadores metacognitivos
-              </span>
-              <span style={{ display: "block", fontSize: 11, color: "#a16207" }}>
-                {quiz.metaTriggers?.enabled === false ? "Desactivado" : "Frases, posición y rostros"}
-              </span>
-            </span>
-            <span style={{ fontSize: 12, color: "#a16207", fontWeight: 700 }}>Editar ›</span>
-          </button>
-
           {quiz.mode !== "workshop" && (
           <Field label="Carátula del quiz">
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
@@ -1630,9 +1629,6 @@ function Editor({ quizId, onBack, onLaunch }) {
       {showSettings && <SettingsModal quiz={quiz} setQuiz={setQuiz} onClose={() => setShowSettings(false)}/>}
       {showImport && window.ImportQuestionsModal && (
         <window.ImportQuestionsModal quiz={quiz} onImport={handleImportQuestions} onClose={() => setShowImport(false)} />
-      )}
-      {showMetaTriggers && (
-        <MetaTriggersModal quiz={quiz} setQuiz={setQuiz} onClose={() => setShowMetaTriggers(false)} />
       )}
       {showPublish && (
         <window.QS.PublishModal
@@ -1841,31 +1837,154 @@ function QuestionTextEditor({ value, onChange, questionKey, onFocusField }) {
   );
 }
 
-// ---------- Editor de activadores metacognitivos (Esmigol, 14-meta.js) ----------
-// Guarda todo en quiz.metaTriggers; no tiene guardado propio — como
-// SettingsModal, muta el quiz en memoria y la persistencia real ocurre con
-// el botón "💾 Guardar" del editor.
+// ---------- Esmigol en el dashboard (14-meta.js) ----------
+// Esmigol se configura UNA vez para todos los quizzes del docente (ya no
+// dentro de cada quiz). La config vive en users/{uid}.esmigolConfig y, al
+// guardar, se copia a quiz.metaTriggers de cada quiz suyo: el estudiante
+// entra sin sesión y solo puede leer la colección quizzes.
 const ESMIGOL_GROUP_DEFAULT_EXPRESSION = { tiempo: "pocotiempo-1", motivacion: "feliz-1", recuerdo: "pensativo-1", logro: "feliz-1" };
 
-function MetaTriggersModal({ quiz, setQuiz, onClose }) {
+const ESMIGOL_INVITES = [
+  "¡Hola! ¿Me enseñas frases nuevas para tus estudiantes?",
+  "Puedo aparecer arriba, abajo, grande o chiquito… ¿me acomodas?",
+  "¿En qué modos quieres que acompañe a tu clase?",
+  "Dime cuándo salir: ¿cuando van mal, cuando van bien, al final…?",
+];
+
+// Tarjeta del dashboard: Esmigol con una burbuja que invita a editarlo.
+function EsmigolDashboardCard({ onEdit }) {
+  const cfg = window.esmigolUserConfig ? window.esmigolUserConfig(window.QS.currentUserData) : null;
+  const [inviteIdx, setInviteIdx] = useStateC(0);
+  useEffectC(() => {
+    const id = setInterval(() => setInviteIdx(i => (i + 1) % ESMIGOL_INVITES.length), 6000);
+    return () => clearInterval(id);
+  }, []);
+  if (!cfg) return null;
+  const modeList = window.ESMIGOL_MODE_LIST || [];
+  const momentList = window.ESMIGOL_MOMENT_LIST || [];
+  const on = cfg.enabled !== false;
+  const modesOn = modeList.filter(m => cfg.modes[m.id] !== false);
+  const momentsOn = momentList.filter(m => cfg.moments[m.id] !== false);
+  const phraseCount = Object.values(cfg.groups || {}).reduce((s, g) => s + ((g && g.phrases) || []).length, 0);
+
+  return (
+    <div className="qs-card qs-esmigol-card" style={{
+      padding: "20px 24px", marginBottom: 32, display: "flex", alignItems: "center", gap: 20,
+      background: "linear-gradient(135deg, #fff7ed, #fef3c7)", border: "1px solid #fcd34d",
+    }}>
+      <style>{`
+        @keyframes qs-esmigol-card-bob { 0%,100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-6px) rotate(2deg); } }
+        @keyframes qs-esmigol-card-pop { from { opacity: 0; transform: translateY(6px) scale(.97); } to { opacity: 1; transform: none; } }
+        @media (max-width: 640px) {
+          .qs-esmigol-card { flex-direction: column; text-align: center; }
+          .qs-esmigol-card-bubble::after { display: none; }
+          .qs-esmigol-card-chips { justify-content: center; }
+        }
+      `}</style>
+      <img src={window.esmigolImageSrc ? window.esmigolImageSrc("feliz-1") : ""} alt="Esmigol"
+        style={{
+          height: 110, width: "auto", flexShrink: 0, filter: "drop-shadow(0 8px 12px rgba(0,0,0,.2))",
+          animation: "qs-esmigol-card-bob 2.6s ease-in-out infinite", opacity: on ? 1 : .55,
+        }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div className="qs-esmigol-card-bubble" style={{
+          position: "relative", display: "inline-block", background: "#fff", borderRadius: 16,
+          padding: "10px 16px", marginBottom: 10, boxShadow: "0 6px 16px rgba(146,64,14,.12)",
+          fontSize: 15, fontWeight: 700, color: "#78350f", maxWidth: 520,
+        }}>
+          <span key={inviteIdx} style={{ display: "inline-block", animation: "qs-esmigol-card-pop .35s ease" }}>
+            {on ? ESMIGOL_INVITES[inviteIdx] : "Estoy descansando… ¿me vuelves a activar?"}
+          </span>
+          {/* Colita de la burbuja apuntando a Esmigol */}
+          <span aria-hidden="true" style={{
+            position: "absolute", left: -8, top: 16, width: 0, height: 0,
+            borderTop: "8px solid transparent", borderBottom: "8px solid transparent", borderRight: "9px solid #fff",
+          }} />
+        </div>
+        <div className="qs-esmigol-card-chips" style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12, fontSize: 12, fontWeight: 700, color: "#92400e" }}>
+          <span style={{ background: on ? "#dcfce7" : "#fee2e2", color: on ? "#166534" : "#991b1b", borderRadius: 999, padding: "3px 10px" }}>
+            {on ? "● Activo" : "● Desactivado"}
+          </span>
+          <span style={{ background: "rgba(255,255,255,.7)", borderRadius: 999, padding: "3px 10px" }}>💬 {phraseCount} frases</span>
+          <span style={{ background: "rgba(255,255,255,.7)", borderRadius: 999, padding: "3px 10px" }}
+            title={modesOn.map(m => m.label).join(", ")}>
+            📍 {modesOn.length}/{modeList.length} modos
+          </span>
+          <span style={{ background: "rgba(255,255,255,.7)", borderRadius: 999, padding: "3px 10px" }}
+            title={momentsOn.map(m => m.label).join(", ")}>
+            ⏱ {momentsOn.length}/{momentList.length} momentos
+          </span>
+        </div>
+        <button onClick={onEdit} className="qs-btn qs-btn--sm" style={{
+          background: "#f59e0b", color: "#fff", border: 0, boxShadow: "0 3px 0 #b45309", fontWeight: 800,
+        }}>
+          🐶 Editar frases y movimientos de Esmigol
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// seedQuiz: si el docente aún no tiene config global, se parte de la del
+// quiz más reciente que tenga una propia (las frases que ya había escrito
+// dentro de un quiz no se pierden al pasar al dashboard).
+function EsmigolStudioModal({ onClose, onSaved, seedQuiz }) {
   const groupOrder = window.ESMIGOL_TRIGGER_GROUP_ORDER || ["tiempo", "motivacion", "recuerdo", "logro"];
   const positions = window.ESMIGOL_POSITIONS || [];
   const fonts = window.ESMIGOL_FONT_OPTIONS || [];
   const colors = window.ESMIGOL_TEXT_COLORS || [];
   const expressions = window.ESMIGOL_EXPRESSION_LIST || [];
   const aligns = window.ESMIGOL_TEXT_ALIGN_OPTIONS || [{ id: "left", label: "Izquierda" }, { id: "center", label: "Centrado" }];
-  const makeDefaults = () => (window.esmigolCloneDefaultTriggers
-    ? window.esmigolCloneDefaultTriggers()
-    : { enabled: true, position: "bottom-right", imageSize: 120, fontFamily: "", fontColor: "#1f1300", fontSize: 14, holdSeconds: 4, groups: {} });
+  const modeList = window.ESMIGOL_MODE_LIST || [];
+  const momentList = window.ESMIGOL_MOMENT_LIST || [];
 
-  // Sembrar quiz.metaTriggers la primera vez que se abre este editor, para
-  // que el resto de funciones siempre tengan un objeto real donde escribir.
-  useEffectC(() => {
-    if (!quiz.metaTriggers) setQuiz(q => ({ ...q, metaTriggers: makeDefaults() }));
-  }, []);
-  const cfg = quiz.metaTriggers || makeDefaults();
+  // Borrador local: nada se guarda hasta presionar "💾 Guardar".
+  const hasGlobal = !!window.QS.currentUserData?.esmigolConfig;
+  const seeded = !hasGlobal && !!seedQuiz;
+  const [cfg, setCfg] = useStateC(() => JSON.parse(JSON.stringify(seeded
+    ? window.esmigolConfigFor(seedQuiz)
+    : window.esmigolUserConfig(window.QS.currentUserData))));
+  // Si se sembró desde un quiz, hay algo nuevo por guardar desde el inicio.
+  const [dirty, setDirty] = useStateC(seeded);
+  const [saving, setSaving] = useStateC(false);
+  const [saveMsg, setSaveMsg] = useStateC("");
+  const [tab, setTab] = useStateC("frases");
 
-  const patchCfg = (patch) => setQuiz(q => ({ ...q, metaTriggers: { ...(q.metaTriggers || makeDefaults()), ...patch } }));
+  const patchCfg = (patch) => { setCfg(c => ({ ...c, ...patch })); setDirty(true); setSaveMsg(""); };
+
+  // Guardar: perfil del docente + copia en cada uno de sus quizzes (en
+  // lotes de 400, por debajo del límite de 500 escrituras de Firestore).
+  const save = async () => {
+    const uid = window.QS.currentUser?.uid;
+    if (!uid) { alert("No hay sesión activa."); return; }
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const db = window.QS.db;
+      await db.collection("users").doc(uid).set({ esmigolConfig: cfg }, { merge: true });
+      window.QS.currentUserData = { ...(window.QS.currentUserData || {}), esmigolConfig: cfg };
+      const snap = await db.collection("quizzes").where("ownerId", "==", uid).get();
+      for (let i = 0; i < snap.docs.length; i += 400) {
+        const batch = db.batch();
+        snap.docs.slice(i, i + 400).forEach(d => batch.update(d.ref, { metaTriggers: cfg }));
+        await batch.commit();
+      }
+      setDirty(false);
+      setSaveMsg(`✅ Guardado y aplicado a ${snap.docs.length} quiz${snap.docs.length === 1 ? "" : "zes"}`);
+      onSaved && onSaved(cfg);
+    } catch (err) {
+      console.error("Error guardando Esmigol:", err);
+      setSaveMsg("");
+      alert("No se pudo guardar: " + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const requestClose = () => {
+    if (dirty && !confirm("Tienes cambios sin guardar en Esmigol. ¿Salir sin guardar?")) return;
+    onClose();
+  };
   const patchGroupPhrases = (groupId, phrases) => patchCfg({
     groups: { ...cfg.groups, [groupId]: { ...cfg.groups[groupId], phrases } },
   });
@@ -1911,8 +2030,18 @@ function MetaTriggersModal({ quiz, setQuiz, onClose }) {
     setPreviewKey(k => k + 1);
   };
 
+  const tabs = [
+    { id: "frases",      label: "💬 Frases" },
+    { id: "movimientos", label: "🎬 Movimientos" },
+    { id: "donde",       label: "📍 Dónde aparece" },
+    { id: "cuando",      label: "⏱ Cuándo aparece" },
+  ];
+  const groupLabel = (g) => cfg.groups[g]?.label || g;
+  const setMode = (id, v) => patchCfg({ modes: { ...cfg.modes, [id]: v } });
+  const setMoment = (id, v) => patchCfg({ moments: { ...cfg.moments, [id]: v } });
+
   return (
-    <div onClick={onClose} style={{
+    <div onClick={requestClose} style={{
       position: "fixed", inset: 0, background: "rgba(20,16,43,.5)", zIndex: 100,
       display: "grid", placeItems: "center", padding: 20, overflow: "auto",
     }}>
@@ -1923,17 +2052,44 @@ function MetaTriggersModal({ quiz, setQuiz, onClose }) {
         }
       `}</style>
       <div onClick={e => e.stopPropagation()} className="qs-card" style={{
-        padding: 28, maxWidth: 760, width: "100%", maxHeight: "92vh", overflowY: "auto",
+        padding: 0, maxWidth: 780, width: "100%", maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden",
       }}>
-        <h2 style={{ fontSize: 22, margin: "0 0 4px" }}>🐶 Esmigol · Activadores metacognitivos</h2>
-        <p style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 16, lineHeight: 1.5 }}>
-          Frases cortas que Esmigol le muestra al estudiante en momentos clave (poco tiempo, ánimo,
-          recordatorios). Los tres grupos se van alternando.
-        </p>
+        <div style={{ padding: "24px 28px 0" }}>
+          <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+            <div style={{ flex: 1 }}>
+              <h2 style={{ fontSize: 22, margin: "0 0 4px" }}>🐶 Esmigol · Activadores metacognitivos</h2>
+              <p style={{ fontSize: 13, color: "var(--ink-500)", marginBottom: 10, lineHeight: 1.5 }}>
+                Una sola configuración para <b>todos tus quizzes</b>: frases, movimientos, en qué modos
+                aparece y en qué momentos.
+              </p>
+            </div>
+            <button onClick={requestClose} title="Cerrar" style={{
+              background: "transparent", border: 0, fontSize: 20, cursor: "pointer", color: "var(--ink-500)",
+            }}>✕</button>
+          </div>
+          {seeded && (
+            <p style={{ fontSize: 12, background: "var(--violet-50)", color: "var(--violet-700)", borderRadius: 10, padding: "8px 12px", margin: "0 0 10px" }}>
+              ℹ️ Partimos de la configuración que tenías en «{seedQuiz.title || "tu último quiz"}». Al guardar se aplicará a todos tus quizzes.
+            </p>
+          )}
 
-        <Toggle label="Activar Esmigol en este quiz" value={cfg.enabled !== false} onChange={v => patchCfg({ enabled: v })} />
+          <Toggle label="Activar Esmigol en mis quizzes" value={cfg.enabled !== false} onChange={v => patchCfg({ enabled: v })} />
 
-        <div className="qs-meta-triggers-grid" style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20, marginTop: 8, marginBottom: 24 }}>
+          <div style={{ display: "flex", gap: 6, borderBottom: "1px solid var(--ink-200)", marginTop: 6, overflowX: "auto" }}>
+            {tabs.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} style={{
+                padding: "10px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer", whiteSpace: "nowrap",
+                background: "transparent", border: 0, marginBottom: -1,
+                borderBottom: "3px solid " + (tab === t.id ? "var(--violet-600)" : "transparent"),
+                color: tab === t.id ? "var(--violet-700)" : "var(--ink-500)",
+              }}>{t.label}</button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ padding: "20px 28px", overflowY: "auto", flex: 1, opacity: cfg.enabled === false ? .55 : 1 }}>
+        {tab === "movimientos" && (
+        <div className="qs-meta-triggers-grid" style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20 }}>
           {/* Mini simulación de celular: dónde y cómo aparece */}
           <div>
             <div style={{
@@ -1945,24 +2101,36 @@ function MetaTriggersModal({ quiz, setQuiz, onClose }) {
               <div style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "rgba(255,255,255,.55)", fontSize: 12, fontWeight: 600, textAlign: "center", padding: 20 }}>
                 Pantalla del<br />estudiante
               </div>
-              {previewPhrase && window.Esmigol && (
-                <window.Esmigol
-                  key={previewKey}
-                  texto={previewPhrase.text}
-                  expression={previewPhrase.expression}
-                  position={cfg.position}
-                  placement="above"
-                  imageSize={Math.max(34, Math.round((cfg.imageSize || 120) * 0.38))}
-                  fontFamily={cfg.fontFamily}
-                  fontColor={cfg.fontColor}
-                  fontSize={Math.max(9, Math.round((cfg.fontSize || 14) * 0.72))}
-                  textAlign={cfg.textAlign}
-                  holdMs={(cfg.holdSeconds || 4) * 1000}
-                  contained
-                  dismissOnClick
-                  onCerrar={() => setPreviewPhrase(null)}
-                />
-              )}
+              {/* Escala real: el marco (184px de ancho útil) representa un
+                  celular de ~400px, así que TODO se dibuja al 46 % — el
+                  tamaño y la posición que se ven aquí son proporcionales
+                  a los del celular. Sin prueba en curso, Esmigol queda
+                  quieto en pantalla para ver cada cambio al instante. */}
+              {window.Esmigol && (() => {
+                const S = 0.46;
+                const testing = !!previewPhrase;
+                const sample = testing ? previewPhrase
+                  : ((cfg.groups[activeGroup]?.phrases || [])[0] || { text: "¡Hola! Así me verán tus estudiantes.", expression: "feliz-1" });
+                return (
+                  <window.Esmigol
+                    key={testing ? "t" + previewKey : "static-" + activeGroup}
+                    texto={sample.text}
+                    expression={sample.expression}
+                    position={cfg.position || "bottom-center"}
+                    placement="above"
+                    imageSize={Math.max(24, Math.round((cfg.imageSize || 120) * S))}
+                    bubbleMaxWidth={Math.round(Math.max(240, (cfg.imageSize || 120) * 1.8) * S)}
+                    fontFamily={cfg.fontFamily}
+                    fontColor={cfg.fontColor}
+                    fontSize={Math.max(7, Math.round((cfg.fontSize || 14) * S * 1.1))}
+                    textAlign={cfg.textAlign}
+                    holdMs={testing ? (cfg.holdSeconds || 4) * 1000 : 1e9}
+                    contained
+                    dismissOnClick={testing}
+                    onCerrar={() => setPreviewPhrase(null)}
+                  />
+                );
+              })()}
             </div>
             <button onClick={runPreview} className="qs-btn qs-btn--primary qs-btn--sm" style={{ width: 200, margin: "10px auto 0", display: "block" }}>
               ▶ Probar "{cfg.groups[activeGroup]?.label || activeGroup}"
@@ -1988,7 +2156,7 @@ function MetaTriggersModal({ quiz, setQuiz, onClose }) {
             </Field>
 
             <Field label={`Tamaño de la imagen · ${cfg.imageSize || 120}px`}>
-              <input type="range" min={60} max={200} step={4} value={cfg.imageSize || 120}
+              <input type="range" min={60} max={280} step={4} value={cfg.imageSize || 120}
                 onChange={e => patchCfg({ imageSize: +e.target.value })} style={{ width: "100%" }} />
             </Field>
 
@@ -2048,8 +2216,95 @@ function MetaTriggersModal({ quiz, setQuiz, onClose }) {
             </Field>
           </div>
         </div>
+        )}
 
-        {/* Los tres grupos de frases */}
+        {/* ---------- Dónde aparece: modos de la plataforma ---------- */}
+        {tab === "donde" && (
+        <div style={{ display: "grid", gap: 10 }}>
+          <p style={{ fontSize: 13, color: "var(--ink-500)", margin: "0 0 4px", lineHeight: 1.5 }}>
+            Activa o desactiva a Esmigol en cada modo. Debajo de cada uno ves en qué momentos puede salir ahí.
+          </p>
+          {modeList.map(m => {
+            const on = cfg.modes[m.id] !== false;
+            const moments = momentList.filter(mo => mo.modes.includes(m.id));
+            const activeMoments = moments.filter(mo => cfg.moments[mo.id] !== false);
+            return (
+              <div key={m.id} style={{
+                border: "1px solid " + (on ? "var(--violet-200)" : "var(--ink-200)"), borderRadius: 14, padding: "12px 14px",
+                background: on ? "var(--violet-50)" : "var(--ink-50)",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 22 }}>{m.emoji}</span>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14 }}>{m.label}</div>
+                    <div style={{ fontSize: 12, color: "var(--ink-500)" }}>{m.desc}</div>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: on ? (activeMoments.length ? "#4ade80" : "#fbbf24") : "var(--ink-500)" }}>
+                    {on ? (activeMoments.length ? "✓ Aparece" : "⚠ Sin momentos activos") : "Apagado"}
+                  </span>
+                  <div style={{ width: 60 }}><Toggle label="" value={on} onChange={v => setMode(m.id, v)} /></div>
+                </div>
+                {on && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 }}>
+                    {moments.map(mo => {
+                      const mOn = cfg.moments[mo.id] !== false;
+                      return (
+                        <span key={mo.id} title={mOn ? "Activo" : "Apagado en «Cuándo aparece»"} style={{
+                          fontSize: 11, fontWeight: 700, borderRadius: 999, padding: "3px 9px",
+                          background: mOn ? "var(--white)" : "transparent", color: mOn ? "var(--ink-700)" : "var(--ink-500)",
+                          border: "1px solid " + (mOn ? "var(--violet-200)" : "var(--ink-200)"),
+                          textDecoration: mOn ? "none" : "line-through",
+                        }}>{mo.emoji} {mo.label}</span>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+        )}
+
+        {/* ---------- Cuándo aparece: momentos ---------- */}
+        {tab === "cuando" && (
+        <div style={{ display: "grid", gap: 8 }}>
+          <p style={{ fontSize: 13, color: "var(--ink-500)", margin: "0 0 4px", lineHeight: 1.5 }}>
+            Cada momento dispara un grupo de frases. Nunca salen dos mensajes encimados: si ya hay uno en
+            pantalla, el siguiente espera.
+          </p>
+          {momentList.map(mo => {
+            const on = cfg.moments[mo.id] !== false;
+            return (
+              <div key={mo.id} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 12,
+                border: "1px solid " + (on ? "var(--violet-200)" : "var(--ink-200)"),
+                background: on ? "var(--white)" : "var(--ink-50)",
+              }}>
+                <span style={{ fontSize: 20 }}>{mo.emoji}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 700, fontSize: 13, color: on ? "var(--ink-900)" : "var(--ink-500)" }}>{mo.label}</div>
+                  <div style={{ fontSize: 11, color: "var(--ink-500)", display: "flex", flexWrap: "wrap", gap: 4, marginTop: 3 }}>
+                    <span style={{ fontWeight: 700 }}>Frases: {groupLabel(mo.group)}</span>
+                    <span>·</span>
+                    {mo.modes.map(id => {
+                      const md = modeList.find(x => x.id === id);
+                      const mdOn = cfg.modes[id] !== false;
+                      return md ? (
+                        <span key={id} title={mdOn ? md.label : md.label + " (modo apagado)"}
+                          style={{ opacity: mdOn ? 1 : .4 }}>{md.emoji} {md.label}</span>
+                      ) : null;
+                    })}
+                  </div>
+                </div>
+                <div style={{ width: 60 }}><Toggle label="" value={on} onChange={v => setMoment(mo.id, v)} /></div>
+              </div>
+            );
+          })}
+        </div>
+        )}
+
+        {/* ---------- Frases ---------- */}
+        {tab === "frases" && (<>
         <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
           {groupOrder.map(g => (
             <button key={g} onClick={() => setActiveGroup(g)} style={{
@@ -2097,10 +2352,28 @@ function MetaTriggersModal({ quiz, setQuiz, onClose }) {
             style={{ flex: 1 }} />
           <button onClick={() => addPhrase(activeGroup)} className="qs-btn qs-btn--ghost qs-btn--sm">+ Agregar</button>
         </div>
+        <p style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 10 }}>
+          Este grupo sale en: {momentList.filter(mo => mo.group === activeGroup).map(mo => mo.emoji + " " + mo.label).join(" · ") || "—"}
+        </p>
+        </>)}
+        </div>
 
-        <button onClick={onClose} className="qs-btn qs-btn--primary" style={{ width: "100%", marginTop: 24 }}>
-          Listo
-        </button>
+        {/* Pie fijo: guardar */}
+        <div style={{
+          padding: "14px 28px", borderTop: "1px solid var(--ink-200)", background: "var(--ink-50)",
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+        }}>
+          <span style={{ flex: 1, fontSize: 12, fontWeight: 700, color: dirty ? "#fbbf24" : "#4ade80", minWidth: 160 }}>
+            {saving ? "Guardando…" : saveMsg || (dirty ? "● Cambios sin guardar" : "Todo guardado")}
+          </span>
+          <button onClick={requestClose} className="qs-btn qs-btn--ghost qs-btn--sm">
+            {dirty ? "Cancelar" : "Cerrar"}
+          </button>
+          <button onClick={save} disabled={!dirty || saving} className="qs-btn qs-btn--primary qs-btn--sm"
+            style={{ opacity: !dirty || saving ? .55 : 1 }}>
+            💾 Guardar
+          </button>
+        </div>
       </div>
     </div>
   );

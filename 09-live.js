@@ -2727,7 +2727,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         // próxima si no. Mismo umbral que en el modo asincrónico (08-online.js).
         if (quiz.mode === "quiz" && esmigolRef.current) {
           const percent = pointsMaxAnswered > 0 ? Math.round((gradePointsSum / pointsMaxAnswered) * 100) : 0;
-          esmigolRef.current.fireNow(percent > 50 ? "logro" : "motivacion");
+          esmigolRef.current.fireNow(percent > 50 ? "logro" : "motivacion", percent > 50 ? "finalBien" : "finalMal");
         }
       })
       .catch(err => console.error("Error contando aciertos:", err));
@@ -2921,7 +2921,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     },
     // Regla nueva, solo Quiz: "falla más de dos".
     rules: (liveIsSurvey || quiz?.mode !== "quiz") ? undefined : [{
-      id: "live-falla-mas-de-dos", group: "motivacion", once: true,
+      id: "live-falla-mas-de-dos", group: "motivacion", once: true, moment: "fallaVarias",
       test: () => (liveTallyRef.current.graded - liveTallyRef.current.correct) > 2,
     }],
   }) : { node: null, fireNow: () => {} };
@@ -2940,7 +2940,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     if (quiz?.mode !== "quiz" || session?.status !== "showResults") return;
     if (!liveQ || liveQ.type === "slide") return;
     if (answeredAtIdx === session.currentQuestionIdx) return; // sí respondió
-    esmigolRef.current.fireNow("tiempo");
+    esmigolRef.current.fireNow("tiempo", "sinTiempo");
   }, [session?.status]);
 
   // ----- Render -----
