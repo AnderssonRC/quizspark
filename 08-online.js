@@ -575,7 +575,7 @@ function StudentExam({ examCode }) {
     // porcentaje de puntos ganados sobre lo respondido.
     if (quiz?.mode === "quiz") {
       const good = grade.percent > 50;
-      esmigol.fireNow(good ? "logro" : "motivacion", good ? "finalBien" : "finalMal");
+      esmigol.fireNow(good ? "logro" : "repaso", good ? "finalBien" : "finalMal");
     }
   };
 
@@ -676,9 +676,23 @@ function StudentExam({ examCode }) {
   // de esas ramas, o React cuenta un número distinto de hooks según la
   // fase y revienta ("Rendered fewer hooks than expected").
   const esmigolQ = questionsOrder[currentIdx];
-  // Regla nueva, solo Quiz: "falla más de dos" — se recalcula junto con la
-  // de nota muy baja (misma llamada a gradeSubmission, sin costo extra).
-  const isQuizMode = quiz?.mode === "quiz";
+  // Racha: aciertos seguidos contando hacia atrás desde la pregunta actual,
+  // en el orden en que el estudiante las ve. Las diapositivas no cuentan;
+  // la pregunta actual sin responder tampoco corta la racha (aún no la
+  // contesta), pero una anterior saltada sí.
+  const esmigolStreak = () => {
+    const byId = {};
+    gradeSubmission(quiz, answers).detail.forEach(d => { byId[d.qid] = d; });
+    let s = 0;
+    for (let i = Math.min(currentIdx, questionsOrder.length - 1); i >= 0; i--) {
+      const d = byId[questionsOrder[i].id];
+      if (!d) continue; // diapositiva
+      if (!d.attempted && i === currentIdx) continue;
+      if (!d.correct) break;
+      s++;
+    }
+    return s;
+  };
   const esmigol = window.useEsmigolTriggers ? window.useEsmigolTriggers({
     mode: quiz?.mode, cfg: window.esmigolConfigFor ? window.esmigolConfigFor(quiz) : quiz?.metaTriggers,
     active: phase === "exam",
@@ -694,13 +708,7 @@ function StudentExam({ examCode }) {
       const min = window.ESMIGOL_HIGH_GRADE_MIN || 3, ratio = window.ESMIGOL_HIGH_GRADE_RATIO || 0.8;
       return g.answered >= min && (g.correct / g.answered) >= ratio;
     },
-    rules: !isQuizMode ? undefined : [{
-      id: "quiz-falla-mas-de-dos", group: "motivacion", once: true, moment: "fallaVarias",
-      test: () => {
-        const g = gradeSubmission(quiz, answers);
-        return (g.answered - g.correct) > 2;
-      },
-    }],
+    streak: isSurvey ? undefined : esmigolStreak,
   }) : { node: null, fireNow: () => {} };
   // Misma razón que answersRef: el temporizador de más abajo arma su
   // efecto una sola vez por pregunta, así que llama a fireNow a través de

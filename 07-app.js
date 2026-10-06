@@ -76,6 +76,8 @@ function App() {
   const [view, setView] = useStateA("dashboard");
   const [editingId, setEditingId] = useStateA(null);
   const [liveQuizId, setLiveQuizId] = useStateA(null);
+  // Sala en vivo existente a la que el docente se reconecta (tras recargar).
+  const [liveResumeId, setLiveResumeId] = useStateA(null);
   const [showAdmin, setShowAdmin] = useStateA(false);
   const [showJoinFromNav, setShowJoinFromNav] = useStateA(false);
   const [unauthedJoin, setUnauthedJoin] = useStateA(false); // estudiante uniéndose desde el login
@@ -220,10 +222,11 @@ function App() {
   }
 
   // ===== VISTA: SALA EN VIVO (profesor) =====
-  if (view === "live" && liveQuizId) {
+  if (view === "live" && (liveQuizId || liveResumeId)) {
     return <window.QS.LiveSessionHost
       quizId={liveQuizId}
-      onExit={() => { setView("dashboard"); setLiveQuizId(null); }}
+      resumeSessionId={liveResumeId}
+      onExit={() => { setView("dashboard"); setLiveQuizId(null); setLiveResumeId(null); }}
     />;
   }
 
@@ -244,7 +247,15 @@ function App() {
       alert("Primero guarda el quiz antes de iniciar una sala en vivo.");
       return;
     }
+    setLiveResumeId(null);
     setLiveQuizId(quizId);
+    setView("live");
+  };
+  // Retomar una sala que sigue abierta en Firestore (el docente recargó la
+  // página o cerró la pestaña sin terminarla).
+  const resumeLiveSession = (sessionId) => {
+    setLiveQuizId(null);
+    setLiveResumeId(sessionId);
     setView("live");
   };
 
@@ -265,6 +276,7 @@ function App() {
             onOpenEditor={(id) => { setEditingId(id); setView("editor"); }}
             onLaunch={startLiveSession}
             onResults={() => setView("results")}
+            onResumeLive={resumeLiveSession}
           />
         )}
         {view === "editor" && (

@@ -626,6 +626,20 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
       const min = window.ESMIGOL_HIGH_GRADE_MIN || 3, ratio = window.ESMIGOL_HIGH_GRADE_RATIO || 0.8;
       return graded >= min && (correct / graded) >= ratio;
     },
+    // Racha: aciertos seguidos hacia atrás desde el paso actual. Las de
+    // texto libre y las diapositivas no se autocalifican: ni suman ni
+    // cortan. El paso actual sin responder no corta (aún no lo contesta).
+    streak: () => {
+      let s = 0;
+      for (let i = Math.min(currentIdx, questions.length - 1); i >= 0; i--) {
+        const qq = questions[i];
+        if (qq.type === "slide" || qq.type === "text") continue;
+        if (!isAnswered(qq)) { if (i === currentIdx) continue; break; }
+        if (!checkClosedWorkshopAnswer(qq, answers[qq.id])) break;
+        s++;
+      }
+      return s;
+    },
   }) : { node: null };
 
   // Vigilar el cierre por fecha límite mientras el estudiante trabaja

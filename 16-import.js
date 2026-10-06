@@ -233,6 +233,10 @@ const IMP_TEXT_EXAMPLE = `# Plantilla de preguntas para Desafíate (texto con co
 # OK: respuestas aceptadas (respuesta corta), separadas por ;
 # IMG: url de imagen      VID: url de YouTube
 # D: diapositiva (título); las líneas siguientes son su texto.
+#    Justo después de C: (sin línea en blanco) "D:" es la OPCIÓN D.
+#    Si quieres una diapositiva ahí, deja una línea en blanco o usa DIAPOSITIVA:
+# Puedes poner varios comandos en una línea separándolos con 2+ espacios:
+#    T: 30    PTS: 10/0/5
 
 P: ¿Cuál es la capital de Colombia?
 A: Bogotá *
@@ -266,18 +270,48 @@ Lee cada pregunta con calma.
 Tienes tiempo de sobra.
 `;
 
+// Varios comandos en una misma línea, separados por 2+ espacios o un
+// tabulador ("T: 30        PTS: 10/0/5", típico de textos generados por IA):
+// se parte en un segmento por comando. Un solo espacio NO parte la línea,
+// para no romper enunciados que contengan algo como "nota: ...".
+const IMP_INLINE_CMD = /(?:\s{2,}|\t+)(?=(?:T|TIEMPO|PTS|PUNTOS|R|RETRO|OK|IMG|IMAGEN|VID|VIDEO)\s*:)/i;
+
+// Caracteres invisibles que suelen venir al copiar de un chat o de Word
+// (espacio de ancho cero, BOM, espacio duro…): quedaban como "espacios en
+// blanco" al final de las opciones.
+const impClean = (s) => String(s ?? "")
+  .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+  .replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ")
+  .replace(/\s+/g, " ")
+  .trim();
+
 function impParseCommandText(src) {
   const lines = String(src || "").replace(/\r/g, "").split("\n");
   const raws = [];
   let cur = null;
+  // ¿La línea anterior (sin líneas en blanco de por medio) fue una opción?
+  // Decide si "D:" es la opción D o una diapositiva nueva.
+  let prevWasOption = false;
   const push = () => { if (cur) raws.push(cur); cur = null; };
   const newRaw = (extra) => ({
     line: 0, type: null, typeRaw: "", text: "", options: [], correctRaw: "", accepted: [], body: [],
     ...extra,
   });
+  const segments = [];
   lines.forEach((line, li) => {
-    const t = line.trim();
-    if (!t || t.startsWith("#") || t.startsWith("//")) return;
+    // Quitar invisibles SIN juntar espacios todavía: los espacios dobles
+    // son los que separan dos comandos en la misma línea.
+    const rawLine = String(line)
+      .replace(/[\u200B-\u200D\u2060\uFEFF]/g, "")
+      .replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ");
+    if (!rawLine.trim()) { segments.push({ t: "", li }); return; }
+    rawLine.trim().split(IMP_INLINE_CMD).forEach(seg => segments.push({ t: impClean(seg), li }));
+  });
+  segments.forEach(({ t, li }) => {
+    if (!t) { prevWasOption = false; return; } // línea en blanco: corta la lista de opciones
+    if (t.startsWith("#") || t.startsWith("//")) return;
+    const wasOption = prevWasOption;
+    prevWasOption = false;
     let m;
     if ((m = t.match(/^(P|PREGUNTA|Q)\s*:\s*(.*)$/i))) {
       push();
@@ -288,7 +322,11 @@ function impParseCommandText(src) {
       cur.text = rest.trim();
       return;
     }
-    if ((m = t.match(/^(D|DIAPOSITIVA|SLIDE)\s*:\s*(.*)$/i))) {
+    // "D:" es la OPCIÓN D si viene justo después de otra opción (A, B, C…)
+    // sin línea en blanco de por medio; si no, es una diapositiva.
+    // "DIAPOSITIVA:" siempre es diapositiva.
+    const isOptionD = /^D\s*[:.)\-]/i.test(t) && wasOption && cur && cur.type !== "slide";
+    if (!isOptionD && (m = t.match(/^(D|DIAPOSITIVA|SLIDE)\s*:\s*(.*)$/i))) {
       push();
       cur = newRaw({ line: li + 1, type: "slide", typeRaw: "diapositiva", text: m[2].trim() });
       return;
@@ -316,10 +354,13 @@ function impParseCommandText(src) {
       let correct = m[1] === "*";
       if (/\*\s*$/.test(txt)) { correct = true; txt = txt.replace(/\s*\*\s*$/, ""); }
       if (/^\*\s*/.test(txt)) { correct = true; txt = txt.replace(/^\*\s*/, ""); }
-      cur.options.push({ text: txt, correct });
+      cur.options.push({ text: txt.trim(), correct });
+      prevWasOption = true;
       return;
     }
-    // Cualquier otra línea: continuación del enunciado
+    // Cualquier otra línea: continuación de lo último que se escribió
+    // (la retroalimentación si ya hubo "R:", si no, el enunciado).
+    if (cur.feedback) { cur.feedback += " " + t; return; }
     cur.text = (cur.text ? cur.text + " " : "") + t;
   });
   push();
@@ -560,7 +601,8 @@ B: Medellín
 T: 30        PTS: 10/0/5                 ← tiempo · puntos acierto/error/bonus (opcionales)
 R: Bogotá es la capital desde 1886.      ← retroalimentación (opcional)
 OK: resp1; resp2                         ← respuestas aceptadas (respuesta corta)
-D: Título de diapositiva                 ← diapositiva; las líneas siguientes son su texto`}
+D: Título de diapositiva                 ← diapositiva (con línea en blanco antes); sus líneas siguientes son el texto
+                                           (justo después de C: sin línea en blanco, "D:" es la opción D)`}
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               <button onClick={() => impDownloadText("ejemplo-preguntas-desafiate.txt", IMP_TEXT_EXAMPLE)} className="qs-btn qs-btn--ghost qs-btn--sm">⬇️ Descargar ejemplo (.txt)</button>

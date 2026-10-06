@@ -169,8 +169,32 @@ function TopNav({ active, onNav, onLaunch, user, onLogout, onAdmin }) {
 }
 
 // =================== DASHBOARD ===================
-function Dashboard({ onOpenEditor, onLaunch, onResults }) {
+function Dashboard({ onOpenEditor, onLaunch, onResults, onResumeLive }) {
   const [quizzes, setQuizzes] = useStateC([]);
+  // Salas en vivo que siguen abiertas (el docente recargó o cerró la pestaña
+  // sin terminarlas): se ofrecen para retomarlas tal como iban.
+  const [openLive, setOpenLive] = useStateC([]);
+  const LIVE_DISMISS_KEY = "qs_live_resume_dismissed";
+  useEffectC(() => {
+    let cancelled = false;
+    const uid = window.QS.currentUser?.uid;
+    if (!uid || !window.QS.findOpenLiveSessions) return;
+    window.QS.findOpenLiveSessions(uid)
+      .then(list => {
+        let dismissed = [];
+        try { dismissed = JSON.parse(sessionStorage.getItem(LIVE_DISMISS_KEY) || "[]"); } catch (e) { /* no-op */ }
+        if (!cancelled) setOpenLive(list.filter(s => !dismissed.includes(s.id)));
+      })
+      .catch(err => console.error("Error buscando salas abiertas:", err));
+    return () => { cancelled = true; };
+  }, []);
+  const dismissLive = (id) => {
+    setOpenLive(list => list.filter(s => s.id !== id));
+    try {
+      const d = JSON.parse(sessionStorage.getItem(LIVE_DISMISS_KEY) || "[]");
+      sessionStorage.setItem(LIVE_DISMISS_KEY, JSON.stringify([...d, id]));
+    } catch (e) { /* no-op: solo se vuelve a mostrar al recargar */ }
+  };
   const [loadingQuizzes, setLoadingQuizzes] = useStateC(true);
   // Estudio de Esmigol (config global para todos los quizzes)
   const [showEsmigol, setShowEsmigol] = useStateC(false);
@@ -278,8 +302,39 @@ function Dashboard({ onOpenEditor, onLaunch, onResults }) {
     }
   };
 
+  const liveStatusText = (s) => {
+    const n = Object.keys(s.participants || {}).length;
+    const where = s.status === "lobby" ? "en la sala de espera"
+      : s.status === "ranking" ? "en el ranking"
+      : s.status === "showResults" ? `mostrando la respuesta ${(s.currentQuestionIdx ?? 0) + 1}`
+      : `en la pregunta ${(s.currentQuestionIdx ?? 0) + 1}`;
+    return `Código ${s.code || "—"} · ${where} · ${n} estudiante${n === 1 ? "" : "s"} conectado${n === 1 ? "" : "s"}`;
+  };
+
   return (
     <div style={{ maxWidth: 1200, margin: "0 auto", padding: "32px" }}>
+      {/* Salas en vivo sin terminar: retomarlas tras recargar la página */}
+      {onResumeLive && openLive.map(s => (
+        <div key={s.id} className="qs-card" style={{
+          display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap", padding: "14px 18px", marginBottom: 16,
+          border: "2px solid #ef4444", background: "linear-gradient(135deg, rgba(239,68,68,.12), rgba(239,68,68,.04))",
+        }}>
+          <span style={{ width: 12, height: 12, borderRadius: "50%", background: "#ef4444", boxShadow: "0 0 0 4px rgba(239,68,68,.25)", flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 220 }}>
+            <div style={{ fontWeight: 800, fontSize: 15 }}>
+              🔴 Tienes {s.mode === "workshop" ? "un taller" : "un quiz"} en vivo sin terminar: «{s.quizTitle || "Sala en vivo"}»
+            </div>
+            <div style={{ fontSize: 13, color: "var(--ink-500)", marginTop: 2 }}>{liveStatusText(s)}. Sigue abierto: retómalo donde iba.</div>
+          </div>
+          <button onClick={() => onResumeLive(s.id)} className="qs-btn qs-btn--primary qs-btn--sm" style={{ fontWeight: 800 }}>
+            ▶️ Retomar en vivo
+          </button>
+          <button onClick={() => dismissLive(s.id)} className="qs-btn qs-btn--ghost qs-btn--sm" title="Ocultar este aviso por ahora">
+            Ahora no
+          </button>
+        </div>
+      ))}
+
       {/* Hero */}
       <div className="qs-card" style={{
         padding: "32px 40px", marginBottom: 32, position: "relative", overflow: "hidden",
@@ -1842,7 +1897,7 @@ function QuestionTextEditor({ value, onChange, questionKey, onFocusField }) {
 // dentro de cada quiz). La config vive en users/{uid}.esmigolConfig y, al
 // guardar, se copia a quiz.metaTriggers de cada quiz suyo: el estudiante
 // entra sin sesión y solo puede leer la colección quizzes.
-const ESMIGOL_GROUP_DEFAULT_EXPRESSION = { tiempo: "pocotiempo-1", motivacion: "feliz-1", recuerdo: "pensativo-1", logro: "feliz-1" };
+const ESMIGOL_GROUP_DEFAULT_EXPRESSION = { tiempo: "sin-tiempo", recuerdo: "triste", racha: "retador", repaso: "empieza-a-leer", logro: "alegre", motivacion: "explorador", docenteVivo: "retador" };
 
 const ESMIGOL_INVITES = [
   "¡Hola! ¿Me enseñas frases nuevas para tus estudiantes?",
@@ -1881,7 +1936,7 @@ function EsmigolDashboardCard({ onEdit }) {
           .qs-esmigol-card-chips { justify-content: center; }
         }
       `}</style>
-      <img src={window.esmigolImageSrc ? window.esmigolImageSrc("feliz-1") : ""} alt="Esmigol"
+      <img src={window.esmigolImageSrc ? window.esmigolImageSrc("alegre") : ""} alt="Esmigol"
         style={{
           height: 110, width: "auto", flexShrink: 0, filter: "drop-shadow(0 8px 12px rgba(0,0,0,.2))",
           animation: "qs-esmigol-card-bob 2.6s ease-in-out infinite", opacity: on ? 1 : .55,
@@ -2010,7 +2065,7 @@ function EsmigolStudioModal({ onClose, onSaved, seedQuiz }) {
     const text = newPhraseText.trim();
     if (!text) return;
     const list = [...(cfg.groups[groupId]?.phrases || []), {
-      id: "custom-" + Date.now(), text, expression: ESMIGOL_GROUP_DEFAULT_EXPRESSION[groupId] || "feliz-1",
+      id: "custom-" + Date.now(), text, expression: ESMIGOL_GROUP_DEFAULT_EXPRESSION[groupId] || "alegre",
     }];
     patchGroupPhrases(groupId, list);
     setNewPhraseText("");
@@ -2087,7 +2142,24 @@ function EsmigolStudioModal({ onClose, onSaved, seedQuiz }) {
           </div>
         </div>
 
-        <div style={{ padding: "20px 28px", overflowY: "auto", flex: 1, opacity: cfg.enabled === false ? .55 : 1 }}>
+        <div style={{ padding: "20px 28px", overflowY: "auto", flex: 1 }}>
+        {/* Desactivado: aviso claro en vez de oscurecer el editor (se
+            puede seguir editando todo con brillo normal). */}
+        {cfg.enabled === false && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+            padding: "10px 14px", borderRadius: 12, marginBottom: 16,
+            background: "rgba(251,191,36,.12)", border: "1px solid rgba(251,191,36,.45)", color: "#fbbf24",
+            fontSize: 13, fontWeight: 700,
+          }}>
+            <span style={{ flex: 1, minWidth: 200 }}>
+              😴 Esmigol está desactivado: tus estudiantes no lo verán hasta que lo actives y guardes.
+            </span>
+            <button onClick={() => patchCfg({ enabled: true })} className="qs-btn qs-btn--sm" style={{
+              background: "#f59e0b", color: "#fff", border: 0, fontWeight: 800,
+            }}>Activar</button>
+          </div>
+        )}
         {tab === "movimientos" && (
         <div className="qs-meta-triggers-grid" style={{ display: "grid", gridTemplateColumns: "220px 1fr", gap: 20 }}>
           {/* Mini simulación de celular: dónde y cómo aparece */}
@@ -2110,7 +2182,7 @@ function EsmigolStudioModal({ onClose, onSaved, seedQuiz }) {
                 const S = 0.46;
                 const testing = !!previewPhrase;
                 const sample = testing ? previewPhrase
-                  : ((cfg.groups[activeGroup]?.phrases || [])[0] || { text: "¡Hola! Así me verán tus estudiantes.", expression: "feliz-1" });
+                  : ((cfg.groups[activeGroup]?.phrases || [])[0] || { text: "¡Hola! Así me verán tus estudiantes.", expression: "alegre" });
                 return (
                   <window.Esmigol
                     key={testing ? "t" + previewKey : "static-" + activeGroup}
@@ -2380,6 +2452,8 @@ function EsmigolStudioModal({ onClose, onSaved, seedQuiz }) {
 }
 
 function SettingsModal({ quiz, setQuiz, onClose }) {
+  // Ventana de privilegios de Competencia Extrema (15-extreme.js)
+  const [showExtremePrivs, setShowExtremePrivs] = useStateC(false);
   // Modo Sin Celular (lectio/OMR): en papel no hay pointsCorrect/pointsSpeedBonus
   // (eso es del quiz digital) ni valor por pregunta (todas pesan igual) —
   // el total es simplemente el número de preguntas de opción múltiple.
@@ -2467,7 +2541,48 @@ function SettingsModal({ quiz, setQuiz, onClose }) {
                 </div>
               </div>
             </label>
+            {/* Elegir qué privilegios se pueden ganar en este quiz (15-extreme.js) */}
+            {quiz.extremeMode && window.ExtremePrivilegesModal && (() => {
+              const nOn = window.extremeEnabledIds ? window.extremeEnabledIds(quiz).length : 0;
+              const nAll = (window.EXTREME_PRIVILEGES || []).length;
+              return (
+                <button onClick={() => setShowExtremePrivs(true)} className="qs-btn qs-btn--sm" style={{
+                  marginTop: 12, width: "100%", justifyContent: "space-between",
+                  background: "rgba(255,255,255,.12)", color: "#fff", border: "1px solid rgba(255,213,79,.6)", fontWeight: 800,
+                }}>
+                  <span>🎛️ Elegir privilegios</span>
+                  <span style={{ color: nOn === 0 ? "#ffab91" : "#ffd54f" }}>{nOn} de {nAll} activos ›</span>
+                </button>
+              );
+            })()}
           </div>
+        )}
+        {/* MODO SIN PROYECCIÓN: el docente es el único que ve su pantalla en
+            la sala en vivo, así que puede ver la respuesta correcta y las
+            estadísticas de aciertos mientras los estudiantes responden. */}
+        {(quiz.mode === "quiz" || (quiz.mode === "workshop" && (quiz.workshopMode || "live") === "live")) && (
+          <div style={{
+            marginTop: 10, padding: 14, borderRadius: 14,
+            background: quiz.noProjection ? "var(--violet-50)" : "var(--ink-50)",
+            border: "1px solid " + (quiz.noProjection ? "var(--violet-400)" : "var(--ink-200)"),
+          }}>
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 12, cursor: "pointer" }}>
+              <input type="checkbox" checked={!!quiz.noProjection}
+                onChange={e => setQuiz(q => ({ ...q, noProjection: e.target.checked }))}
+                style={{ width: 20, height: 20, marginTop: 2, accentColor: "var(--violet-600)" }} />
+              <div>
+                <div style={{ fontWeight: 800, fontSize: 15 }}>🙈 Modo Sin Proyección (sala en vivo)</div>
+                <div style={{ fontSize: 13, lineHeight: 1.5, color: "var(--ink-500)", marginTop: 4 }}>
+                  Actívalo si <b>solo tú</b> ves tu pantalla (no la proyectas). Mientras responden verás la
+                  <b> respuesta correcta</b>, quién acierta y quién falla, y una <b>gráfica de torta</b> con los aciertos.
+                </div>
+              </div>
+            </label>
+          </div>
+        )}
+
+        {showExtremePrivs && window.ExtremePrivilegesModal && (
+          <window.ExtremePrivilegesModal quiz={quiz} setQuiz={setQuiz} onClose={() => setShowExtremePrivs(false)} />
         )}
 
         {isOmr ? (

@@ -306,31 +306,55 @@ window.MetaTimerBadge = MetaTimerBadge;
 // apple-touch-icon.png / logo-res-cogitas.png (sin carpeta assets/ propia
 // todavía) — versionadas con ?v=1.0.0 para poder invalidar caché al subir
 // una expresión nueva sin tocar el número de versión del script en index.html.
-const ESMIGOL_ASSET_VERSION = "1.0.0";
+// Nombres de archivo: "esmigol-<emoción>.webp", en minúsculas y sin espacios
+// (el servidor distingue mayúsculas y un espacio rompe la URL).
+const ESMIGOL_ASSET_VERSION = "2.0.0";
 const ESMIGOL_EXPRESSIONS = {
-  default:         "esmigol-cuerpo-completo.webp",
-  "pocotiempo-1":  "esmigol-pocotiempo-1.webp",
-  "pensativo-1":   "esmigol-pensativo-1.webp",
-  "sorprendido-1": "esmigol-sorprendido-1.webp",
-  "feliz-1":       "esmigol-feliz-1.webp",
-  "dormido-1":     "esmigol-dormido-1.webp",
-  "enojado-1":     "esmigol-enojado-1.webp",
-  "confundido-1":  "esmigol-confundido-1.webp",
+  default:          "esmigol-alegre.webp",
+  "alegre":         "esmigol-alegre.webp",
+  "retador":        "esmigol-retador.webp",
+  "sorprendido":    "esmigol-sorprendido.webp",
+  "enojado":        "esmigol-enojado.webp",
+  "triste":         "esmigol-triste.webp",
+  "sin-tiempo":     "esmigol-sin-tiempo.webp",
+  "empieza-a-leer": "esmigol-empieza-a-leer.webp",
+  "pensativo":      "esmigol-pensativo.webp",
+  "explorador":     "esmigol-explorador.webp",
+  "aburrido":       "esmigol-aburrido.webp",
 };
+// Rostros de la primera versión (sus imágenes ya no existen). Las frases
+// guardadas en Firestore todavía pueden traer estos ids: se muestran con
+// el rostro nuevo más parecido en vez de una imagen rota.
+const ESMIGOL_EXPRESSION_ALIASES = {
+  "pocotiempo-1":  "sin-tiempo",
+  "pensativo-1":   "pensativo",
+  "sorprendido-1": "sorprendido",
+  "feliz-1":       "alegre",
+  "dormido-1":     "aburrido",
+  "enojado-1":     "enojado",
+  "confundido-1":  "pensativo",
+};
+function esmigolExpressionId(expression) {
+  if (ESMIGOL_EXPRESSIONS[expression]) return expression;
+  return ESMIGOL_EXPRESSION_ALIASES[expression] || "default";
+}
 // Lista en el mismo orden en que están guardados los rostros — se usa para
 // construir los selectores del editor (17-richtext.js sigue el mismo patrón
 // de exponer listas + mapa junto al helper que las resuelve).
 const ESMIGOL_EXPRESSION_LIST = [
-  { id: "pocotiempo-1",  emoji: "⏰", label: "Poco tiempo" },
-  { id: "pensativo-1",   emoji: "🤔", label: "Pensativo" },
-  { id: "sorprendido-1", emoji: "😮", label: "Sorprendido" },
-  { id: "feliz-1",       emoji: "😄", label: "Feliz" },
-  { id: "dormido-1",     emoji: "😴", label: "Dormido" },
-  { id: "enojado-1",     emoji: "😠", label: "Enojado" },
-  { id: "confundido-1",  emoji: "😵", label: "Confundido" },
+  { id: "alegre",         emoji: "😄", label: "Alegre" },
+  { id: "retador",        emoji: "😏", label: "Retador" },
+  { id: "sorprendido",    emoji: "😮", label: "Sorprendido" },
+  { id: "enojado",        emoji: "😠", label: "Enojado" },
+  { id: "triste",         emoji: "😢", label: "Triste" },
+  { id: "sin-tiempo",     emoji: "⏰", label: "Sin tiempo" },
+  { id: "empieza-a-leer", emoji: "📖", label: "Empieza a leer" },
+  { id: "pensativo",      emoji: "🤔", label: "Pensativo" },
+  { id: "explorador",     emoji: "🧭", label: "Explorador" },
+  { id: "aburrido",       emoji: "😴", label: "Aburrido" },
 ];
 function esmigolImageSrc(expression = "default") {
-  const file = ESMIGOL_EXPRESSIONS[expression] || ESMIGOL_EXPRESSIONS.default;
+  const file = ESMIGOL_EXPRESSIONS[esmigolExpressionId(expression)];
   return `${file}?v=${ESMIGOL_ASSET_VERSION}`;
 }
 
@@ -375,54 +399,97 @@ const ESMIGOL_TEXT_ALIGN_OPTIONS = [
   { id: "center", label: "Centrado" },
 ];
 
-// ---------- Los tres grupos de frases que se alternan ----------
+// ---------- Grupos de frases (uno por situación) ----------
 // Cada frase trae un rostro por defecto (editable frase por frase en el
 // editor); "expression" debe ser uno de los ids de ESMIGOL_EXPRESSION_LIST.
-const ESMIGOL_TRIGGER_GROUP_ORDER = ["tiempo", "motivacion", "recuerdo", "logro"];
+// El tono de cada frase va con su rostro: triste = pide calma y leer bien,
+// enojado = regaña, retador = provoca ("a ver si puedes"), etc.
+//   tiempo      se quedó sin tiempo / tarda mucho → Sin tiempo, Enojado
+//   recuerdo    va mal después de dos preguntas    → Enojado, Retador, Triste
+//   racha       más de 3 aciertos seguidos         → Retador, Sorprendido
+//   repaso      terminó y le fue mal               → Triste, Enojado, Empieza a leer
+//   logro       terminó (o va) muy bien            → Alegre, Retador
+//   motivacion  al empezar / cada 5 minutos        → Explorador, Pensativo, Alegre
+// Al cambiar estas frases base, subir ESMIGOL_PHRASES_VERSION (ver
+// esmigolConfigFor) para que las configs ya guardadas las reciban.
+const ESMIGOL_PHRASES_VERSION = 3;
+//   docenteVivo lo envía el docente a mano desde el tablero de la sala en
+//               vivo (retar, motivar, "los observamos") → Retador, Alegre…
+const ESMIGOL_TRIGGER_GROUP_ORDER = ["tiempo", "recuerdo", "racha", "repaso", "logro", "motivacion", "docenteVivo"];
 const ESMIGOL_TRIGGER_GROUPS_DEFAULT = {
   tiempo: {
     label: "⏰ Tiempo",
     phrases: [
-      { id: "tiempo-1", text: "Corre que te queda poco ¡TIEMPO!",                         expression: "pocotiempo-1" },
-      { id: "tiempo-2", text: "¡Ey!, más rápido que se agota el tiempo",                   expression: "pocotiempo-1" },
-      { id: "tiempo-3", text: "¡Bu!, te has demorado mucho…",                              expression: "sorprendido-1" },
-      { id: "tiempo-4", text: "¿Hasta qué hora? Responde ya…",                             expression: "enojado-1" },
-      { id: "tiempo-5", text: "Un caracol es mil veces más rápido, ironía, ¿Entiendes?",   expression: "confundido-1" },
-      { id: "tiempo-6", text: "Ey, me dormí al ver que no avanzas…",                       expression: "dormido-1" },
-      { id: "tiempo-7", text: "Tardas demasiado",                                          expression: "enojado-1" },
-    ],
-  },
-  motivacion: {
-    label: "💪 Motivación",
-    phrases: [
-      { id: "motivacion-1", text: "Animo… Tú puedes.",                                          expression: "feliz-1" },
-      { id: "motivacion-2", text: "Mmmm… Otros se han parado de peores escenarios",              expression: "pensativo-1" },
-      { id: "motivacion-3", text: "¿Rendirse? Eso no es una opción…",                            expression: "feliz-1" },
-      { id: "motivacion-4", text: "¿Ya entiendes por qué es importante estudiar? Estudia…",      expression: "pensativo-1" },
-      { id: "motivacion-5", text: "¡Ey! no es momento para lamentarse",                          expression: "feliz-1" },
+      { id: "tiempo-1", text: "¡Se acabó el tiempo! El reloj no espera a nadie.",   expression: "sin-tiempo" },
+      { id: "tiempo-2", text: "Tic, tac… la próxima responde antes.",               expression: "sin-tiempo" },
+      { id: "tiempo-3", text: "¡Corre! El tiempo vuela y tú sigues pensando.",      expression: "sin-tiempo" },
+      { id: "tiempo-4", text: "¿En serio? Te quedaste sin tiempo otra vez…",        expression: "enojado" },
+      { id: "tiempo-5", text: "¿Hasta qué hora? ¡Responde ya!",                     expression: "enojado" },
     ],
   },
   recuerdo: {
     label: "🧠 Recuerdo",
     phrases: [
-      { id: "recuerdo-1", text: "Anota esa pregunta",                                    expression: "pensativo-1" },
-      { id: "recuerdo-2", text: "Recuerda…Leer bien importa",                             expression: "pensativo-1" },
-      { id: "recuerdo-3", text: "Preguntar no te hace menos… Pregunta",                   expression: "feliz-1" },
-      { id: "recuerdo-4", text: "Un paso a la vez: verifica antes de enviar",              expression: "pensativo-1" },
-      { id: "recuerdo-5", text: "Memorizar es importante y necesario para comprender",     expression: "pensativo-1" },
+      { id: "recuerdo-1", text: "Ayúdate un poco, lee bien.",                               expression: "triste" },
+      { id: "recuerdo-2", text: "Me pones triste… respira y vuelve a leer la pregunta.",    expression: "triste" },
+      { id: "recuerdo-3", text: "¡Otra vez no! Lee con calma antes de marcar.",             expression: "enojado" },
+      { id: "recuerdo-4", text: "¿Estudiaste o viniste a adivinar?",                         expression: "enojado" },
+      { id: "recuerdo-5", text: "¿Eso es todo lo que tienes? Demuéstrame lo contrario.",    expression: "retador" },
+      { id: "recuerdo-6", text: "Apuesto a que tampoco aciertas la siguiente… ¿o sí?",      expression: "retador" },
     ],
   },
-  // Grupo nuevo: felicitación al terminar un quiz con más de la mitad del
-  // puntaje (regla propia de Quiz, ver 08-online.js). Separado de
-  // "motivacion" porque el tono es distinto: celebrar un logro ya hecho,
-  // no empujar a seguir intentando.
+  racha: {
+    label: "🔥 Racha",
+    phrases: [
+      { id: "racha-1", text: "A ver si continúa esa racha (no creo).",          expression: "retador" },
+      { id: "racha-2", text: "¿Cuatro seguidas? Seguro la próxima fallas…",     expression: "retador" },
+      { id: "racha-3", text: "Suerte de principiante… demuéstrame que no.",     expression: "retador" },
+      { id: "racha-4", text: "¡¿Qué?! No me esperaba tantas seguidas.",         expression: "sorprendido" },
+      { id: "racha-5", text: "Wow… ¿quién te enseñó tanto?",                    expression: "sorprendido" },
+    ],
+  },
+  repaso: {
+    label: "📚 Repaso",
+    phrases: [
+      { id: "repaso-1", text: "Esta vez no salió… ayúdate un poco y repasa.",   expression: "triste" },
+      { id: "repaso-2", text: "Me dejaste triste. La próxima lee con calma.",   expression: "triste" },
+      { id: "repaso-3", text: "Esto no me gustó nada. ¡A estudiar!",            expression: "enojado" },
+      { id: "repaso-4", text: "Abre el cuaderno: la próxima será distinta.",    expression: "empieza-a-leer" },
+      { id: "repaso-5", text: "Leer un poco más hoy es acertar mañana.",        expression: "empieza-a-leer" },
+    ],
+  },
   logro: {
     label: "🏆 Logro",
     phrases: [
-      { id: "logro-1", text: "¡Excelente! Te luciste en este quiz.",       expression: "feliz-1" },
-      { id: "logro-2", text: "¡Wow! Ibas que volabas.",                    expression: "feliz-1" },
-      { id: "logro-3", text: "Esa nota se ve muy bien en ti.",             expression: "feliz-1" },
-      { id: "logro-4", text: "¡Lo lograste! Esto se ve genial.",           expression: "feliz-1" },
+      { id: "logro-1", text: "¡Excelente! Te luciste en este quiz.",                expression: "alegre" },
+      { id: "logro-2", text: "¡Lo lograste! Esto se ve genial.",                    expression: "alegre" },
+      { id: "logro-3", text: "Esa nota se ve muy bien en ti.",                      expression: "alegre" },
+      { id: "logro-4", text: "Nada mal… pero el próximo será más difícil.",         expression: "retador" },
+      { id: "logro-5", text: "Ganaste esta. ¿Te atreves con la siguiente?",         expression: "retador" },
+    ],
+  },
+  motivacion: {
+    label: "💪 Motivación",
+    phrases: [
+      { id: "motivacion-1", text: "¡A explorar! Cada pregunta es un camino nuevo.",  expression: "explorador" },
+      { id: "motivacion-2", text: "¿Rendirse? Eso no es una opción.",                expression: "explorador" },
+      { id: "motivacion-3", text: "Piensa con calma: ¿qué sabes de esto?",           expression: "pensativo" },
+      { id: "motivacion-4", text: "Mmm… otros han salido de peores escenarios.",     expression: "pensativo" },
+      { id: "motivacion-5", text: "¡Ánimo! Tú puedes.",                              expression: "alegre" },
+    ],
+  },
+  // No lo dispara ningún momento automático: el docente elige la frase y
+  // la envía en directo desde el tablero de la sala en vivo (09-live.js).
+  docenteVivo: {
+    label: "🎙️ Docente en vivo",
+    phrases: [
+      { id: "docenteVivo-1", text: "Yo y el profe los observamos, ojo con hacer trampa.",   expression: "retador" },
+      { id: "docenteVivo-2", text: "El profe dice: ¡a ver quién acierta esta!",              expression: "retador" },
+      { id: "docenteVivo-3", text: "¿Muy fácil? El profe guardó la difícil para el final.",  expression: "retador" },
+      { id: "docenteVivo-4", text: "El profe está orgulloso de este grupo. ¡Sigan así!",     expression: "alegre" },
+      { id: "docenteVivo-5", text: "¡Ánimo! El profe confía en ustedes.",                    expression: "alegre" },
+      { id: "docenteVivo-6", text: "Lean con calma, el profe no tiene afán.",                expression: "pensativo" },
+      { id: "docenteVivo-7", text: "Se acaba el tiempo… ¡el profe está contando!",           expression: "sin-tiempo" },
     ],
   },
 };
@@ -448,13 +515,14 @@ function esmigolModeKey(mode, live) {
 const ESMIGOL_MOMENT_LIST = [
   { id: "inicio",      emoji: "🚀", label: "Al empezar la actividad",               group: "motivacion", modes: ["quiz", "survey", "workshop", "live", "lectio"], defaultOn: false },
   { id: "lento",       emoji: "🐢", label: "Tarda mucho en una pregunta (~1:15)",    group: "tiempo",     modes: ["quiz", "survey", "workshop", "live", "lectio"] },
-  { id: "sinTiempo",   emoji: "⏰", label: "Se le acaba el tiempo sin responder",    group: "tiempo",     modes: ["quiz", "live"] },
-  { id: "vaMal",       emoji: "📉", label: "Va mal (menos del 40 % de aciertos)",    group: "recuerdo",   modes: ["quiz", "workshop", "live"] },
-  { id: "fallaVarias", emoji: "❌", label: "Falla más de dos preguntas",             group: "motivacion", modes: ["quiz", "live"] },
-  { id: "vaBien",      emoji: "📈", label: "Va muy bien (80 % o más de aciertos)",   group: "logro",      modes: ["quiz", "workshop", "live"] },
-  { id: "periodico",   emoji: "🔁", label: "Cada 5 minutos, para dar ánimo",         group: "motivacion", modes: ["quiz", "survey", "workshop", "live", "lectio"] },
-  { id: "finalBien",   emoji: "🏆", label: "Al terminar con más de la mitad",        group: "logro",      modes: ["quiz", "live"] },
-  { id: "finalMal",    emoji: "🌱", label: "Al terminar con la mitad o menos",       group: "motivacion", modes: ["quiz", "live"] },
+  { id: "sinTiempo",   emoji: "⏰", label: "Se quedó sin tiempo sin responder",                     group: "tiempo",     modes: ["quiz", "live"] },
+  { id: "vaMal",       emoji: "📉", label: "Va mal después de dos preguntas (menos de la mitad)",   group: "recuerdo",   modes: ["quiz", "workshop", "live"] },
+  { id: "racha",       emoji: "🔥", label: "Racha de más de 3 aciertos seguidos",                   group: "racha",      modes: ["quiz", "workshop", "live"] },
+  { id: "vaBien",      emoji: "📈", label: "Va muy bien (80 % o más de aciertos)",                  group: "logro",      modes: ["quiz", "workshop", "live"] },
+  { id: "periodico",   emoji: "🔁", label: "Cada 5 minutos, para dar ánimo",                        group: "motivacion", modes: ["quiz", "survey", "workshop", "live", "lectio"] },
+  { id: "finalBien",   emoji: "🏆", label: "Al terminar, si le fue bien (más de la mitad)",         group: "logro",      modes: ["quiz", "live"] },
+  { id: "finalMal",    emoji: "📚", label: "Al terminar, si le fue mal (la mitad o menos)",         group: "repaso",     modes: ["quiz", "live"] },
+  { id: "docenteVivo", emoji: "🎙️", label: "Cuando el docente lo envía en vivo desde el tablero",  group: "docenteVivo", modes: ["live"] },
 ];
 const ESMIGOL_MODES_DEFAULT = ESMIGOL_MODE_LIST.reduce((o, m) => { o[m.id] = true; return o; }, {});
 const ESMIGOL_MOMENTS_DEFAULT = ESMIGOL_MOMENT_LIST.reduce((o, m) => { o[m.id] = m.defaultOn !== false; return o; }, {});
@@ -473,6 +541,7 @@ const ESMIGOL_TRIGGERS_DEFAULT = {
   // traiga "bottom-right" (el antiguo valor por defecto) se muestra
   // centrada; ver esmigolConfigFor.
   layoutVersion: 2,
+  phrasesVersion: ESMIGOL_PHRASES_VERSION,
   imageSize: 120,
   fontFamily: ESMIGOL_FONT_OPTIONS[0].value,
   fontColor: ESMIGOL_TEXT_COLORS[0],
@@ -693,7 +762,7 @@ function EsmigolExpressionPicker({ value, onChange, size = 30 }) {
   const [open, setOpen] = useStateMeta(false);
   const [rect, setRect] = useStateMeta(null);
   const list = ESMIGOL_EXPRESSION_LIST;
-  const current = list.find(e => e.id === value) || list[0];
+  const current = list.find(e => e.id === esmigolExpressionId(value)) || list[0];
 
   const openMenu = () => {
     if (btnRef.current) setRect(btnRef.current.getBoundingClientRect());
@@ -719,7 +788,7 @@ function EsmigolExpressionPicker({ value, onChange, size = 30 }) {
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
           <div className="qs-card" style={{
             position: "fixed",
-            top: rect ? Math.min(rect.bottom + 4, window.innerHeight - 190) : 0,
+            top: rect ? Math.min(rect.bottom + 4, window.innerHeight - 270) : 0,
             left: rect ? Math.min(rect.left, window.innerWidth - 200) : 0,
             width: 190, zIndex: 9999, padding: 10,
             display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6,
@@ -728,8 +797,8 @@ function EsmigolExpressionPicker({ value, onChange, size = 30 }) {
               <button key={ex.id} type="button" onClick={() => pick(ex.id)} title={ex.label} style={{
                 display: "flex", flexDirection: "column", alignItems: "center", gap: 2,
                 padding: 4, borderRadius: 10, cursor: "pointer",
-                background: ex.id === value ? "var(--violet-100)" : "transparent",
-                border: "2px solid " + (ex.id === value ? "var(--violet-500)" : "transparent"),
+                background: ex.id === current.id ? "var(--violet-100)" : "transparent",
+                border: "2px solid " + (ex.id === current.id ? "var(--violet-500)" : "transparent"),
               }}>
                 <img src={esmigolImageSrc(ex.id)} alt={ex.label} style={{ width: 40, height: 40, objectFit: "contain" }} />
                 <span style={{ fontSize: 9, fontWeight: 700, color: "var(--ink-600)", textAlign: "center", lineHeight: 1.15 }}>{ex.label}</span>
@@ -758,6 +827,7 @@ window.esmigolModeKey = esmigolModeKey;
 window.esmigolCloneDefaultTriggers = esmigolCloneDefaultTriggers;
 window.esmigolPickPhrase = esmigolPickPhrase;
 window.esmigolImageSrc = esmigolImageSrc;
+window.esmigolExpressionId = esmigolExpressionId;
 
 // ============================================================
 // MOTOR DE REGLAS DE APARICIÓN (transversal a todos los modos)
@@ -785,7 +855,7 @@ window.esmigolImageSrc = esmigolImageSrc;
 //     cooldownMs: 0,      // (opcional) o en vez de "once", espaciarla
 //     modes: ["quiz","survey","workshop","lectio"], // (opcional) limitar a
 //                          // ciertos modos; si se omite, aplica a todos
-//     moment: "fallaVarias", // (opcional) id de ESMIGOL_MOMENT_LIST: si el
+//     moment: "vaMal",     // (opcional) id de ESMIGOL_MOMENT_LIST: si el
 //                          // docente apaga ese momento, la regla no dispara
 //     test(ctx) { return true/false; },
 //       // ctx = { mode, live, now, startedAt, questionId,
@@ -798,8 +868,9 @@ window.esmigolImageSrc = esmigolImageSrc;
 //   });
 const ESMIGOL_SLOW_MS = 75000;             // "un minuto o 1:30" → punto medio
 const ESMIGOL_MOTIVATE_MS = 5 * 60 * 1000; // "cada cinco minutos"
-const ESMIGOL_LOW_GRADE_RATIO = 0.4;       // "nota muy baja" → menos del 40%
-const ESMIGOL_LOW_GRADE_MIN = 2;           // con al menos 2 respuestas calificables
+const ESMIGOL_LOW_GRADE_RATIO = 0.5;       // "va mal" → menos de la mitad de aciertos
+const ESMIGOL_LOW_GRADE_MIN = 2;           // después de al menos 2 respuestas calificables
+const ESMIGOL_STREAK_MIN = 3;              // "racha superior a 3" → 4 o más aciertos seguidos
 const ESMIGOL_HIGH_GRADE_RATIO = 0.8;      // "va muy bien" → 80% o más de aciertos
 const ESMIGOL_HIGH_GRADE_MIN = 3;          // con al menos 3 respuestas calificables
 
@@ -831,9 +902,13 @@ window.ESMIGOL_CUSTOM_RULES = ESMIGOL_CUSTOM_RULES;
 //   highGrade    () => boolean — igual que lowGrade pero para "va muy
 //                bien" (regla 4, felicita con el grupo "logro"); si se
 //                omite, esa regla queda desactivada para ese modo
+//   streak       () => number — aciertos seguidos hasta ahora (el modo
+//                decide cómo contarlos); al pasar de ESMIGOL_STREAK_MIN
+//                sale el grupo "racha". Una vez por racha: si la racha se
+//                corta y vuelve a crecer, puede salir de nuevo
 //   rules        reglas EXTRA propias de este modo (ver comentario arriba)
 //   live         true si es una sesión de sala en vivo (informativo, va en ctx)
-function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade, highGrade, rules, live = false }) {
+function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade, highGrade, streak, rules, live = false }) {
   // Apagado en general, o apagado solo en este modo (pestaña "Dónde
   // aparece" del editor del dashboard).
   const enabled = !!cfg && cfg.enabled !== false
@@ -857,6 +932,8 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
   // y siempre lea la versión más reciente.
   const lowGradeRef = useRefMeta(lowGrade); lowGradeRef.current = lowGrade;
   const highGradeRef = useRefMeta(highGrade); highGradeRef.current = highGrade;
+  const streakRef = useRefMeta(streak); streakRef.current = streak;
+  const streakFiredRef = useRefMeta(false); // ya saludó a la racha actual
   const rulesRef = useRefMeta(rules); rulesRef.current = rules;
   // `cfg` llega recalculado (objeto NUEVO) en cada render — por ejemplo
   // esmigolConfigFor() arma un objeto de fusión distinto cada vez que se
@@ -886,7 +963,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
     const p = window.esmigolPickPhrase(c.groups, groupId, usedPhraseIdsRef.current);
     if (!p) return false;
     usedPhraseIdsRef.current.add(p.id);
-    setPhrase(p);
+    setPhrase({ ...p, _key: Date.now() });
     return true;
   };
 
@@ -915,7 +992,19 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
         if (fire("tiempo", "lento")) return;
       }
 
-      // Regla 3: nota muy baja (si el modo la ofrece).
+      // Racha: más de ESMIGOL_STREAK_MIN aciertos seguidos (si el modo la
+      // ofrece). Se rearma cuando la racha se corta.
+      if (typeof streakRef.current === "function") {
+        let s = 0;
+        try { s = Number(streakRef.current()) || 0; } catch (e) { s = 0; }
+        if (s <= ESMIGOL_STREAK_MIN) streakFiredRef.current = false;
+        else if (!streakFiredRef.current) {
+          streakFiredRef.current = true;
+          if (fire("racha", "racha")) return;
+        }
+      }
+
+      // Regla 3: va mal (si el modo la ofrece).
       if (!lowGradeFiredRef.current && typeof lowGradeRef.current === "function") {
         let isLow = false;
         try { isLow = !!lowGradeRef.current(); } catch (e) { isLow = false; }
@@ -971,8 +1060,23 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
   // `momentId` (opcional) = id de ESMIGOL_MOMENT_LIST, para respetar si el
   // docente lo apagó.
   const fireNow = (groupId, momentId) => { if (phrase) return false; return fire(groupId, momentId); };
+  // Frase EXACTA elegida por alguien (el docente desde el tablero en vivo):
+  // no se sortea y, a diferencia de fireNow, reemplaza al mensaje que esté
+  // en pantalla — lo que manda el docente tiene prioridad. Respeta igual el
+  // interruptor general, el del modo y el del momento.
+  const showNow = (p, momentId) => {
+    const c = cfgRef.current;
+    if (!p || !p.text || !c || c.enabled === false) return false;
+    if (c.modes && c.modes[esmigolModeKey(mode, live)] === false) return false;
+    if (!momentOn(momentId)) return false;
+    setPhrase({ ...p, _key: Date.now() });
+    return true;
+  };
   const node = (phrase && enabled && window.Esmigol) ? (
     <Esmigol
+      // key nueva por mensaje: si llega otro mientras uno está en
+      // pantalla, entra y se escribe de nuevo en vez de quedar a medias.
+      key={phrase._key || phrase.id}
       texto={phrase.text}
       expression={phrase.expression}
       position={cfg?.position || ESMIGOL_DEFAULT_POSITION}
@@ -987,7 +1091,7 @@ function useEsmigolTriggers({ mode, cfg, active, questionId, startedAt, lowGrade
     />
   ) : null;
 
-  return { phrase, dismiss, node, fireNow };
+  return { phrase, dismiss, node, fireNow, showNow };
 }
 window.useEsmigolTriggers = useEsmigolTriggers;
 window.ESMIGOL_SLOW_MS = ESMIGOL_SLOW_MS;
@@ -996,6 +1100,7 @@ window.ESMIGOL_LOW_GRADE_RATIO = ESMIGOL_LOW_GRADE_RATIO;
 window.ESMIGOL_LOW_GRADE_MIN = ESMIGOL_LOW_GRADE_MIN;
 window.ESMIGOL_HIGH_GRADE_RATIO = ESMIGOL_HIGH_GRADE_RATIO;
 window.ESMIGOL_HIGH_GRADE_MIN = ESMIGOL_HIGH_GRADE_MIN;
+window.ESMIGOL_STREAK_MIN = ESMIGOL_STREAK_MIN;
 
 // Config efectiva de un quiz: lo que configuró el docente, o los valores
 // por defecto si nunca abrió el editor de Esmigol. Cada modo debería usar
@@ -1008,7 +1113,9 @@ function esmigolConfigFor(quiz) {
   // trae, y sin este relleno esa regla fallaría en silencio para siempre
   // en ese quiz aunque el catálogo se actualice después. Los grupos que sí
   // están guardados (con las frases propias del docente) se respetan tal cual.
-  const groups = { ...ESMIGOL_TRIGGERS_DEFAULT.groups, ...(saved.groups || {}) };
+  const groups = (saved.phrasesVersion || 0) < ESMIGOL_PHRASES_VERSION
+    ? esmigolUpgradeGroups(saved.groups)
+    : { ...ESMIGOL_TRIGGERS_DEFAULT.groups, ...(saved.groups || {}) };
   // Igual con los modos y momentos: una config guardada antes de que
   // existieran trae todo encendido como antes (y "inicio" apagado).
   const modes = { ...ESMIGOL_MODES_DEFAULT, ...(saved.modes || {}) };
@@ -1020,9 +1127,26 @@ function esmigolConfigFor(quiz) {
   const oldDefault = !saved.layoutVersion && (!saved.position || saved.position === "bottom-right");
   const position = (oldDefault || !ESMIGOL_POSITIONS.some(p => p.id === saved.position))
     ? ESMIGOL_DEFAULT_POSITION : saved.position;
-  return { ...ESMIGOL_TRIGGERS_DEFAULT, ...saved, groups, modes, moments, position, layoutVersion: 2 };
+  return { ...ESMIGOL_TRIGGERS_DEFAULT, ...saved, groups, modes, moments, position, layoutVersion: 2, phrasesVersion: ESMIGOL_PHRASES_VERSION };
 }
 window.esmigolConfigFor = esmigolConfigFor;
+
+// Config guardada con frases base de una versión anterior: se cambian por
+// las frases base nuevas (otras reglas, otros rostros), pero las frases
+// que escribió el docente ("custom-…") se conservan en su mismo grupo,
+// con su rostro pasado al equivalente nuevo.
+function esmigolUpgradeGroups(savedGroups) {
+  const groups = JSON.parse(JSON.stringify(ESMIGOL_TRIGGER_GROUPS_DEFAULT));
+  Object.keys(savedGroups || {}).forEach(gid => {
+    const custom = ((savedGroups[gid] && savedGroups[gid].phrases) || [])
+      .filter(p => p && String(p.id).indexOf("custom-") === 0)
+      .map(p => ({ ...p, expression: esmigolExpressionId(p.expression) }));
+    if (!custom.length) return;
+    const target = groups[gid] ? gid : "motivacion";
+    groups[target].phrases = [...groups[target].phrases, ...custom];
+  });
+  return groups;
+}
 
 // Config global del docente (dashboard): la guardada en su perfil, o los
 // valores por defecto. Misma fusión que esmigolConfigFor.

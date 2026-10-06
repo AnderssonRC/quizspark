@@ -601,6 +601,59 @@ function LiveAnswersPanel({ currentQ, answersThisQ, session }) {
   );
 }
 
+// ---------- Torta de aciertos (Modo Sin Proyección) ----------
+// conic-gradient: sin librerías de gráficas. "Por calificar" = abiertas que
+// el docente califica al revelar (correct === null).
+function LiveCorrectPie({ answersThisQ }) {
+  const list = Object.values(answersThisQ || {});
+  const ok = list.filter(a => a.correct === true).length;
+  const bad = list.filter(a => a.correct === false).length;
+  const pend = list.length - ok - bad;
+  const total = list.length;
+  const all = [
+    { n: ok,   color: "#10b981", label: "Acertaron" },
+    { n: bad,  color: "#ef4444", label: "Fallaron" },
+    { n: pend, color: "#94a3b8", label: "Por calificar" },
+  ];
+  const slices = all.filter(s => s.n > 0);
+  let acc = 0;
+  const stops = slices.map(s => {
+    const from = (acc / total) * 360; acc += s.n;
+    return `${s.color} ${from}deg ${(acc / total) * 360}deg`;
+  }).join(", ");
+  return (
+    <div style={{ marginTop: 14, padding: 14, background: "var(--ink-50)", borderRadius: 12, display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+      <div style={{
+        width: 128, height: 128, borderRadius: "50%", flexShrink: 0, position: "relative",
+        background: total ? `conic-gradient(${stops})` : "var(--ink-200)",
+        transition: "background .4s",
+      }}>
+        {/* Centro hueco con el % de aciertos */}
+        <div style={{
+          position: "absolute", inset: 22, borderRadius: "50%", background: "var(--white)",
+          display: "grid", placeItems: "center", textAlign: "center", lineHeight: 1.1,
+        }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: "var(--ink-900)" }}>{total ? Math.round((ok / total) * 100) : 0}%</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--ink-500)" }}>aciertos</div>
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gap: 6, minWidth: 140, flex: 1 }}>
+        {all.filter(s => s.label !== "Por calificar" || s.n > 0)
+          .map(s => (
+            <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: "var(--ink-700)" }}>
+              <span style={{ width: 12, height: 12, borderRadius: 3, background: s.color, flexShrink: 0 }} />
+              <span style={{ flex: 1 }}>{s.label}</span>
+              <span style={{ fontWeight: 900, color: "var(--ink-900)" }}>{s.n}</span>
+            </div>
+          ))}
+        {total === 0 && <div style={{ fontSize: 12, color: "var(--ink-500)" }}>Aún no hay respuestas.</div>}
+      </div>
+    </div>
+  );
+}
+
 // ============================================================
 // HOST QUESTION — el profe mira la pregunta en curso
 // ============================================================
@@ -652,7 +705,17 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
   const answeredIds = new Set(answeredList.map(a => a.pid));
   const pendingList = Object.entries(allParticipants)
     .filter(([pid]) => !answeredIds.has(pid))
-    .map(([pid, p]) => ({ pid, name: p?.name || "Estudiante" }));
+    .map(([pid, p]) => ({ pid, name: p?.name || "Estudiante" }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  // MODO SIN PROYECCIÓN (quiz.noProjection): solo el docente ve esta
+  // pantalla → puede ver la correcta, la torta de aciertos y si cada
+  // estudiante acertó. Nunca en encuesta (no hay respuesta correcta).
+  const noProj = !!quiz.noProjection && quiz.mode !== "survey";
+  const resultOf = (pid) => {
+    const c = answersThisQ?.[pid]?.correct;
+    return c === true ? "ok" : c === false ? "bad" : "pend";
+  };
 
   return (
     <div style={{
@@ -756,30 +819,55 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
             <div style={{ textAlign: "center", padding: 20, background: "var(--ink-50)", borderRadius: 14, color: "var(--ink-500)" }}>
               <div style={{ fontSize: 32, marginBottom: 6 }}>✍️</div>
               <div style={{ fontWeight: 700 }}>Respuesta abierta — los estudiantes están escribiendo</div>
+              {noProj && (currentQ.acceptedAnswers || []).length > 0 && (
+                <div style={{ marginTop: 10, fontWeight: 800, color: "#059669" }}>
+                  ✓ Se acepta: {(currentQ.acceptedAnswers || []).join(" · ")}
+                </div>
+              )}
             </div>
           ) : (
           <div style={{
             display: "grid",
-            gridTemplateColumns: (currentQ.options || []).length > 2 ? "1fr 1fr" : "1fr 1fr",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
             gap: 12,
           }}>
             {(currentQ.options || []).map((opt, i) => {
               const colors = ["var(--tile-1)", "var(--tile-2)", "var(--tile-3)", "var(--tile-4)"];
+              // Sin proyección: la correcta se marca con borde y ✓; las
+              // demás se atenúan un poco.
+              const mark = noProj && quiz.mode !== "survey" && currentQ.type !== "poll";
               return (
                 <div key={opt.id} style={{
                   padding: 20, borderRadius: 14, background: colors[i % 4],
                   color: "white", fontSize: 18, fontWeight: 700, textAlign: "center",
-                  boxShadow: "var(--shadow-tile)",
-                }}><window.RichText text={opt.text} /></div>
+                  boxShadow: mark && opt.correct ? "0 0 0 4px #fff, 0 0 0 8px #10b981, var(--shadow-tile)" : "var(--shadow-tile)",
+                  opacity: mark && !opt.correct ? 0.55 : 1, position: "relative", overflowWrap: "anywhere",
+                }}>
+                  {mark && opt.correct && (
+                    <span style={{
+                      position: "absolute", top: -12, right: -8, background: "#10b981", color: "#fff",
+                      borderRadius: 999, padding: "3px 10px", fontSize: 12, fontWeight: 900, boxShadow: "0 2px 8px rgba(0,0,0,.25)",
+                    }}>✓ Correcta</span>
+                  )}
+                  <window.RichText text={opt.text} />
+                </div>
               );
             })}
           </div>
           )}
+          {noProj && currentQ.type === "order" && (
+            <div style={{ marginTop: 8, textAlign: "center", fontSize: 13, fontWeight: 800, color: "#059669" }}>
+              ✓ Este es el orden correcto
+            </div>
+          )}
         </div>
 
         {/* Estado */}
-        <div className="qs-live-panel" style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-          <div className="qs-card" style={{ padding: 20, color: "var(--ink-900)" }}>
+        {/* Flex con salto de línea: si no caben, los botones BAJAN debajo del
+            panel en vez de salirse por la derecha. minWidth 0 evita que el
+            gráfico (etiquetas largas) ensanche la columna y lo descuadre. */}
+        <div className="qs-live-panel" style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-start" }}>
+          <div className="qs-card" style={{ padding: 20, color: "var(--ink-900)", flex: "2 1 420px", minWidth: 0 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
               <span style={{ fontWeight: 700 }}>Respuestas recibidas</span>
               <span style={{ color: "var(--violet-700)", fontWeight: 700 }}>
@@ -795,7 +883,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
             </div>
 
             {/* Distribución en tiempo real (opcional, lo activa el docente) */}
-            {(currentQ.type !== "order" && currentQ.type !== "slide") && (
+            {((currentQ.type !== "order" || noProj) && currentQ.type !== "slide") && (
               <div style={{ marginTop: 12 }}>
                 <button onClick={() => setShowLive(v => !v)}
                   className="qs-btn qs-btn--sm"
@@ -805,68 +893,78 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                     color: showLive ? "#fff" : "var(--violet-700)",
                     border: "1px solid " + (showLive ? "var(--violet-600)" : "var(--violet-200)"),
                   }}>
-                  <span>📊 Respuestas en vivo</span>
+                  <span>📊 {noProj ? "Estadísticas" : "Respuestas en vivo"}</span>
                   <span>{showLive ? "Ocultar ▲" : "Ver ▼"}</span>
                 </button>
                 {showLive && (
                   <>
-                    <div style={{ fontSize: 11, color: "var(--amber-500)", fontWeight: 700, marginTop: 6, textAlign: "center" }}>
-                      ⚠️ Visible en la proyección: los estudiantes verán la tendencia
-                    </div>
+                    {!noProj && (
+                      <div style={{ fontSize: 11, color: "var(--amber-500)", fontWeight: 700, marginTop: 6, textAlign: "center" }}>
+                        ⚠️ Visible en la proyección: los estudiantes verán la tendencia
+                      </div>
+                    )}
+                    {/* Sin proyección: torta de aciertos / fallos (lo que ya
+                        respondieron) antes de la distribución por opción. */}
+                    {noProj && <LiveCorrectPie answersThisQ={answersThisQ} />}
                     <LiveAnswersPanel currentQ={currentQ} answersThisQ={answersThisQ} session={session} />
                   </>
                 )}
               </div>
             )}
 
-            {/* Quién respondió (en orden) y quién falta */}
-            <div style={{ marginTop: 14, maxHeight: 180, overflowY: "auto" }}>
-              {answeredList.length > 0 && (
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: "var(--emerald-600)", letterSpacing: ".04em", marginBottom: 6 }}>
-                    ✓ YA RESPONDIERON ({answeredList.length})
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {answeredList.map((p, i) => (
-                      <span key={p.pid} style={{
-                        display: "inline-flex", alignItems: "center", gap: 6,
-                        padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600,
-                        background: "rgba(0, 224, 140, 0.16)", color: "#3dffab",
-                      }}>
-                        <span style={{
-                          width: 18, height: 18, borderRadius: "50%", background: "#00a869", color: "white",
-                          display: "grid", placeItems: "center", fontSize: 10, fontWeight: 800,
-                        }}>{i + 1}</span>
-                        {p.name}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {pendingList.length > 0 && (
-                <div>
-                  <div style={{ fontSize: 11, fontWeight: 800, color: "var(--ink-400)", letterSpacing: ".04em", marginBottom: 6 }}>
-                    ⏳ FALTAN ({pendingList.length})
-                  </div>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {pendingList.map(p => (
-                      <span key={p.pid} style={{
-                        padding: "4px 10px", borderRadius: 999, fontSize: 13, fontWeight: 600,
-                        background: "var(--ink-100)", color: "var(--ink-500)",
-                      }}>{p.name}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {/* Estudiantes: UNA sola lista. Primero los que respondieron (en
+                orden de llegada, con su número), después los que faltan
+                (atenuados). Sin proyección, cada respuesta se colorea según
+                si acertó (verde) o falló (rojo). */}
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, marginBottom: 8, fontSize: 12, fontWeight: 800, letterSpacing: ".03em" }}>
+                <span style={{ color: "var(--ink-700)" }}>👥 ESTUDIANTES</span>
+                <span style={{ color: "#059669" }}>✓ {answeredList.length} respondieron</span>
+                <span style={{ color: "var(--ink-400)" }}>· ⏳ {pendingList.length} faltan</span>
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6, maxHeight: 150, overflowY: "auto" }}>
+                {answeredList.map((p, i) => {
+                  const r = noProj ? resultOf(p.pid) : "ok";
+                  const bg = r === "bad" ? "rgba(239,68,68,.16)" : r === "pend" ? "rgba(148,163,184,.25)" : "rgba(0,224,140,.16)";
+                  const fg = r === "bad" ? "#ef4444" : r === "pend" ? "var(--ink-700)" : "#059669";
+                  const dot = r === "bad" ? "#ef4444" : r === "pend" ? "#94a3b8" : "#00a869";
+                  return (
+                    <span key={p.pid} title={noProj ? (r === "ok" ? "Acertó" : r === "bad" ? "Falló" : "Por calificar") : "Ya respondió"} style={{
+                      display: "inline-flex", alignItems: "center", gap: 6,
+                      padding: "3px 10px 3px 3px", borderRadius: 999, fontSize: 13, fontWeight: 700,
+                      background: bg, color: fg,
+                    }}>
+                      <span style={{
+                        width: 20, height: 20, borderRadius: "50%", background: dot, color: "white",
+                        display: "grid", placeItems: "center", fontSize: 10, fontWeight: 800,
+                      }}>{noProj ? (r === "ok" ? "✓" : r === "bad" ? "✗" : i + 1) : i + 1}</span>
+                      {p.name}
+                    </span>
+                  );
+                })}
+                {pendingList.map(p => (
+                  <span key={p.pid} title="Falta por responder" style={{
+                    display: "inline-flex", alignItems: "center", gap: 6,
+                    padding: "3px 10px 3px 3px", borderRadius: 999, fontSize: 13, fontWeight: 600,
+                    background: "transparent", color: "var(--ink-500)", border: "1px dashed var(--ink-300, #cbd5e1)",
+                  }}>
+                    <span style={{ width: 20, height: 20, borderRadius: "50%", display: "grid", placeItems: "center", fontSize: 11 }}>⏳</span>
+                    {p.name}
+                  </span>
+                ))}
+                {answeredList.length + pendingList.length === 0 && (
+                  <span style={{ fontSize: 13, color: "var(--ink-500)" }}>Aún no hay estudiantes en la sala.</span>
+                )}
+              </div>
             </div>
           </div>
-          <div style={{ display: "grid", gap: 10 }}>
+          <div style={{ display: "grid", gap: 10, flex: "1 1 240px", minWidth: 0 }}>
             <button onClick={onReveal} className="qs-btn qs-btn--lg" style={{
               background: "white", color: "var(--violet-700)", fontWeight: 800,
             }}>
               ⏭️ Mostrar respuesta
             </button>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <button onClick={onAddTime} className="qs-btn" style={{
                 background: "rgba(255,255,255,0.18)", color: "white", fontWeight: 700,
                 boxShadow: "0 0 0 2px rgba(255,255,255,.4) inset",
@@ -881,7 +979,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                 {isPaused ? "▶️ Reanudar" : "⏸️ Pausar"}
               </button>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
               <button onClick={onRelaunch} className="qs-btn" style={{
                 background: "rgba(255,255,255,0.18)", color: "white", fontWeight: 700,
                 boxShadow: "0 0 0 2px rgba(255,255,255,.4) inset",
@@ -1494,6 +1592,110 @@ function ParticipantsModal({ participants, onKick, onClose }) {
 // ============================================================
 // JOIN REQUESTS BANNER — ingresos tardíos esperando aprobación del docente
 // ============================================================
+// ---------- Esmigol en vivo: el docente lo envía a mano (14-meta.js) ----------
+// Botón flotante en el tablero de la sala: abre las frases del grupo
+// "🎙️ Docente en vivo" (editables en el dashboard) y una caja para escribir
+// una frase al momento. Enviar escribe session.esmigolLive; cada celular
+// lo escucha y muestra a Esmigol con esa frase exacta (ver StudentLive).
+function EsmigolHostSender({ sessionId, quiz }) {
+  const [open, setOpen] = useStateL(false);
+  const [sending, setSending] = useStateL(false);
+  const [sentId, setSentId] = useStateL(null);
+  const [custom, setCustom] = useStateL("");
+  const [customFace, setCustomFace] = useStateL("retador");
+  if (!window.esmigolConfigFor || !sessionId) return null;
+  const cfg = window.esmigolConfigFor(quiz);
+  const phrases = (cfg.groups?.docenteVivo?.phrases) || [];
+  const off = cfg.enabled === false ? "Esmigol está desactivado en tus quizzes."
+    : cfg.modes?.live === false ? "Esmigol está apagado en Sala en vivo."
+    : cfg.moments?.docenteVivo === false ? "El momento «Docente en vivo» está apagado."
+    : null;
+
+  const send = async (p) => {
+    if (sending || !p || !String(p.text || "").trim()) return;
+    setSending(true);
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionId).update({
+        esmigolLive: { id: p.id, text: String(p.text).trim(), expression: p.expression || "retador", sentAt: Date.now() },
+      });
+      setSentId(p.id);
+      setTimeout(() => setSentId(id => (id === p.id ? null : id)), 2500);
+    } catch (err) {
+      console.error("Error enviando a Esmigol:", err);
+      alert("No se pudo enviar a Esmigol: " + err.message);
+    } finally {
+      // Pequeña pausa para no encadenar mensajes por doble clic.
+      setTimeout(() => setSending(false), 1200);
+    }
+  };
+
+  return (
+    <>
+      <button onClick={() => setOpen(o => !o)} title="Enviar a Esmigol a los celulares" style={{
+        position: "fixed", left: 16, bottom: 16, zIndex: 860,
+        display: "flex", alignItems: "center", gap: 8, padding: "8px 14px 8px 8px",
+        borderRadius: 999, border: 0, cursor: "pointer", fontWeight: 800, fontSize: 14,
+        background: "#f59e0b", color: "#fff", boxShadow: "0 4px 0 #b45309, 0 10px 24px rgba(0,0,0,.3)",
+      }}>
+        <img src={window.esmigolImageSrc ? window.esmigolImageSrc("retador") : ""} alt=""
+          style={{ width: 34, height: 34, objectFit: "contain", background: "#fff7ed", borderRadius: "50%" }} />
+        {open ? "Cerrar" : "Esmigol en vivo"}
+      </button>
+
+      {open && (
+        <div className="qs-card" style={{
+          position: "fixed", left: 16, bottom: 74, zIndex: 860, width: "min(380px, calc(100vw - 32px))",
+          maxHeight: "min(70vh, 560px)", overflowY: "auto", padding: 16,
+        }}>
+          <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 2 }}>🎙️ Docente en vivo</div>
+          <p style={{ fontSize: 12, color: "var(--ink-500)", margin: "0 0 10px", lineHeight: 1.4 }}>
+            Toca una frase y Esmigol la dirá ya mismo en el celular de cada estudiante.
+          </p>
+          {off && (
+            <p style={{ fontSize: 12, fontWeight: 700, color: "#fbbf24", background: "rgba(251,191,36,.12)", borderRadius: 10, padding: "8px 10px", margin: "0 0 10px" }}>
+              ⚠ {off} Actívalo en el dashboard (🐶 Esmigol) para que lo vean.
+            </p>
+          )}
+          <div style={{ display: "grid", gap: 6 }}>
+            {phrases.map(p => (
+              <button key={p.id} onClick={() => send(p)} disabled={sending} style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 12,
+                border: "1px solid " + (sentId === p.id ? "#4ade80" : "var(--ink-200)"),
+                background: "var(--ink-50)", color: "var(--ink-900)", cursor: sending ? "wait" : "pointer",
+                textAlign: "left", fontSize: 13, fontWeight: 600,
+              }}>
+                <img src={window.esmigolImageSrc(p.expression)} alt="" style={{ width: 36, height: 36, objectFit: "contain", flexShrink: 0 }} />
+                <span style={{ flex: 1 }}>{p.text}</span>
+                <span style={{ fontSize: 12, fontWeight: 800, color: sentId === p.id ? "#4ade80" : "var(--violet-400)", whiteSpace: "nowrap" }}>
+                  {sentId === p.id ? "✓ Enviado" : "Enviar ›"}
+                </span>
+              </button>
+            ))}
+            {phrases.length === 0 && (
+              <p style={{ fontSize: 12, color: "var(--ink-500)" }}>No hay frases en «Docente en vivo». Agrégalas en el dashboard.</p>
+            )}
+          </div>
+
+          {/* Frase escrita al momento (no se guarda en el grupo) */}
+          <div style={{ display: "flex", gap: 6, marginTop: 12, alignItems: "center" }}>
+            {window.EsmigolExpressionPicker && (
+              <window.EsmigolExpressionPicker value={customFace} onChange={setCustomFace} size={26} />
+            )}
+            <input className="qs-input" placeholder="Escribe algo para Esmigol…" value={custom} maxLength={120}
+              onChange={e => setCustom(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter" && custom.trim()) { send({ id: "manual-" + Date.now(), text: custom, expression: customFace }); setCustom(""); } }}
+              style={{ flex: 1, minWidth: 0 }} />
+            <button className="qs-btn qs-btn--primary qs-btn--sm" disabled={sending || !custom.trim()}
+              onClick={() => { send({ id: "manual-" + Date.now(), text: custom, expression: customFace }); setCustom(""); }}>
+              Enviar
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function JoinRequestsBanner({ requests, onApprove, onReject }) {
   const [busyId, setBusyId] = useStateL(null);
   const act = async (fn, req) => {
@@ -1537,7 +1739,26 @@ function JoinRequestsBanner({ requests, onApprove, onReject }) {
 // ============================================================
 // LIVE SESSION HOST — orquestador del lado del profesor
 // ============================================================
-function LiveSessionHost({ quizId, onExit }) {
+// ---------- Retomar una sala en vivo tras recargar la página ----------
+// La sala vive en Firestore (liveSessions/{id}) y NO se pierde al recargar:
+// solo se pierde la pantalla del docente. Estas son las salas del docente
+// que siguen abiertas (no terminadas ni canceladas) y son recientes (12 h:
+// una sala abandonada de días atrás no debe seguir apareciendo).
+const LIVE_OPEN_STATUSES = ["lobby", "playing", "showResults", "ranking"];
+const LIVE_RESUME_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+async function findOpenLiveSessions(uid) {
+  if (!uid) return [];
+  const snap = await window.QS.db.collection("liveSessions").where("ownerId", "==", uid).get();
+  const now = Date.now();
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(s => LIVE_OPEN_STATUSES.includes(s.status) && now - (s.createdAt || 0) < LIVE_RESUME_MAX_AGE_MS)
+    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+// resumeSessionId: si viene, se RECONECTA a esa sala existente en vez de
+// crear una nueva (ver "Retomar" en el dashboard).
+function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   const [loading, setLoading] = useStateL(true);
   const [session, setSession] = useStateL(null);
   const [quiz, setQuiz] = useStateL(null);
@@ -1552,9 +1773,32 @@ function LiveSessionHost({ quizId, onExit }) {
   const [sessionId, setSessionId] = useStateL(null);
   const sessionIdRef = useRefL(null);
 
-  // Crear sesión al montar
+  // Crear sesión al montar (o reconectarse a una existente)
   useEffectL(() => {
     let cancelled = false;
+    const resumeSession = async () => {
+      try {
+        const uid = window.QS.currentUser?.uid;
+        const sDoc = await window.QS.db.collection("liveSessions").doc(resumeSessionId).get();
+        if (!sDoc.exists) throw new Error("La sala ya no existe.");
+        const sData = { id: sDoc.id, ...sDoc.data() };
+        if (sData.ownerId !== uid) throw new Error("Esta sala pertenece a otro docente.");
+        if (!LIVE_OPEN_STATUSES.includes(sData.status)) throw new Error("Esta sala ya terminó.");
+        // El quiz se lee de nuevo (la sala no guarda las preguntas).
+        const quizDoc = await window.QS.db.collection("quizzes").doc(sData.quizId).get();
+        if (!quizDoc.exists) throw new Error("El quiz de esta sala ya no existe.");
+        if (cancelled) return;
+        setQuiz({ id: quizDoc.id, ...quizDoc.data() });
+        sessionIdRef.current = sData.id;
+        setSessionId(sData.id);
+        setSession(sData);
+        setLoading(false);
+      } catch (err) {
+        console.error("Error retomando sesión:", err);
+        alert("No se pudo retomar la sala: " + err.message);
+        onExit();
+      }
+    };
     const createSession = async () => {
       try {
         const uid = window.QS.currentUser?.uid;
@@ -1595,9 +1839,9 @@ function LiveSessionHost({ quizId, onExit }) {
         onExit();
       }
     };
-    createSession();
+    if (resumeSessionId) resumeSession(); else createSession();
     return () => { cancelled = true; };
-  }, [quizId]);
+  }, [quizId, resumeSessionId]);
 
   // Suscripción a cambios en la sesión (participantes que entran, etc.)
   useEffectL(() => {
@@ -1727,6 +1971,54 @@ function LiveSessionHost({ quizId, onExit }) {
       await ref.update({ pausedAt: null, questionStartedAt: newStart });
     } else {
       await ref.update({ pausedAt: Date.now() });
+    }
+  };
+
+  // ---- RETO FÍSICO (18-reto-fisico.js) ----
+  // Lanzar: pausa la pregunta (si corría) y publica el reto. Se recuerda si
+  // la pausa la puso el reto, para reanudar solo en ese caso al volver.
+  const startPhysicalChallenge = async (text) => {
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    const pauseNow = session.status === "playing" && !session.pausedAt;
+    try {
+      await ref.update({
+        physicalChallenge: {
+          id: "rf-" + Date.now(), text, startedAt: Date.now(), winners: [], pausedByChallenge: pauseNow,
+        },
+        ...(pauseNow ? { pausedAt: Date.now() } : {}),
+      });
+    } catch (err) {
+      console.error("Error lanzando reto físico:", err);
+      alert("No se pudo lanzar el reto: " + err.message);
+    }
+  };
+  // +10 a uno de los primeros 3 (solo ranking).
+  const awardPhysicalChallenge = async (pid) => {
+    const ch = session.physicalChallenge;
+    const max = window.RF_WINNERS || 3;
+    if (!ch || (ch.winners || []).includes(pid) || (ch.winners || []).length >= max) return;
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+        "physicalChallenge.winners": [...(ch.winners || []), pid],
+        [`participants.${pid}.score`]: firebase.firestore.FieldValue.increment(window.RF_POINTS || 10),
+      });
+    } catch (err) {
+      console.error("Error premiando reto físico:", err);
+    }
+  };
+  // Volver al quiz: quitar el reto y, si el reto pausó la pregunta,
+  // reanudarla corriendo el inicio (igual que togglePause).
+  const finishPhysicalChallenge = async () => {
+    const ch = session.physicalChallenge;
+    const updates = { physicalChallenge: null };
+    if (ch && ch.pausedByChallenge && session.pausedAt) {
+      updates.pausedAt = null;
+      updates.questionStartedAt = (session.questionStartedAt || Date.now()) + (Date.now() - session.pausedAt);
+    }
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update(updates);
+    } catch (err) {
+      console.error("Error terminando reto físico:", err);
     }
   };
 
@@ -1864,8 +2156,13 @@ function LiveSessionHost({ quizId, onExit }) {
       answerDocs.forEach(d => { const a = d.data(); answersByPid[a.participantId] = a; });
       const { updates, triggered } = window.extremeStreakUpdates(session, answersByPid);
       Object.assign(revealUpdates, updates);
-      if (triggered.length && !session.privilegeOffer) {
-        revealUpdates.privilegeOffer = window.extremeBuildOffer(triggered[0], qIdx);
+      // Solo con privilegios activos en este quiz (ventana "Elegir
+      // privilegios" del editor); si el docente los apagó todos, la racha
+      // se cuenta igual pero no se ofrece nada.
+      const offer = triggered.length && !session.privilegeOffer
+        ? window.extremeBuildOffer(triggered[0], qIdx, quiz) : null;
+      if (offer) {
+        revealUpdates.privilegeOffer = offer;
         revealUpdates.privilegeQueue = triggered.slice(1);
       }
     }
@@ -1877,10 +2174,23 @@ function LiveSessionHost({ quizId, onExit }) {
     const offer = session.privilegeOffer;
     if (!offer || !offer.choice) return;
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    // Expulsión: sacar a alguien borra su participación (no se archiva su
+    // resultado), así que se confirma aunque el botón ya diga "Expulsar".
+    if (offer.choice === "expel" && offer.target) {
+      const t = session.participants?.[offer.target];
+      if (t && !confirm(`¿Expulsar a ${t.name} de la sala? Su resultado de esta sesión no se guardará.`)) return;
+    }
     try {
-      const { updates, repeat } = window.extremeApprovalUpdates({ session, quiz, pid: offer.pid, privId: offer.choice, firebase });
-      Object.assign(updates, window.extremeAdvanceQueue(session));
+      const { updates, repeat, expel } = window.extremeApprovalUpdates({
+        session, quiz, pid: offer.pid, privId: offer.choice, target: offer.target || null, firebase,
+      });
+      Object.assign(updates, window.extremeAdvanceQueue(session, quiz));
       if (repeat) { updates.privilegeOffer = null; updates.privilegeQueue = []; }
+      if (expel) {
+        updates[`participants.${expel}`] = firebase.firestore.FieldValue.delete();
+        // Si estaba en la cola de rachas, sacarlo también.
+        if (Array.isArray(updates.privilegeQueue)) updates.privilegeQueue = updates.privilegeQueue.filter(id => id !== expel);
+      }
       await ref.update(updates);
       // "Otra vez": los demás repiten la pregunta; el ganador queda exento.
       if (repeat) await relaunchQuestion({ silent: true, exceptPid: offer.pid });
@@ -1893,7 +2203,7 @@ function LiveSessionHost({ quizId, onExit }) {
     if (!session.privilegeOffer) return;
     try {
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current)
-        .update(window.extremeAdvanceQueue(session));
+        .update(window.extremeAdvanceQueue(session, quiz));
     } catch (err) {
       console.error("Error rechazando privilegio:", err);
     }
@@ -2061,10 +2371,19 @@ function LiveSessionHost({ quizId, onExit }) {
   const currentQ = currentIdx >= 0 ? quiz.questions[currentIdx] : null;
   const answersThisQ = answersByQuestion[currentIdx] || {};
 
+  // Esmigol en vivo: botón flotante para enviar frases a los celulares
+  // (sala de espera, preguntas, diapositivas, revelación y ranking).
+  const esmigolSender = <EsmigolHostSender sessionId={sessionId} quiz={quiz} />;
+
+  // Botón "¡Reto Físico!" (junto a Esmigol en vivo) en las pantallas de juego.
+  const physicalButton = window.PhysicalChallengeButton && session.status !== "lobby" && session.status !== "finished"
+    ? <window.PhysicalChallengeButton onLaunch={startPhysicalChallenge} /> : null;
+
   if (session.status === "lobby") {
     return (
       <>
         <HostLobby session={session} quiz={quiz} onStart={startMetaCountdown} onCancel={cancelSession} onKick={kickParticipant} />
+        {!metaCountdown && esmigolSender}
         {metaCountdown && (
           <window.MetaCountdown
             mode="live"
@@ -2094,11 +2413,23 @@ function LiveSessionHost({ quizId, onExit }) {
     />
   ) : null;
 
+  // RETO FÍSICO en curso: pantalla verde a todo lo ancho, por encima de
+  // cualquier estado de la sala (pregunta, revelación, ranking).
+  if (session.physicalChallenge && window.PhysicalChallengeHost) {
+    return (
+      <>
+        <window.PhysicalChallengeHost key={session.physicalChallenge.id} session={session}
+          onAward={awardPhysicalChallenge} onFinish={finishPhysicalChallenge} />
+        {joinRequestsBanner}
+      </>
+    );
+  }
+
   // COMPETENCIA EXTREMA (15-extreme.js): panel de aprobación de privilegios
   // y aviso de efectos activos en la pregunta actual (proyección).
   const isExtreme = !!quiz.extremeMode && quiz.mode !== "survey";
   const extremePanel = isExtreme && session.privilegeOffer && window.ExtremeHostPanel ? (
-    <window.ExtremeHostPanel session={session} onApprove={approvePrivilege} onReject={rejectPrivilege} onSkip={rejectPrivilege} />
+    <window.ExtremeHostPanel session={session} quiz={quiz} onApprove={approvePrivilege} onReject={rejectPrivilege} onSkip={rejectPrivilege} />
   ) : null;
   const extremeBanner = isExtreme && window.ExtremeEffectBanner ? (
     <window.ExtremeEffectBanner session={session} quiz={quiz} me={null}
@@ -2109,7 +2440,7 @@ function LiveSessionHost({ quizId, onExit }) {
     return (
       <>
         <window.ExtremeRanking session={session} quiz={quiz} onContinue={goNext} />
-        {joinRequestsBanner}
+        {joinRequestsBanner}{esmigolSender}{physicalButton}
       </>
     );
   }
@@ -2125,7 +2456,7 @@ function LiveSessionHost({ quizId, onExit }) {
             <window.WorkshopHostSlide session={session} quiz={quiz} currentQ={currentQ}
               onNext={goNext} onFinish={finishNow}/>
             {participantsModal}
-            {joinRequestsBanner}
+            {joinRequestsBanner}{esmigolSender}{physicalButton}
           </>
         );
       }
@@ -2134,7 +2465,7 @@ function LiveSessionHost({ quizId, onExit }) {
           <HostSlide session={session} quiz={quiz} currentQ={currentQ}
             onNext={goNext} onFinish={finishNow}/>
           {participantsModal}
-          {joinRequestsBanner}
+          {joinRequestsBanner}{esmigolSender}{physicalButton}
         </>
       );
     }
@@ -2151,7 +2482,7 @@ function LiveSessionHost({ quizId, onExit }) {
         {extremeBanner}
         {extremePanel}
         {participantsModal}
-        {joinRequestsBanner}
+        {joinRequestsBanner}{esmigolSender}{physicalButton}
       </>
     );
   }
@@ -2165,7 +2496,7 @@ function LiveSessionHost({ quizId, onExit }) {
             answersThisQ={answersThisQ} onNext={goNext} onGradeWorkshop={gradeWorkshopAnswer} onFinish={finishNow} />
           {extremePanel}
           {participantsModal}
-          {joinRequestsBanner}
+          {joinRequestsBanner}{esmigolSender}{physicalButton}
         </>
       );
     }
@@ -2175,7 +2506,7 @@ function LiveSessionHost({ quizId, onExit }) {
           answersThisQ={answersThisQ} onNext={goNext} onGradeLive={gradeLiveAnswer} onFinish={finishNow} />
         {extremePanel}
         {participantsModal}
-        {joinRequestsBanner}
+        {joinRequestsBanner}{esmigolSender}{physicalButton}
       </>
     );
   }
@@ -2727,7 +3058,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         // próxima si no. Mismo umbral que en el modo asincrónico (08-online.js).
         if (quiz.mode === "quiz" && esmigolRef.current) {
           const percent = pointsMaxAnswered > 0 ? Math.round((gradePointsSum / pointsMaxAnswered) * 100) : 0;
-          esmigolRef.current.fireNow(percent > 50 ? "logro" : "motivacion", percent > 50 ? "finalBien" : "finalMal");
+          esmigolRef.current.fireNow(percent > 50 ? "logro" : "repaso", percent > 50 ? "finalBien" : "finalMal");
         }
       })
       .catch(err => console.error("Error contando aciertos:", err));
@@ -2778,7 +3109,13 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   const xfx = (isExtremeStudent && session && window.extremeEffectsFor)
     ? window.extremeEffectsFor(session, session.currentQuestionIdx, participantId)
     : {};
-  const myTimeCut = xfx.timecut ? (xfx.timecut.seconds || 0) : 0;
+  // Tijera: se resta con tope (nunca deja menos del 40 % del tiempo de la
+  // pregunta — ver extremeTimecutFor), para que 30 s no anulen una de 20 s.
+  const xBaseSec = (session && quiz?.questions?.[session.currentQuestionIdx])
+    ? (quiz.questions[session.currentQuestionIdx].timer || 60) + (session.extraSeconds || 0) : 60;
+  const myTimeCut = xfx.timecut
+    ? (window.extremeTimecutFor ? window.extremeTimecutFor(xBaseSec, xfx.timecut.seconds) : (xfx.timecut.seconds || 0))
+    : 0;
 
   // Cronómetro (respeta la pausa del docente)
   useEffectL(() => {
@@ -2824,10 +3161,12 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   }, [session?.status, session?.currentQuestionIdx, xfx.freepass ? 1 : 0]);
 
   // COMPETENCIA EXTREMA: el ganador de la racha elige su privilegio.
-  const choosePrivilege = async (id) => {
+  // target: compañero elegido en Acusar / Expulsión (si no, null).
+  const choosePrivilege = async (id, target) => {
     try {
       await window.QS.db.collection("liveSessions").doc(sessionId).update({
         "privilegeOffer.choice": id, "privilegeOffer.status": "chosen", "privilegeOffer.chosenAt": Date.now(),
+        "privilegeOffer.target": target || null,
       });
     } catch (err) {
       console.error("Error eligiendo privilegio:", err);
@@ -2858,10 +3197,20 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     const gradePoints = (isSurvey || isLiveGradedOpen) ? 0 : calculateGradePoints(currentQ, isCorrect, secondsTaken, totalSec);
     // COMPETENCIA EXTREMA: "Doble o nada" — vale el doble si acierto (solo ranking).
     if (xfx.double && isCorrect) points *= 2;
+    // COMPETENCIA EXTREMA: "Concentración" — en preguntas con opciones, la
+    // correcta RESTA y una incorrecta gana los puntos base. Solo el ranking:
+    // la nota (gradePoints / correct) sigue la respuesta real.
+    let extremeWin;
+    const concentrationOn = !!xfx.concentration && !isSurvey && isCorrect !== null
+      && ["multi", "truefalse", "checks"].includes(currentQ.type);
+    if (concentrationOn) {
+      extremeWin = !isCorrect;
+      points = isCorrect ? -(xfx.concentration.penalty || 17) : (currentQ.pointsCorrect ?? 10);
+    }
 
     setMyAnswer(answer);
     setAnsweredAtIdx(qIdx);
-    setMyResultThisQ({ correct: isCorrect, points, survey: isSurvey, pendingGrade: isLiveGradedOpen });
+    setMyResultThisQ({ correct: isCorrect, points, survey: isSurvey, pendingGrade: isLiveGradedOpen, concentration: concentrationOn });
 
     try {
       const docId = `${participantId}-${qIdx}`;
@@ -2878,6 +3227,9 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         applied: false, // si ya se sumó al score
         graded: false,  // las abiertas-en-vivo las califica el docente
         secondsTaken, answeredAt: Date.now(),
+        // Concentración: "ganar" fue elegir una incorrecta (cuenta para la
+        // racha de Competencia Extrema). Firestore no acepta undefined.
+        ...(extremeWin !== undefined ? { extremeWin } : {}),
       });
     } catch (err) {
       console.error("Error enviando respuesta:", err);
@@ -2892,12 +3244,16 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   const liveIsSurvey = quiz?.mode === "survey";
   // Aciertos acumulados EN MEMORIA, sin lecturas extra a Firestore: se
   // suman cada vez que se resuelve una pregunta propia (ver submitAnswer).
-  const liveTallyRef = useRefL({ correct: 0, graded: 0 });
+  // `streak` = aciertos seguidos (para la racha de Esmigol): un error la
+  // corta, y quedarse sin responder también (ver el efecto de "no contestó
+  // a tiempo" más abajo).
+  const liveTallyRef = useRefL({ correct: 0, graded: 0, streak: 0 });
   useEffectL(() => {
     if (!myResultThisQ || myResultThisQ.survey || myResultThisQ.pendingGrade) return;
     liveTallyRef.current = {
       correct: liveTallyRef.current.correct + (myResultThisQ.correct ? 1 : 0),
       graded: liveTallyRef.current.graded + 1,
+      streak: myResultThisQ.correct ? liveTallyRef.current.streak + 1 : 0,
     };
   }, [myResultThisQ]);
   const esmigol = window.useEsmigolTriggers ? window.useEsmigolTriggers({
@@ -2906,7 +3262,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     // Solo vigila mientras el estudiante tiene una pregunta pendiente por
     // responder (no en diapositivas, no si ya respondió esta).
     active: session?.status === "playing" && answeredAtIdx !== session?.currentQuestionIdx
-      && !(liveQ && liveQ.type === "slide"),
+      && !(liveQ && liveQ.type === "slide") && !session?.physicalChallenge && !session?.pausedAt,
     questionId: liveQ?.id,
     startedAt: session?.startedAt,
     lowGrade: liveIsSurvey ? undefined : () => {
@@ -2919,11 +3275,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
       const min = window.ESMIGOL_HIGH_GRADE_MIN || 3, ratio = window.ESMIGOL_HIGH_GRADE_RATIO || 0.8;
       return t.graded >= min && (t.correct / t.graded) >= ratio;
     },
-    // Regla nueva, solo Quiz: "falla más de dos".
-    rules: (liveIsSurvey || quiz?.mode !== "quiz") ? undefined : [{
-      id: "live-falla-mas-de-dos", group: "motivacion", once: true, moment: "fallaVarias",
-      test: () => (liveTallyRef.current.graded - liveTallyRef.current.correct) > 2,
-    }],
+    streak: liveIsSurvey ? undefined : () => liveTallyRef.current.streak,
   }) : { node: null, fireNow: () => {} };
   // El efecto que cuenta aciertos al terminar la sala (más arriba) y el
   // que detecta "no contestó a tiempo" (más abajo) llaman a fireNow desde
@@ -2931,6 +3283,21 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   // con una versión vieja de `esmigol` (mismo motivo que en 08-online.js).
   const esmigolRef = useRefL(esmigol);
   esmigolRef.current = esmigol;
+
+  // Esmigol en vivo: el docente envía una frase desde su tablero
+  // (EsmigolHostSender → session.esmigolLive). Se muestra cada envío NUEVO;
+  // el que ya estaba en la sesión al entrar (o al recargar) se ignora para
+  // no repetir un mensaje viejo.
+  const lastEsmigolLiveAtRef = useRefL(undefined);
+  useEffectL(() => {
+    if (!session) return;
+    const msg = session.esmigolLive;
+    const at = (msg && msg.sentAt) || 0;
+    if (lastEsmigolLiveAtRef.current === undefined) { lastEsmigolLiveAtRef.current = at; return; }
+    if (!at || at === lastEsmigolLiveAtRef.current) return;
+    lastEsmigolLiveAtRef.current = at;
+    if (esmigolRef.current.showNow) esmigolRef.current.showNow(msg, "docenteVivo");
+  }, [session?.esmigolLive?.sentAt, !!session]);
 
   // Esmigol (Quiz, regla nueva): no contestó a tiempo. En la sala en vivo
   // no hay un "left<=0" local (el docente decide cuándo revelar) — el
@@ -2940,6 +3307,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     if (quiz?.mode !== "quiz" || session?.status !== "showResults") return;
     if (!liveQ || liveQ.type === "slide") return;
     if (answeredAtIdx === session.currentQuestionIdx) return; // sí respondió
+    liveTallyRef.current = { ...liveTallyRef.current, streak: 0 }; // sin responder corta la racha
     esmigolRef.current.fireNow("tiempo", "sinTiempo");
   }, [session?.status]);
 
@@ -2983,6 +3351,14 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     );
   }
 
+  // RETO FÍSICO (18-reto-fisico.js): el docente pausó la sala con un reto
+  // para hacer en el salón. Tapa cualquier pantalla hasta que el docente
+  // pulse "Volver al quiz".
+  if (session.physicalChallenge && session.status !== "lobby" && session.status !== "finished"
+      && window.PhysicalChallengeStudent) {
+    return <window.PhysicalChallengeStudent key={session.physicalChallenge.id} session={session} myId={participantId} />;
+  }
+
   if (session.status === "lobby") {
     const me = session.participants?.[participantId];
     // El docente presionó "Iniciar": cuenta regresiva META en el celular,
@@ -3022,6 +3398,8 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
             👥 {Object.keys(session.participants || {}).length} estudiantes en la sala
           </p>
         </div>
+        {/* Esmigol en vivo: el docente ya puede enviarlo desde la sala de espera */}
+        {esmigol.node}
       </div>
     );
   }
@@ -3123,9 +3501,9 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   if (isExtremeStudent && session.privilegeOffer && window.ExtremePrivilegePicker) {
     const offer = session.privilegeOffer;
     if (offer.pid === participantId) {
-      return <window.ExtremePrivilegePicker offer={offer} participant={session.participants?.[participantId]} onChoose={choosePrivilege} />;
+      return <window.ExtremePrivilegePicker offer={offer} participant={session.participants?.[participantId]} onChoose={choosePrivilege} session={session} quiz={quiz} />;
     }
-    return <window.ExtremeWaiting offer={offer} session={session} />;
+    return <window.ExtremeWaiting offer={offer} session={session} quiz={quiz} myId={participantId} />;
   }
 
   // === Mostrando respuesta correcta (el docente reveló) ===
@@ -3193,6 +3571,21 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
                 <div style={{ fontSize: 56, marginBottom: 8 }} className="qs-bob">⏳</div>
                 <h2 style={{ fontSize: 22, color: "var(--violet-700)", marginBottom: 8 }}>Espera a que el docente lo califique</h2>
                 <p style={{ color: "var(--ink-500)", marginBottom: 4 }}>Espera un momento, tu nota aparecerá aquí.</p>
+              </>
+            )
+          ) : reveal.concentration ? (
+            // Competencia Extrema · Concentración: ganar era elegir una incorrecta.
+            reveal.correct ? (
+              <>
+                <div style={{ fontSize: 56, marginBottom: 8 }}>🧘</div>
+                <h2 style={{ fontSize: 22, color: "var(--red-500)", marginBottom: 8 }}>¡Elegiste la correcta!</h2>
+                <p style={{ color: "var(--ink-500)", marginBottom: 12 }}>Con Concentración te cuesta {Math.abs(reveal.points || 0)} puntos</p>
+              </>
+            ) : (
+              <>
+                <div style={{ fontSize: 64, marginBottom: 8 }} className="qs-pop-in">🧘</div>
+                <h2 style={{ fontSize: 24, color: "var(--emerald-600)", marginBottom: 8 }}>¡Bien concentrado!</h2>
+                <p style={{ color: "var(--ink-500)", marginBottom: 12 }}>Elegiste una incorrecta: +{reveal.points} puntos</p>
               </>
             )
           ) : reveal.correct ? (
@@ -3295,12 +3688,27 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     }
     // Congelar: los primeros N segundos no puedo responder.
     const totalSecMe = Math.max(5, (currentQ.timer || 60) + (session.extraSeconds || 0) - myTimeCut);
-    const frozenLeft = xfx.freeze ? Math.ceil((xfx.freeze.seconds || 0) - (totalSecMe - secondsLeft)) : 0;
+    // Congelar dura como mucho la mitad del tiempo que me queda en total.
+    const freezeSec = xfx.freeze
+      ? (window.extremeFreezeFor ? window.extremeFreezeFor(totalSecMe, xfx.freeze.seconds) : (xfx.freeze.seconds || 0))
+      : 0;
+    const frozenLeft = freezeSec ? Math.ceil(freezeSec - (totalSecMe - secondsLeft)) : 0;
     const frozen = frozenLeft > 0;
     // Sabotaje: a los demás les desaparece la opción correcta (solo tiene
     // sentido en opción múltiple / verdadero-falso).
     const sabotaged = !!xfx.sabotage && (currentQ.type === "multi" || currentQ.type === "truefalse");
-    const visibleOptions = (currentQ.options || []).filter(o => !(sabotaged && o.correct));
+    // Confusión: letras y palabras revueltas (el id de la opción no cambia,
+    // así que la respuesta se califica igual).
+    const qIdxMe = session.currentQuestionIdx;
+    const confuse = (o, key) => (xfx.confusion && window.extremeScramble)
+      ? { ...o, text: window.extremeScramble(o.text, key + "-" + qIdxMe) } : o;
+    const visibleOptions = (currentQ.options || []).filter(o => !(sabotaged && o.correct)).map(o => confuse(o, o.id));
+    const myCheckOptions = (currentQ.options || []).map(o => confuse(o, o.id));
+    const myOrderItems = (currentQ.items || []).map(it => confuse(it, it.id));
+    // Revelación: la(s) correcta(s) brillan solo en mi celular.
+    const revealIds = xfx.reveal ? (currentQ.options || []).filter(o => o.correct).map(o => o.id) : [];
+    // Gravedad: las opciones se mueven por la pantalla.
+    const gravityAnim = (i) => xfx.gravity ? `qs-x-grav-${i % 4} ${5 + (i % 3) * 1.3}s ease-in-out ${-i * 0.7}s infinite` : undefined;
 
     if (haveAnswered) {
       return (
@@ -3333,7 +3741,19 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         minHeight: "100vh",
         background: quizBg(quiz?.color),
         padding: 16, paddingBottom: 24,
+        // Gravedad: las opciones salen del recuadro; sin barras de scroll.
+        overflow: xfx.gravity ? "hidden" : undefined,
       }}>
+        {/* Efectos visuales de Competencia Extrema (keyframes en 15-extreme.js) */}
+        {(xfx.gravity || xfx.blind || xfx.reveal) && window.ExtremeStyles && <window.ExtremeStyles />}
+        {/* A ciegas: la pantalla se apaga y se prende hasta que responda.
+            pointer-events none: se puede tocar "a ciegas". */}
+        {xfx.blind && (
+          <div aria-hidden="true" style={{
+            position: "fixed", inset: 0, zIndex: 830, background: "#000", pointerEvents: "none",
+            animation: "qs-x-blind 1.6s steps(1, end) infinite",
+          }} />
+        )}
         <div style={{ maxWidth: 600, margin: "0 auto" }}>
           <div style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
@@ -3390,18 +3810,23 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
 
           {(currentQ.type === "multi" || currentQ.type === "truefalse" || currentQ.type === "poll") && (
             <div style={{ display: "grid", gap: 10 }}>
-              {visibleOptions.map((opt, i) => (
-                <button key={opt.id}
-                  onClick={() => { if (!frozen) submitAnswer(opt.id); }}
-                  disabled={frozen}
-                  style={{
-                    padding: "18px 20px", borderRadius: 14, background: colors[i % 4],
-                    color: "white", fontSize: 17, fontWeight: 700, textAlign: "left",
-                    border: "none", cursor: frozen ? "not-allowed" : "pointer", boxShadow: "var(--shadow-tile)",
-                    opacity: frozen ? 0.45 : 1, filter: frozen ? "grayscale(.6)" : "none",
-                  }}
-                ><window.RichText text={opt.text} /></button>
-              ))}
+              {visibleOptions.map((opt, i) => {
+                const revealed = revealIds.includes(opt.id);
+                return (
+                  <button key={opt.id}
+                    onClick={() => { if (!frozen) submitAnswer(opt.id); }}
+                    disabled={frozen}
+                    style={{
+                      padding: "18px 20px", borderRadius: 14, background: colors[i % 4],
+                      color: "white", fontSize: 17, fontWeight: 700, textAlign: "left",
+                      border: "none", cursor: frozen ? "not-allowed" : "pointer", boxShadow: "var(--shadow-tile)",
+                      opacity: frozen ? 0.45 : 1, filter: frozen ? "grayscale(.6)" : "none",
+                      position: xfx.gravity ? "relative" : undefined,
+                      animation: revealed ? "qs-x-reveal 1s ease-in-out infinite" : gravityAnim(i),
+                    }}
+                  >{revealed ? "🔮 " : ""}<window.RichText text={opt.text} /></button>
+                );
+              })}
             </div>
           )}
 
@@ -3443,9 +3868,11 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
                 Selecciona todas las que apliquen y pulsa enviar
               </p>
               <CheckSelector
-                options={currentQ.options || []}
+                options={myCheckOptions}
                 colors={colors}
                 onSubmit={(ids) => submitAnswer(ids)}
+                revealIds={revealIds}
+                gravityAnim={xfx.gravity ? gravityAnim : null}
               />
             </div>
           )}
@@ -3455,7 +3882,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
           )}
 
           {currentQ.type === "order" && (
-            <OrderSelector items={currentQ.items || []} onSubmit={(ids) => submitAnswer(ids)} />
+            <OrderSelector items={myOrderItems} onSubmit={(ids) => submitAnswer(ids)} />
           )}
         </div>
         {esmigol.node}
@@ -3466,13 +3893,16 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   return null;
 }
 
-function CheckSelector({ options, colors, onSubmit }) {
+// revealIds / gravityAnim: efectos de Competencia Extrema (Revelación y
+// Gravedad), opcionales.
+function CheckSelector({ options, colors, onSubmit, revealIds = [], gravityAnim = null }) {
   const [picked, setPicked] = useStateL([]);
   return (
     <>
       <div style={{ display: "grid", gap: 10, marginBottom: 12 }}>
         {options.map((opt, i) => {
           const isOn = picked.includes(opt.id);
+          const revealed = revealIds.includes(opt.id);
           return (
             <button key={opt.id}
               onClick={() => setPicked(isOn ? picked.filter(x => x !== opt.id) : [...picked, opt.id])}
@@ -3481,8 +3911,10 @@ function CheckSelector({ options, colors, onSubmit }) {
                 color: "white", fontSize: 16, fontWeight: 700, textAlign: "left",
                 border: isOn ? "4px solid white" : "4px solid transparent",
                 cursor: "pointer", opacity: isOn ? 1 : 0.7,
+                position: gravityAnim ? "relative" : undefined,
+                animation: revealed ? "qs-x-reveal 1s ease-in-out infinite" : (gravityAnim ? gravityAnim(i) : undefined),
               }}
-            >{isOn ? "✓ " : ""}<window.RichText text={opt.text} /></button>
+            >{isOn ? "✓ " : ""}{revealed ? "🔮 " : ""}<window.RichText text={opt.text} /></button>
           );
         })}
       </div>
@@ -3926,5 +4358,6 @@ function LiveHistoryPanel({ onBack }) {
 }
 
 window.QS.LiveSessionHost = LiveSessionHost;
+window.QS.findOpenLiveSessions = findOpenLiveSessions;
 window.QS.StudentJoinLive = StudentJoinLive;
 window.QS.LiveHistoryPanel = LiveHistoryPanel;
