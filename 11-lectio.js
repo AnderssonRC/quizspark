@@ -125,26 +125,42 @@ function LectioCard({ theme, children, style }) {
   );
 }
 
-// Selector de tema: fila de píldoras, pensada para ajustar sobre la marcha
-// según la luz del salón / calidad del proyector.
+// Selector de tema: un botón discreto en la esquina inferior izquierda que
+// despliega las opciones hacia arriba (para ajustar sobre la marcha según la
+// luz del salón / calidad del proyector, sin quitarle espacio a la pregunta).
 function LectioThemeSwitcher({ theme, onChange }) {
+  const [open, setOpen] = useStateLec(false);
+  const onColor = theme.id === "contrast" ? "#000000" : "#ffffff";
   return (
-    <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 18, flexWrap: "wrap" }}>
-      <span style={{ fontSize: 12, color: theme.textMuted, fontWeight: 700, alignSelf: "center", marginRight: 2 }}>
-        Tema:
-      </span>
-      {LECTIO_THEME_ORDER.map(id => {
-        const t = LECTIO_THEMES[id];
-        const on = theme.id === id;
-        return (
-          <button key={id} onClick={() => onChange(id)} title={t.label} style={{
-            padding: "7px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: "pointer",
-            background: on ? theme.accent : theme.chipBg,
-            color: on ? (theme.id === "bw" ? "#ffffff" : (theme.id === "contrast" ? "#000000" : "#ffffff")) : theme.textMuted,
-            border: "1px solid " + (on ? theme.accent : theme.border),
-          }}>{t.label}</button>
-        );
-      })}
+    <div style={{ position: "fixed", left: 18, bottom: 16, zIndex: 520 }}>
+      {open && (
+        <>
+          {/* Capa invisible: cerrar al hacer clic afuera */}
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0 }} />
+          <div style={{
+            position: "absolute", left: 0, bottom: "calc(100% + 8px)", display: "grid", gap: 6, minWidth: 180,
+            padding: 8, borderRadius: 14, background: theme.surface, border: "1px solid " + theme.border,
+            boxShadow: "0 10px 30px rgba(0,0,0,.35)",
+          }}>
+            {LECTIO_THEME_ORDER.map(id => {
+              const t = LECTIO_THEMES[id];
+              const on = theme.id === id;
+              return (
+                <button key={id} onClick={() => { onChange(id); setOpen(false); }} style={{
+                  textAlign: "left", padding: "8px 12px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                  background: on ? theme.accent : "transparent",
+                  color: on ? onColor : theme.text,
+                  border: "1px solid " + (on ? theme.accent : "transparent"),
+                }}>{t.label}</button>
+              );
+            })}
+          </div>
+        </>
+      )}
+      <button onClick={() => setOpen(o => !o)} title="Cambiar el tema de la proyección" style={{
+        position: "relative", padding: "8px 14px", borderRadius: 999, fontSize: 13, fontWeight: 700, cursor: "pointer",
+        background: theme.chipBg, color: theme.textMuted, border: "1px solid " + theme.border,
+      }}>🎨 Tema {open ? "▾" : "▴"}</button>
     </div>
   );
 }
@@ -215,33 +231,56 @@ function LectioPresenter({ quiz, onExit }) {
     startedAt: presentationStartedAtRef.current,
   }) : { node: null };
 
-  // ---- RELOJ DE LA PRESENTACIÓN (minutos) ----
-  // Cuenta regresiva global (quiz.lectioMinutes, 30 por defecto; 0 = sin
-  // reloj). Arranca cuando termina la cuenta regresiva META. Se maneja con
-  // una hora de fin (clockEnd) o, en pausa, con lo que quedaba (clockPausedLeft).
-  const clockMinutes = quiz.lectioMinutes == null ? 30 : Number(quiz.lectioMinutes) || 0;
+  // ---- RELOJ POR PREGUNTA ----
+  // Cada pregunta usa el tiempo que se le asignó en el editor (q.timer, en
+  // segundos; 60 por defecto). Se reinicia al cambiar de pregunta, se congela
+  // al revelar la respuesta y, al llegar a 0, muestra "Fin del tiempo…" en
+  // grande. Se maneja con una hora de fin (clockEnd) o, en pausa, con lo que
+  // quedaba (clockPausedLeft).
+  const qSeconds = q && Number(q.timer) > 0 ? Number(q.timer) : 60;
   const [clockEnd, setClockEnd] = useStateLec(null);
   const [clockPausedLeft, setClockPausedLeft] = useStateLec(null);
   const [clockNow, setClockNow] = useStateLec(Date.now());
+  const [timeUpFor, setTimeUpFor] = useStateLec(null);   // id de la pregunta cuyo tiempo ya se anunció
+  const [timeUpShow, setTimeUpShow] = useStateLec(false); // "Fin del tiempo…" en pantalla
   useEffectLec(() => {
-    if (metaDone && clockMinutes > 0 && clockEnd == null && clockPausedLeft == null) {
-      setClockEnd(Date.now() + clockMinutes * 60000);
-    }
-  }, [metaDone]);
+    if (!metaDone || finished || !q) { setClockEnd(null); setClockPausedLeft(null); return; }
+    const now = Date.now();
+    setClockEnd(now + qSeconds * 1000); setClockPausedLeft(null); setClockNow(now);
+    setTimeUpFor(null); setTimeUpShow(false);
+  }, [metaDone, finished, q?.id]);
   useEffectLec(() => {
     if (clockEnd == null || clockPausedLeft != null) return;
-    const id = setInterval(() => setClockNow(Date.now()), 1000);
+    const id = setInterval(() => setClockNow(Date.now()), 250);
     return () => clearInterval(id);
   }, [clockEnd, clockPausedLeft]);
-  // (también si el reloj estaba en 0 y el docente le sumó minutos desde el mando)
   const clockOn = clockEnd != null || clockPausedLeft != null;
   const clockLeft = clockPausedLeft != null ? clockPausedLeft : Math.max(0, (clockEnd || 0) - clockNow);
-  const clockAdd = (min) => {
-    const ms = min * 60000;
+  // Se acabó el tiempo (una vez por pregunta, y no si ya se reveló).
+  useEffectLec(() => {
+    if (!clockOn || clockLeft > 0 || revealed || !q || timeUpFor === q.id) return;
+    setTimeUpFor(q.id); setTimeUpShow(true);
+  }, [clockLeft <= 0, clockOn, revealed, q?.id]);
+  useEffectLec(() => {
+    if (!timeUpShow) return;
+    const t = setTimeout(() => setTimeUpShow(false), 4500);
+    return () => clearTimeout(t);
+  }, [timeUpShow]);
+  // Revelar la respuesta congela el reloj; ocultarla (en la MISMA pregunta)
+  // lo reanuda. Si se pasó a otra pregunta, el reinicio de arriba manda.
+  const revealedOnQRef = useRefLec(null);
+  useEffectLec(() => {
+    if (revealed) { revealedOnQRef.current = q?.id; clockPause(); setTimeUpShow(false); }
+    else { if (revealedOnQRef.current && revealedOnQRef.current === q?.id) clockResume(); revealedOnQRef.current = null; }
+  }, [revealed]);
+  // sec: segundos a sumar (negativo para restar), desde el mando o el botón.
+  const clockAdd = (sec) => {
+    const ms = sec * 1000;
     if (clockPausedLeft != null) { setClockPausedLeft(l => Math.max(0, l + ms)); return; }
     const now = Date.now();
     setClockEnd(e => Math.max(now, (e == null ? now : Math.max(e, now))) + ms);
     setClockNow(now);
+    if (sec > 0) setTimeUpShow(false);
   };
   const clockPause = () => {
     if (clockPausedLeft != null || clockEnd == null) return;
@@ -254,10 +293,12 @@ function LectioPresenter({ quiz, onExit }) {
     setClockPausedLeft(null);
     setClockNow(now);
   };
+  // Volver a dar el tiempo completo de la pregunta actual.
   const clockReset = () => {
-    if (clockMinutes <= 0) return;
+    if (!q) return;
     const now = Date.now();
-    setClockPausedLeft(null); setClockEnd(now + clockMinutes * 60000); setClockNow(now);
+    setClockPausedLeft(null); setClockEnd(now + qSeconds * 1000); setClockNow(now);
+    setTimeUpFor(null); setTimeUpShow(false);
   };
 
   // ---- MANDO DEL CELULAR (19-mando.js) ----
@@ -276,7 +317,7 @@ function LectioPresenter({ quiz, onExit }) {
         break;
       case "reveal": setRevealed(typeof p === "boolean" ? p : (v => !v)); break;
       case "restart": setIdx(0); setRevealed(false); setFinished(false); clockReset(); break;
-      // Restar solo si ya hay reloj (no crear uno vencido).
+      // p = segundos (negativo para restar). Restar solo si ya hay reloj.
       case "clockAdd": if (typeof p === "number" && p !== 0 && (p > 0 || clockOn)) clockAdd(p); break;
       case "clockPause": clockPause(); break;
       case "clockResume": clockResume(); break;
@@ -318,39 +359,85 @@ function LectioPresenter({ quiz, onExit }) {
     </>
   );
 
-  // Reloj grande para el televisor: mm:ss; ámbar en el último minuto y
-  // rojo latiendo al llegar a 0. Botones pequeños para el docente que está
-  // junto al computador (los mismos que en el mando).
+  // Reloj de la pregunta en la esquina inferior derecha, con el color del
+  // tema; ámbar en los últimos 10 s y rojo al llegar a 0. Los botones "+30s" / pausa
+  // aparecen al pasar el mouse (el docente junto al computador); desde el
+  // mando del celular están siempre.
   const fmtClock = (ms) => {
     const s = Math.ceil(ms / 1000);
     return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
   };
   const clockOut = clockOn && clockLeft <= 0;
-  const clockWarn = clockOn && !clockOut && clockLeft <= 60000;
+  const clockWarn = clockOn && !clockOut && clockLeft <= 10000; // últimos 10 s
   const clockBtn = {
-    background: theme.chipBg, color: theme.text, border: "1px solid " + theme.border,
-    borderRadius: 8, padding: "4px 8px", fontSize: 12, fontWeight: 800, cursor: "pointer",
+    background: "transparent", color: "inherit", border: "1px solid currentColor",
+    borderRadius: 6, padding: "1px 6px", fontSize: 11, fontWeight: 800, cursor: "pointer", opacity: .8,
   };
-  const clockNode = clockOn ? (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <style>{`@keyframes qs-lec-clock { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }`}</style>
-      <div title={clockPausedLeft != null ? "Reloj en pausa" : "Tiempo restante"} style={{
-        fontFamily: "ui-monospace, 'Poppins', monospace", fontWeight: 900, letterSpacing: ".04em",
-        fontSize: "clamp(28px, 4vw, 54px)", lineHeight: 1, padding: "6px 18px", borderRadius: 14,
-        background: clockOut ? "#dc2626" : clockWarn ? "#f59e0b" : theme.chipBg,
-        color: clockOut || clockWarn ? "#fff" : theme.text,
-        border: "2px solid " + (clockOut ? "#dc2626" : clockWarn ? "#f59e0b" : theme.border),
-        animation: clockOut || clockWarn ? "qs-lec-clock 1s ease-in-out infinite" : "none",
-        opacity: clockPausedLeft != null ? 0.6 : 1,
-      }}>
-        {clockOut ? "⏰ ¡Tiempo!" : (clockPausedLeft != null ? "⏸ " : "⏱ ") + fmtClock(clockLeft)}
+  // "Fin del tiempo…" en grande, al centro: entra con rebote, late y los
+  // puntos suspensivos aparecen uno a uno. Se va solo a los 4,5 s (o al
+  // revelar / sumar tiempo / cambiar de pregunta); el reloj queda en rojo.
+  const timeUpNode = timeUpShow ? (
+    <div onClick={() => setTimeUpShow(false)} style={{
+      position: "fixed", inset: 0, zIndex: 880, display: "grid", placeItems: "center", cursor: "pointer",
+      background: "radial-gradient(circle at 50% 50%, rgba(220,38,38,.35), rgba(0,0,0,.55) 70%)",
+      animation: "qs-lec-tu-bg .35s ease both",
+    }}>
+      <style>{`
+        @keyframes qs-lec-tu-bg  { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes qs-lec-tu-in  { 0% { transform: scale(.2) rotate(-12deg); opacity: 0; } 60% { transform: scale(1.12) rotate(3deg); opacity: 1; } 100% { transform: scale(1) rotate(0); } }
+        @keyframes qs-lec-tu-beat{ 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+        @keyframes qs-lec-tu-dot { 0%,30% { opacity: 0; } 40%,100% { opacity: 1; } }
+        @keyframes qs-lec-tu-ring{ 0%,100% { transform: rotate(-14deg); } 50% { transform: rotate(14deg); } }
+      `}</style>
+      <div style={{ textAlign: "center", animation: "qs-lec-tu-in .6s cubic-bezier(.2,.9,.3,1.3) both" }}>
+        <div style={{ fontSize: "clamp(70px, 12vw, 150px)", lineHeight: 1, animation: "qs-lec-tu-ring .25s ease-in-out 8" }}>⏰</div>
+        <div style={{
+          fontSize: "clamp(56px, 10vw, 140px)", fontWeight: 900, lineHeight: 1.05, color: "#fff",
+          fontFamily: "'Poppins', 'Segoe UI', system-ui, sans-serif",
+          textShadow: "0 0 30px rgba(220,38,38,.9), 0 6px 0 #7f1d1d",
+          animation: "qs-lec-tu-beat 1s ease-in-out .6s infinite",
+        }}>
+          Fin del tiempo
+          <span style={{ animation: "qs-lec-tu-dot 1.2s ease-in-out .6s infinite" }}>.</span>
+          <span style={{ animation: "qs-lec-tu-dot 1.2s ease-in-out .9s infinite" }}>.</span>
+          <span style={{ animation: "qs-lec-tu-dot 1.2s ease-in-out 1.2s infinite" }}>.</span>
+        </div>
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <button onClick={() => clockAdd(1)} title="Sumar 1 minuto" style={clockBtn}>+1 min</button>
+    </div>
+  ) : null;
+
+  const clockNode = clockOn ? (
+    <div className="qs-lec-clock" title={clockPausedLeft != null ? "Reloj en pausa" : "Tiempo restante"} style={{
+      position: "fixed", right: 18, bottom: 16, zIndex: 520,
+      display: "flex", alignItems: "center", gap: 8, padding: "8px 16px", borderRadius: 999,
+      fontFamily: "ui-monospace, 'Poppins', monospace", fontWeight: 900, fontSize: 24, lineHeight: 1,
+      // Color: el acento del tema (degradado) en marcha; ámbar el último
+      // minuto; rojo al acabarse.
+      background: clockOut ? "#dc2626" : clockWarn ? "#f59e0b"
+        : (theme.id === "bw" || theme.id === "contrast") ? theme.accent
+        : `linear-gradient(135deg, ${theme.accent}, ${theme.accent2})`,
+      color: clockOut || clockWarn ? "#fff"
+        : theme.id === "contrast" ? "#000" : theme.id === "bw" ? "#fff" : "#04201b",
+      border: "none",
+      boxShadow: clockOut ? "0 0 0 4px rgba(220,38,38,.3)" : clockWarn ? "0 0 0 4px rgba(245,158,11,.3)"
+        : (theme.id === "dark" ? `0 4px 16px ${hexToRgba(theme.accent, 0.35)}` : "0 2px 8px rgba(0,0,0,.15)"),
+      opacity: clockPausedLeft != null ? 0.6 : 1,
+      animation: clockOut ? "qs-lec-clock 1s ease-in-out infinite" : "none",
+      transition: "opacity .2s, background .3s",
+    }}>
+      <style>{`
+        @keyframes qs-lec-clock { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+        .qs-lec-clock .qs-lec-clock-btns { display: none; }
+        .qs-lec-clock:hover { opacity: 1 !important; }
+        .qs-lec-clock:hover .qs-lec-clock-btns { display: inline-flex; }
+      `}</style>
+      <span>{clockOut ? "⏰ ¡Tiempo!" : (clockPausedLeft != null ? "⏸ " : "⏱ ") + fmtClock(clockLeft)}</span>
+      <span className="qs-lec-clock-btns" style={{ gap: 4 }}>
+        <button onClick={() => clockAdd(30)} title="Sumar 30 segundos" style={clockBtn}>+30s</button>
         <button onClick={clockPausedLeft != null ? clockResume : clockPause} title="Pausar / reanudar el reloj" style={clockBtn}>
           {clockPausedLeft != null ? "▶" : "⏸"}
         </button>
-      </div>
+      </span>
     </div>
   ) : null;
 
@@ -368,18 +455,19 @@ function LectioPresenter({ quiz, onExit }) {
   };
 
   const topBar = (extra) => (
-    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14, gap: 10, flexWrap: "wrap" }}>
+    // Tres columnas: las laterales miden lo mismo (1fr), así el número de la
+    // pregunta queda en el centro EXACTO de la pantalla aunque los botones
+    // de la derecha sean más anchos que "Salir".
+    <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", alignItems: "center", marginBottom: 10, gap: 10 }}>
       <button onClick={onExit} style={{
+        justifySelf: "start",
         background: theme.chipBg, color: theme.text, border: "1px solid " + theme.border,
         borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer",
       }}>✕ Salir</button>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-        <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>
-          📵 Modo Sin Celular {extra}
-        </div>
-        {clockNode}
+      <div style={{ textAlign: "center", fontSize: 16, color: theme.text, fontWeight: 800, letterSpacing: ".02em", whiteSpace: "nowrap" }}>
+        {extra}
       </div>
-      <div style={{ display: "flex", gap: 8 }}>
+      <div style={{ display: "flex", gap: 8, justifySelf: "end", flexWrap: "wrap", justifyContent: "flex-end" }}>
         <button onClick={openRemote} title="Controlar la presentación desde tu celular" style={{
           background: remote.connected ? "rgba(16,185,129,.18)" : theme.chipBg, color: remote.connected ? "#10b981" : theme.text,
           border: "1px solid " + (remote.connected ? "#10b981" : theme.border),
@@ -438,6 +526,7 @@ function LectioPresenter({ quiz, onExit }) {
             </div>
           </LectioCard>
         </div>
+        {clockNode}
         {remoteLayers}
       </div>
     );
@@ -451,9 +540,9 @@ function LectioPresenter({ quiz, onExit }) {
       {!metaDone && (
         <window.MetaCountdown mode="lectio" allowSkip onDone={() => setMetaDone(true)} />
       )}
-      {topBar(`· Pregunta ${safeIdx + 1} de ${slides.length}`)}
+      {topBar(`Pregunta ${safeIdx + 1} de ${slides.length}`)}
       <LectioThemeSwitcher theme={theme} onChange={setThemeId} />
-      <div style={{ height: 6, background: theme.chipBg, borderRadius: 3, marginBottom: 22, overflow: "hidden", flexShrink: 0 }}>
+      <div style={{ height: 6, background: theme.chipBg, borderRadius: 3, marginBottom: 14, overflow: "hidden", flexShrink: 0 }}>
         <div style={{ height: "100%", width: progress + "%", background: `linear-gradient(90deg, ${theme.accent}, ${theme.accent2})`, transition: "width 0.3s ease" }} />
       </div>
 
@@ -529,6 +618,8 @@ function LectioPresenter({ quiz, onExit }) {
         }}>{isLast ? "🏁 Finalizar" : "Siguiente ▶"}</button>
       </div>
       {esmigol.node}
+      {clockNode}
+      {timeUpNode}
       {remoteLayers}
     </div>
   );

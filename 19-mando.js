@@ -8,7 +8,7 @@
 //   · Revelar u ocultar la respuesta correcta
 //   · Lanzar un Reto Físico (base o escrito en vivo) y terminarlo
 //   · Mostrar a Esmigol en grande con una frase (base o escrita en vivo)
-//   · Reloj de la presentación: sumar/restar minutos, pausar y reanudar
+//   · Reloj de la pregunta actual: sumar/restar tiempo, pausar y reanudar
 //
 // Conexión: el presentador crea un "canal" en liveSessions (la colección
 // que el celular puede escribir sin permisos extra), marcado como
@@ -446,7 +446,7 @@ function MandoClock({ clock, onSend }) {
   const s = Math.ceil(left / 1000);
   const txt = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
   const out = clock && left <= 0;
-  const warn = clock && !out && left <= 60000;
+  const warn = clock && !out && left <= 10000; // últimos 10 s
   const btn = (label, onClick, extra) => (
     <button onClick={onClick} style={{
       padding: "12px 0", borderRadius: 12, fontWeight: 900, fontSize: 15, fontFamily: MANDO_FONT, cursor: "pointer",
@@ -460,7 +460,7 @@ function MandoClock({ clock, onSend }) {
       borderRadius: 18, padding: 14, marginBottom: 12,
     }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
-        <span style={{ fontSize: 12, fontWeight: 900, color: "#94a3b8", letterSpacing: ".08em" }}>⏱ RELOJ</span>
+        <span style={{ fontSize: 12, fontWeight: 900, color: "#94a3b8", letterSpacing: ".08em" }}>⏱ TIEMPO DE LA PREGUNTA</span>
         <span style={{
           fontFamily: "ui-monospace, monospace", fontSize: 34, fontWeight: 900, lineHeight: 1,
           color: out ? "#f87171" : warn ? "#fbbf24" : clock ? "#fff" : "#64748b",
@@ -470,9 +470,10 @@ function MandoClock({ clock, onSend }) {
         </span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
-        {btn("+1 min", () => onSend("clockAdd", 1, "+1 minuto"))}
-        {btn("+5 min", () => onSend("clockAdd", 5, "+5 minutos"))}
-        {btn("−1 min", () => onSend("clockAdd", -1, "−1 minuto"), { opacity: clock ? 1 : .4 })}
+        {/* En segundos: el reloj es el de la pregunta actual */}
+        {btn("+30 s", () => onSend("clockAdd", 30, "+30 segundos"))}
+        {btn("+1 min", () => onSend("clockAdd", 60, "+1 minuto"))}
+        {btn("−30 s", () => onSend("clockAdd", -30, "−30 segundos"), { opacity: clock ? 1 : .4 })}
         {clock && clock.paused
           ? btn("▶", () => onSend("clockResume", null, "▶ Reloj en marcha"), { background: "#10b981", color: "#04201b", border: 0 })
           : btn("⏸", () => onSend("clockPause", null, "⏸ Reloj en pausa"), { opacity: clock ? 1 : .4 })}
