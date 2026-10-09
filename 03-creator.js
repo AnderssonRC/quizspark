@@ -1600,6 +1600,22 @@ function Editor({ quizId, onBack, onLaunch }) {
           )}
 
           {quiz.mode === "lectio" && (
+            <Field label="⏱️ Reloj de la presentación">
+              {/* Cuenta regresiva en minutos que se ve en el televisor y en el
+                  mando del celular (11-lectio.js / 19-mando.js). 0 = sin reloj. */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="number" min={0} max={240} className="qs-input" style={{ width: 90 }}
+                  value={quiz.lectioMinutes ?? 30}
+                  onChange={e => setQuiz({ ...quiz, lectioMinutes: Math.max(0, Math.min(240, Math.round(Number(e.target.value) || 0))) })} />
+                <span style={{ fontSize: 13, color: "var(--ink-500)" }}>minutos</span>
+              </div>
+              <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 6, lineHeight: 1.55 }}>
+                Arranca al empezar a presentar. Desde el mando puedes sumar minutos o pausarlo. Pon 0 para no usar reloj.
+              </p>
+            </Field>
+          )}
+
+          {quiz.mode === "lectio" && (
             <Field label="Modo Lector de Respuesta">
               <Toggle label="🔲 Activar hoja de respuestas (OMR)" value={!!quiz.omrEnabled}
                 onChange={(v) => { setQuiz({ ...quiz, omrEnabled: v }); setCanvasView(v ? "omr" : "questions"); }} />

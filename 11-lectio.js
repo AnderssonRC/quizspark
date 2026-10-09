@@ -215,6 +215,51 @@ function LectioPresenter({ quiz, onExit }) {
     startedAt: presentationStartedAtRef.current,
   }) : { node: null };
 
+  // ---- RELOJ DE LA PRESENTACIÓN (minutos) ----
+  // Cuenta regresiva global (quiz.lectioMinutes, 30 por defecto; 0 = sin
+  // reloj). Arranca cuando termina la cuenta regresiva META. Se maneja con
+  // una hora de fin (clockEnd) o, en pausa, con lo que quedaba (clockPausedLeft).
+  const clockMinutes = quiz.lectioMinutes == null ? 30 : Number(quiz.lectioMinutes) || 0;
+  const [clockEnd, setClockEnd] = useStateLec(null);
+  const [clockPausedLeft, setClockPausedLeft] = useStateLec(null);
+  const [clockNow, setClockNow] = useStateLec(Date.now());
+  useEffectLec(() => {
+    if (metaDone && clockMinutes > 0 && clockEnd == null && clockPausedLeft == null) {
+      setClockEnd(Date.now() + clockMinutes * 60000);
+    }
+  }, [metaDone]);
+  useEffectLec(() => {
+    if (clockEnd == null || clockPausedLeft != null) return;
+    const id = setInterval(() => setClockNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [clockEnd, clockPausedLeft]);
+  // (también si el reloj estaba en 0 y el docente le sumó minutos desde el mando)
+  const clockOn = clockEnd != null || clockPausedLeft != null;
+  const clockLeft = clockPausedLeft != null ? clockPausedLeft : Math.max(0, (clockEnd || 0) - clockNow);
+  const clockAdd = (min) => {
+    const ms = min * 60000;
+    if (clockPausedLeft != null) { setClockPausedLeft(l => Math.max(0, l + ms)); return; }
+    const now = Date.now();
+    setClockEnd(e => Math.max(now, (e == null ? now : Math.max(e, now))) + ms);
+    setClockNow(now);
+  };
+  const clockPause = () => {
+    if (clockPausedLeft != null || clockEnd == null) return;
+    setClockPausedLeft(Math.max(0, clockEnd - Date.now()));
+  };
+  const clockResume = () => {
+    if (clockPausedLeft == null) return;
+    const now = Date.now();
+    setClockEnd(now + clockPausedLeft);
+    setClockPausedLeft(null);
+    setClockNow(now);
+  };
+  const clockReset = () => {
+    if (clockMinutes <= 0) return;
+    const now = Date.now();
+    setClockPausedLeft(null); setClockEnd(now + clockMinutes * 60000); setClockNow(now);
+  };
+
   // ---- MANDO DEL CELULAR (19-mando.js) ----
   // Reto físico y Esmigol en grande, lanzados desde el celular del docente.
   const [tvChallenge, setTvChallenge] = useStateLec(null); // { id, text }
@@ -230,7 +275,12 @@ function LectioPresenter({ quiz, onExit }) {
         if (typeof p === "number" && p >= 0 && p < slides.length) { setIdx(p); setRevealed(false); setFinished(false); }
         break;
       case "reveal": setRevealed(typeof p === "boolean" ? p : (v => !v)); break;
-      case "restart": setIdx(0); setRevealed(false); setFinished(false); break;
+      case "restart": setIdx(0); setRevealed(false); setFinished(false); clockReset(); break;
+      // Restar solo si ya hay reloj (no crear uno vencido).
+      case "clockAdd": if (typeof p === "number" && p !== 0 && (p > 0 || clockOn)) clockAdd(p); break;
+      case "clockPause": clockPause(); break;
+      case "clockResume": clockResume(); break;
+      case "clockReset": clockReset(); break;
       case "challenge": if (p && p.text) setTvChallenge({ id: cmd.id, text: p.text }); break;
       case "challengeEnd": setTvChallenge(null); break;
       case "esmigol": if (p && p.text) setTvEsmigol({ text: p.text, expression: p.expression, at: cmd.at || Date.now() }); break;
@@ -247,12 +297,15 @@ function LectioPresenter({ quiz, onExit }) {
     remote.publish({
       idx: safeIdx, total: slides.length, revealed, finished,
       challenge: tvChallenge ? tvChallenge.text : null,
+      // El celular sigue contando por su cuenta desde que recibe este dato
+      // (no depende de que los relojes de ambos equipos coincidan).
+      clock: clockOn ? { leftMs: clockLeft, paused: clockPausedLeft != null, stamp: (clockEnd || 0) + "-" + (clockPausedLeft ?? "") } : null,
       question: q ? {
         text: plain(q.text),
         options: (q.options || []).map((o, i) => ({ letter: String.fromCharCode(65 + i), text: plain(o.text), correct: !!o.correct })),
       } : null,
     });
-  }, [remote.remoteId, safeIdx, revealed, finished, tvChallenge, slides.length]);
+  }, [remote.remoteId, safeIdx, revealed, finished, tvChallenge, slides.length, clockEnd, clockPausedLeft, clockOn]);
   const openRemote = async () => { setShowRemote(true); await remote.open(); };
   // Capas del mando: van en TODAS las pantallas del presentador.
   const remoteLayers = (
@@ -264,6 +317,42 @@ function LectioPresenter({ quiz, onExit }) {
       )}
     </>
   );
+
+  // Reloj grande para el televisor: mm:ss; ámbar en el último minuto y
+  // rojo latiendo al llegar a 0. Botones pequeños para el docente que está
+  // junto al computador (los mismos que en el mando).
+  const fmtClock = (ms) => {
+    const s = Math.ceil(ms / 1000);
+    return String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  };
+  const clockOut = clockOn && clockLeft <= 0;
+  const clockWarn = clockOn && !clockOut && clockLeft <= 60000;
+  const clockBtn = {
+    background: theme.chipBg, color: theme.text, border: "1px solid " + theme.border,
+    borderRadius: 8, padding: "4px 8px", fontSize: 12, fontWeight: 800, cursor: "pointer",
+  };
+  const clockNode = clockOn ? (
+    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <style>{`@keyframes qs-lec-clock { 0%,100% { transform: scale(1); } 50% { transform: scale(1.08); } }`}</style>
+      <div title={clockPausedLeft != null ? "Reloj en pausa" : "Tiempo restante"} style={{
+        fontFamily: "ui-monospace, 'Poppins', monospace", fontWeight: 900, letterSpacing: ".04em",
+        fontSize: "clamp(28px, 4vw, 54px)", lineHeight: 1, padding: "6px 18px", borderRadius: 14,
+        background: clockOut ? "#dc2626" : clockWarn ? "#f59e0b" : theme.chipBg,
+        color: clockOut || clockWarn ? "#fff" : theme.text,
+        border: "2px solid " + (clockOut ? "#dc2626" : clockWarn ? "#f59e0b" : theme.border),
+        animation: clockOut || clockWarn ? "qs-lec-clock 1s ease-in-out infinite" : "none",
+        opacity: clockPausedLeft != null ? 0.6 : 1,
+      }}>
+        {clockOut ? "⏰ ¡Tiempo!" : (clockPausedLeft != null ? "⏸ " : "⏱ ") + fmtClock(clockLeft)}
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        <button onClick={() => clockAdd(1)} title="Sumar 1 minuto" style={clockBtn}>+1 min</button>
+        <button onClick={clockPausedLeft != null ? clockResume : clockPause} title="Pausar / reanudar el reloj" style={clockBtn}>
+          {clockPausedLeft != null ? "▶" : "⏸"}
+        </button>
+      </div>
+    </div>
+  ) : null;
 
   const toggleFullscreen = () => {
     try {
@@ -284,8 +373,11 @@ function LectioPresenter({ quiz, onExit }) {
         background: theme.chipBg, color: theme.text, border: "1px solid " + theme.border,
         borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer",
       }}>✕ Salir</button>
-      <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>
-        📵 Modo Sin Celular {extra}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+        <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>
+          📵 Modo Sin Celular {extra}
+        </div>
+        {clockNode}
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <button onClick={openRemote} title="Controlar la presentación desde tu celular" style={{

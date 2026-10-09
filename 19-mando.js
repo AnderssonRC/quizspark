@@ -8,6 +8,7 @@
 //   · Revelar u ocultar la respuesta correcta
 //   · Lanzar un Reto Físico (base o escrito en vivo) y terminarlo
 //   · Mostrar a Esmigol en grande con una frase (base o escrita en vivo)
+//   · Reloj de la presentación: sumar/restar minutos, pausar y reanudar
 //
 // Conexión: el presentador crea un "canal" en liveSessions (la colección
 // que el celular puede escribir sin permisos extra), marcado como
@@ -366,6 +367,9 @@ function LectioRemoteControl({ remoteId }) {
       <div style={{ textAlign: "center", fontWeight: 900, color: "#34d399", marginBottom: 8 }}>{flash}</div>
     )}
 
+    {/* Reloj de la presentación: sumar minutos / pausar */}
+    <MandoClock clock={st.clock || null} onSend={send} />
+
     {/* Cambiar pregunta */}
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
       <button onClick={() => send("prev", null, "◀ Anterior")} disabled={!st.total || st.idx <= 0}
@@ -419,6 +423,62 @@ function LectioRemoteControl({ remoteId }) {
       {authUser.email} · <button onClick={() => window.QS.auth.signOut()} style={{ background: "none", border: 0, color: "#94a3b8", textDecoration: "underline", cursor: "pointer", fontSize: 12 }}>cerrar sesión</button>
     </p>
   </>);
+}
+
+// Reloj de la presentación en el celular. Cuenta por su cuenta desde que
+// recibe el dato del televisor (leftMs), así no importa si la hora de los
+// dos equipos no coincide. `stamp` cambia cuando el docente suma minutos,
+// pausa o reanuda: ahí se vuelve a sincronizar.
+function MandoClock({ clock, onSend }) {
+  const [base, setBase] = useStateMd(() => (clock ? { leftMs: clock.leftMs, at: Date.now() } : null)); // { leftMs, at }
+  const [, setTick] = useStateMd(0);
+  const key = clock ? clock.stamp + "|" + clock.paused : "";
+  useEffectMd(() => {
+    setBase(clock ? { leftMs: clock.leftMs, at: Date.now() } : null);
+  }, [key]);
+  useEffectMd(() => {
+    if (!clock || clock.paused) return;
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [key]);
+
+  const left = !clock || !base ? 0 : clock.paused ? base.leftMs : Math.max(0, base.leftMs - (Date.now() - base.at));
+  const s = Math.ceil(left / 1000);
+  const txt = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+  const out = clock && left <= 0;
+  const warn = clock && !out && left <= 60000;
+  const btn = (label, onClick, extra) => (
+    <button onClick={onClick} style={{
+      padding: "12px 0", borderRadius: 12, fontWeight: 900, fontSize: 15, fontFamily: MANDO_FONT, cursor: "pointer",
+      background: "rgba(255,255,255,.08)", color: "#fff", border: "1px solid rgba(255,255,255,.18)", ...extra,
+    }}>{label}</button>
+  );
+
+  return (
+    <div style={{
+      background: "#101a2e", border: "1px solid " + (out ? "#dc2626" : warn ? "#f59e0b" : "rgba(255,255,255,.12)"),
+      borderRadius: 18, padding: 14, marginBottom: 12,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 10 }}>
+        <span style={{ fontSize: 12, fontWeight: 900, color: "#94a3b8", letterSpacing: ".08em" }}>⏱ RELOJ</span>
+        <span style={{
+          fontFamily: "ui-monospace, monospace", fontSize: 34, fontWeight: 900, lineHeight: 1,
+          color: out ? "#f87171" : warn ? "#fbbf24" : clock ? "#fff" : "#64748b",
+          opacity: clock && clock.paused ? 0.6 : 1,
+        }}>
+          {!clock ? "Sin reloj" : out ? "⏰ ¡Tiempo!" : (clock.paused ? "⏸ " : "") + txt}
+        </span>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+        {btn("+1 min", () => onSend("clockAdd", 1, "+1 minuto"))}
+        {btn("+5 min", () => onSend("clockAdd", 5, "+5 minutos"))}
+        {btn("−1 min", () => onSend("clockAdd", -1, "−1 minuto"), { opacity: clock ? 1 : .4 })}
+        {clock && clock.paused
+          ? btn("▶", () => onSend("clockResume", null, "▶ Reloj en marcha"), { background: "#10b981", color: "#04201b", border: 0 })
+          : btn("⏸", () => onSend("clockPause", null, "⏸ Reloj en pausa"), { opacity: clock ? 1 : .4 })}
+      </div>
+    </div>
+  );
 }
 
 // Reto físico desde el mando: los base + "Mis retos" (los mismos que guarda
