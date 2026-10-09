@@ -4058,6 +4058,8 @@ function LiveHistoryPanel({ onBack }) {
         const snap = await window.QS.db.collection("liveSessions")
           .where("ownerId", "==", uid).get();
         const list = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+          // Los canales del mando del celular (19-mando.js) no son salas.
+          .filter(s => s.kind !== "lectioRemote")
           .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         setSessions(list);
       } catch (err) {

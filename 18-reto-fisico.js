@@ -296,6 +296,69 @@ function rfEmojiFor(text) {
   return hit ? hit[1] : "⚡";
 }
 
+// Tarjeta protagonista del reto: contorno de luz giratoria (un degradado
+// cónico gira DETRÁS de la tarjeta y solo asoma por el borde), emoji grande
+// que baila con halo y el texto del reto. `tv` = versión para televisor o
+// videobeam (todo más grande). `footer` = línea de premio (opcional).
+function RFHeroCard({ text, tv = false, footer }) {
+  const emoji = rfEmojiFor(text);
+  const hero = tv ? 230 : 150;
+  return (
+    <div style={{
+      position: "relative", width: "100%", maxWidth: tv ? 1000 : 560, borderRadius: tv ? 40 : 30, padding: tv ? 6 : 4, overflow: "hidden",
+      animation: "qs-rf-card .7s cubic-bezier(.2,.9,.3,1.3) 2.2s both, qs-rf-glow 1.8s ease-in-out 2.9s infinite",
+    }}>
+      <div aria-hidden="true" style={{
+        position: "absolute", top: "50%", left: "50%", width: "160%", aspectRatio: "1 / 1",
+        background: `conic-gradient(from 0deg, transparent 0deg, ${RF_NEON} 50deg, #ffffff 80deg, ${RF_NEON} 110deg, transparent 170deg, transparent 190deg, #b2ff59 240deg, ${RF_NEON} 270deg, transparent 330deg)`,
+        animation: "qs-rf-spin 3s linear infinite",
+      }} />
+      <div style={{
+        position: "relative", borderRadius: tv ? 34 : 26, padding: tv ? "40px 36px 38px" : "26px 20px 24px", textAlign: "center",
+        background: "radial-gradient(ellipse at 50% 0%, #16502a 0%, #072a13 60%, #031a0b 100%)",
+      }}>
+        <div style={{ fontSize: tv ? 22 : 13, fontWeight: 900, letterSpacing: ".2em", color: RF_NEON, marginBottom: 6 }}>💪 RETO EN FÍSICO</div>
+        <div style={{ position: "relative", width: hero, height: hero, margin: "4px auto 8px", display: "grid", placeItems: "center" }}>
+          <div aria-hidden="true" style={{
+            position: "absolute", inset: 0, borderRadius: "50%",
+            background: "radial-gradient(circle, rgba(57,255,20,.55) 0%, rgba(57,255,20,.12) 55%, transparent 70%)",
+            animation: "qs-rf-halo 1.6s ease-in-out infinite",
+          }} />
+          <div style={{
+            position: "relative", fontSize: Math.round(hero * 0.7), lineHeight: 1,
+            filter: "drop-shadow(0 8px 18px rgba(0,0,0,.45)) drop-shadow(0 0 14px rgba(57,255,20,.6))",
+            animation: "qs-rf-hero 1.4s ease-in-out infinite",
+          }}>{emoji}</div>
+        </div>
+        <div style={{
+          fontSize: tv ? "clamp(40px, 5.6vw, 84px)" : "clamp(26px, 7vw, 44px)", fontWeight: 900, lineHeight: 1.12, color: "#fff",
+          textShadow: "0 0 18px rgba(57,255,20,.55)",
+        }}>{text}</div>
+        {footer && (
+          <div style={{
+            display: "inline-block", marginTop: tv ? 22 : 16, padding: tv ? "12px 24px" : "8px 16px", borderRadius: 999,
+            background: "rgba(57,255,20,.14)", border: `1px solid ${RF_NEON}`, fontSize: tv ? 24 : 14, fontWeight: 800,
+          }}>{footer}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- TELEVISOR / VIDEOBEAM (Modo Sin Celular) ----------
+// El docente lo lanza desde el mando del celular (19-mando.js). No hay
+// celulares de estudiantes ni puntos digitales: solo el reto, en grande.
+function PhysicalChallengeTV({ challenge }) {
+  const introDone = useRFIntro(challenge.id);
+  return (
+    <RFShell introDone={introDone}>
+      <div style={{ minHeight: "calc(100vh - 68px)", display: "grid", placeItems: "center" }}>
+        <RFHeroCard text={challenge.text} tv footer={<>🏃 ¡El primero que lo cumpla gana!</>} />
+      </div>
+    </RFShell>
+  );
+}
+
 // ---------- ESTUDIANTE: reto en su celular ----------
 // El reto va centrado en la pantalla, con una luz verde que recorre todo
 // el contorno de la tarjeta y un emoji grande que baila.
@@ -305,7 +368,6 @@ function PhysicalChallengeStudent({ session, myId }) {
   const winners = ch.winners || [];
   const place = winners.indexOf(myId);
   const left = Math.max(0, RF_WINNERS - winners.length);
-  const emoji = rfEmojiFor(ch.text);
 
   return (
     <RFShell introDone={introDone}>
@@ -313,47 +375,9 @@ function PhysicalChallengeStudent({ session, myId }) {
         minHeight: "calc(100vh - 68px)", display: "flex", flexDirection: "column",
         alignItems: "center", justifyContent: "center", gap: 18,
       }}>
-        {/* Tarjeta con contorno de luz giratoria: un degradado cónico gira
-            DETRÁS de la tarjeta y solo asoma por el borde de 4px. */}
-        <div style={{
-          position: "relative", width: "100%", maxWidth: 560, borderRadius: 30, padding: 4, overflow: "hidden",
-          animation: "qs-rf-card .7s cubic-bezier(.2,.9,.3,1.3) 2.2s both, qs-rf-glow 1.8s ease-in-out 2.9s infinite",
-        }}>
-          <div aria-hidden="true" style={{
-            position: "absolute", top: "50%", left: "50%", width: "160%", aspectRatio: "1 / 1",
-            background: `conic-gradient(from 0deg, transparent 0deg, ${RF_NEON} 50deg, #ffffff 80deg, ${RF_NEON} 110deg, transparent 170deg, transparent 190deg, #b2ff59 240deg, ${RF_NEON} 270deg, transparent 330deg)`,
-            animation: "qs-rf-spin 3s linear infinite",
-          }} />
-          <div style={{
-            position: "relative", borderRadius: 26, padding: "26px 20px 24px", textAlign: "center",
-            background: "radial-gradient(ellipse at 50% 0%, #16502a 0%, #072a13 60%, #031a0b 100%)",
-          }}>
-            <div style={{ fontSize: 13, fontWeight: 900, letterSpacing: ".2em", color: RF_NEON, marginBottom: 6 }}>💪 RETO EN FÍSICO</div>
-            {/* Emoji protagonista con halo */}
-            <div style={{ position: "relative", width: 150, height: 150, margin: "4px auto 8px", display: "grid", placeItems: "center" }}>
-              <div aria-hidden="true" style={{
-                position: "absolute", inset: 0, borderRadius: "50%",
-                background: "radial-gradient(circle, rgba(57,255,20,.55) 0%, rgba(57,255,20,.12) 55%, transparent 70%)",
-                animation: "qs-rf-halo 1.6s ease-in-out infinite",
-              }} />
-              <div style={{
-                position: "relative", fontSize: 104, lineHeight: 1,
-                filter: "drop-shadow(0 8px 18px rgba(0,0,0,.45)) drop-shadow(0 0 14px rgba(57,255,20,.6))",
-                animation: "qs-rf-hero 1.4s ease-in-out infinite",
-              }}>{emoji}</div>
-            </div>
-            <div style={{
-              fontSize: "clamp(26px, 7vw, 44px)", fontWeight: 900, lineHeight: 1.15, color: "#fff",
-              textShadow: "0 0 18px rgba(57,255,20,.55)",
-            }}>{ch.text}</div>
-            <div style={{
-              display: "inline-block", marginTop: 16, padding: "8px 16px", borderRadius: 999,
-              background: "rgba(57,255,20,.14)", border: `1px solid ${RF_NEON}`, fontSize: 14, fontWeight: 800,
-            }}>
-              🏆 Los <b style={{ color: RF_NEON }}>primeros {RF_WINNERS}</b> ganan <b style={{ color: RF_NEON }}>+{RF_POINTS} puntos</b>
-            </div>
-          </div>
-        </div>
+        <RFHeroCard text={ch.text} footer={
+          <>🏆 Los <b style={{ color: RF_NEON }}>primeros {RF_WINNERS}</b> ganan <b style={{ color: RF_NEON }}>+{RF_POINTS} puntos</b></>
+        } />
 
       <div style={{ width: "100%", maxWidth: 520, textAlign: "center", animation: "qs-rf-card .6s ease 2.5s both" }}>
         {place >= 0 ? (
@@ -405,3 +429,7 @@ window.RF_WINNERS = RF_WINNERS;
 window.PhysicalChallengeButton = PhysicalChallengeButton;
 window.PhysicalChallengeHost = PhysicalChallengeHost;
 window.PhysicalChallengeStudent = PhysicalChallengeStudent;
+window.PhysicalChallengeTV = PhysicalChallengeTV;
+window.RF_PRESETS = RF_PRESETS;
+window.rfLoadCustom = rfLoadCustom;
+window.rfSaveCustom = rfSaveCustom;

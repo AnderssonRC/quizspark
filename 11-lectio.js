@@ -215,6 +215,56 @@ function LectioPresenter({ quiz, onExit }) {
     startedAt: presentationStartedAtRef.current,
   }) : { node: null };
 
+  // ---- MANDO DEL CELULAR (19-mando.js) ----
+  // Reto físico y Esmigol en grande, lanzados desde el celular del docente.
+  const [tvChallenge, setTvChallenge] = useStateLec(null); // { id, text }
+  const [tvEsmigol, setTvEsmigol] = useStateLec(null);     // { text, expression, at }
+  const [showRemote, setShowRemote] = useStateLec(false);
+  const onRemoteCommand = (cmd) => {
+    if (!metaDone) setMetaDone(true); // cualquier orden salta la cuenta regresiva
+    const p = cmd.payload;
+    switch (cmd.type) {
+      case "next": goNext(); break;
+      case "prev": goPrev(); break;
+      case "goto":
+        if (typeof p === "number" && p >= 0 && p < slides.length) { setIdx(p); setRevealed(false); setFinished(false); }
+        break;
+      case "reveal": setRevealed(typeof p === "boolean" ? p : (v => !v)); break;
+      case "restart": setIdx(0); setRevealed(false); setFinished(false); break;
+      case "challenge": if (p && p.text) setTvChallenge({ id: cmd.id, text: p.text }); break;
+      case "challengeEnd": setTvChallenge(null); break;
+      case "esmigol": if (p && p.text) setTvEsmigol({ text: p.text, expression: p.expression, at: cmd.at || Date.now() }); break;
+      default: break;
+    }
+  };
+  const remote = window.useLectioRemote
+    ? window.useLectioRemote({ quiz, onCommand: onRemoteCommand })
+    : { remoteId: null, open: async () => null, publish: () => {}, connected: false };
+  // El celular ve en qué pregunta va la presentación (y cuál es la correcta).
+  useEffectLec(() => {
+    if (!remote.remoteId) return;
+    const plain = window.mandoPlain || (s => String(s || ""));
+    remote.publish({
+      idx: safeIdx, total: slides.length, revealed, finished,
+      challenge: tvChallenge ? tvChallenge.text : null,
+      question: q ? {
+        text: plain(q.text),
+        options: (q.options || []).map((o, i) => ({ letter: String.fromCharCode(65 + i), text: plain(o.text), correct: !!o.correct })),
+      } : null,
+    });
+  }, [remote.remoteId, safeIdx, revealed, finished, tvChallenge, slides.length]);
+  const openRemote = async () => { setShowRemote(true); await remote.open(); };
+  // Capas del mando: van en TODAS las pantallas del presentador.
+  const remoteLayers = (
+    <>
+      {tvChallenge && window.PhysicalChallengeTV && <window.PhysicalChallengeTV key={tvChallenge.id} challenge={tvChallenge} />}
+      {tvEsmigol && window.LectioEsmigolTV && <window.LectioEsmigolTV msg={tvEsmigol} onDone={() => setTvEsmigol(null)} />}
+      {showRemote && window.LectioRemotePanel && (
+        <window.LectioRemotePanel remoteId={remote.remoteId} connected={remote.connected} onClose={() => setShowRemote(false)} />
+      )}
+    </>
+  );
+
   const toggleFullscreen = () => {
     try {
       if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
@@ -237,10 +287,17 @@ function LectioPresenter({ quiz, onExit }) {
       <div style={{ fontSize: 13, color: theme.textMuted, fontWeight: 600 }}>
         📵 Modo Sin Celular {extra}
       </div>
-      <button onClick={toggleFullscreen} title="Pantalla completa" style={{
-        background: theme.chipBg, color: theme.text, border: "1px solid " + theme.border,
-        borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer",
-      }}>⛶ Pantalla completa</button>
+      <div style={{ display: "flex", gap: 8 }}>
+        <button onClick={openRemote} title="Controlar la presentación desde tu celular" style={{
+          background: remote.connected ? "rgba(16,185,129,.18)" : theme.chipBg, color: remote.connected ? "#10b981" : theme.text,
+          border: "1px solid " + (remote.connected ? "#10b981" : theme.border),
+          borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+        }}>📱 {remote.connected ? "Mando conectado" : "Mando del celular"}</button>
+        <button onClick={toggleFullscreen} title="Pantalla completa" style={{
+          background: theme.chipBg, color: theme.text, border: "1px solid " + theme.border,
+          borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+        }}>⛶ Pantalla completa</button>
+      </div>
     </div>
   );
 
@@ -289,6 +346,7 @@ function LectioPresenter({ quiz, onExit }) {
             </div>
           </LectioCard>
         </div>
+        {remoteLayers}
       </div>
     );
   }
@@ -379,6 +437,7 @@ function LectioPresenter({ quiz, onExit }) {
         }}>{isLast ? "🏁 Finalizar" : "Siguiente ▶"}</button>
       </div>
       {esmigol.node}
+      {remoteLayers}
     </div>
   );
 }

@@ -65,6 +65,7 @@ function App() {
   // Detección de modos especiales por URL
   const [examCode] = useStateA(getURLParam("exam"));   // evaluación asincrónica
   const [joinCode] = useStateA(getURLParam("join"));   // sala en vivo
+  const [remoteCode] = useStateA(getURLParam("remote")); // mando del celular (Sin Celular · 19-mando.js)
 
   // ---- Estado de autenticación ----
   const [authChecking, setAuthChecking] = useStateA(true);
@@ -101,7 +102,7 @@ function App() {
     navStateRef.current = { view, showAdmin, showJoinFromNav };
   });
   useEffectA(() => {
-    if (examCode || joinCode) return; // esos modos son de estudiante, sin shell propio
+    if (examCode || joinCode || remoteCode) return; // modos sin shell propio
     window.history.pushState({ qsApp: true }, "");
     const onPopState = () => {
       const st = navStateRef.current;
@@ -114,11 +115,12 @@ function App() {
     };
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
-  }, [examCode, joinCode]);
+  }, [examCode, joinCode, remoteCode]);
 
   // ---- Listener de sesión Firebase (solo si NO estamos en modo estudiante por URL) ----
+  // El mando del celular maneja su propio inicio de sesión (LectioRemoteControl).
   useEffectA(() => {
-    if (examCode || joinCode) {
+    if (examCode || joinCode || remoteCode) {
       setAuthChecking(false);
       return;
     }
@@ -153,7 +155,7 @@ function App() {
       setAuthChecking(false);
     });
     return () => unsub();
-  }, [examCode, joinCode]);
+  }, [examCode, joinCode, remoteCode]);
 
   const handleLogout = async () => {
     await window.QS.auth.signOut();
@@ -164,6 +166,9 @@ function App() {
   // ===== MODOS ESPECIALES POR URL (sin login) =====
   if (examCode) {
     return <window.QS.StudentExam examCode={examCode} />;
+  }
+  if (remoteCode && window.LectioRemoteControl) {
+    return <window.LectioRemoteControl remoteId={remoteCode} />;
   }
   if (joinCode) {
     return <window.QS.StudentJoinLive
