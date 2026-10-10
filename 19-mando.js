@@ -392,6 +392,16 @@ function LectioRemoteControl({ remoteId }) {
       </div>
     )}
 
+    {/* Pregunta en vivo (cerrada): sale justo después de la actual */}
+    <button onClick={() => setPanel(panel === "pregunta" ? null : "pregunta")} style={{ ...big("rgba(124,58,237,.85)", "#fff"), fontSize: 15, padding: "12px 12px", marginBottom: 10 }}>
+      ➕ Pregunta en vivo {panel === "pregunta" ? "▲" : "▼"}
+    </button>
+    {panel === "pregunta" && (
+      <div style={{ ...card, marginBottom: 12 }}>
+        <LiveClosedQuestionForm onSubmit={(p) => { send("addQuestion", p, "➕ Pregunta agregada"); setPanel(null); }} />
+      </div>
+    )}
+
     {/* Revelar */}
     <button onClick={() => send("reveal", !st.revealed, st.revealed ? "🙈 Oculta" : "✅ Revelada")} style={{ ...big(st.revealed ? "rgba(255,255,255,.1)" : "#14b8a6", st.revealed ? "#fff" : "#04201b"), marginBottom: 10 }}>
       {st.revealed ? "🙈 Ocultar respuesta" : "✅ Revelar la correcta"}
@@ -478,6 +488,57 @@ function MandoClock({ clock, onSend }) {
           ? btn("▶", () => onSend("clockResume", null, "▶ Reloj en marcha"), { background: "#10b981", color: "#04201b", border: 0 })
           : btn("⏸", () => onSend("clockPause", null, "⏸ Reloj en pausa"), { opacity: clock ? 1 : .4 })}
       </div>
+    </div>
+  );
+}
+
+// Pregunta CERRADA en vivo (Modo Sin Celular): la usan el televisor
+// (11-lectio.js, botón "➕ Pregunta") y el mando. onSubmit recibe
+// { text, options:[4 textos], correctIdx, timer }; quien la recibe la
+// inserta justo después de la pregunta actual.
+function LiveClosedQuestionForm({ onSubmit }) {
+  const [text, setText] = useStateMd("");
+  const [options, setOptions] = useStateMd(["", "", "", ""]);
+  const [correctIdx, setCorrectIdx] = useStateMd(0);
+  const [timer, setTimer] = useStateMd(60);
+  const filled = options.filter(o => o.trim()).length;
+  const valid = text.trim() && filled >= 2 && (options[correctIdx] || "").trim();
+  const submit = () => {
+    if (!valid) return;
+    onSubmit({ text: text.trim(), options, correctIdx, timer });
+    setText(""); setOptions(["", "", "", ""]); setCorrectIdx(0);
+  };
+  const input = {
+    width: "100%", padding: "10px 12px", borderRadius: 10, fontSize: 15, fontFamily: MANDO_FONT,
+    background: "rgba(255,255,255,.06)", color: "#f1f5f9", border: "1px solid rgba(255,255,255,.18)",
+  };
+  return (
+    <div style={{ display: "grid", gap: 8 }}>
+      <textarea rows={2} value={text} onChange={e => setText(e.target.value)} placeholder="Escribe la pregunta…"
+        style={{ ...input, resize: "vertical" }} />
+      {options.map((o, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button onClick={() => setCorrectIdx(i)} title="Marcar como correcta" style={{
+            width: 34, height: 34, flexShrink: 0, borderRadius: 10, fontWeight: 900, cursor: "pointer", fontFamily: MANDO_FONT,
+            background: correctIdx === i ? "#10b981" : "rgba(255,255,255,.08)", color: "#fff",
+            border: "1px solid " + (correctIdx === i ? "#10b981" : "rgba(255,255,255,.2)"),
+          }}>{correctIdx === i ? "✓" : "ABCD"[i]}</button>
+          <input value={o} placeholder={`Opción ${"ABCD"[i]}`}
+            onChange={e => setOptions(list => list.map((x, j) => (j === i ? e.target.value : x)))}
+            style={{ ...input, borderColor: correctIdx === i ? "#10b981" : "rgba(255,255,255,.18)" }} />
+        </div>
+      ))}
+      <div style={{ fontSize: 12, color: "#94a3b8" }}>Toca la letra para marcar la correcta (✓). Mínimo 2 opciones.</div>
+      <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700 }}>
+        ⏱ Tiempo
+        <select value={timer} onChange={e => setTimer(Number(e.target.value))} style={{ ...input, width: "auto" }}>
+          {[20, 30, 45, 60, 90, 120, 180, 300].map(s => <option key={s} value={s}>{s < 60 ? s + " s" : (s / 60) + " min"}</option>)}
+        </select>
+      </label>
+      <button onClick={submit} disabled={!valid} style={{
+        padding: "14px 12px", borderRadius: 14, border: 0, fontWeight: 900, fontSize: 16, fontFamily: MANDO_FONT, cursor: valid ? "pointer" : "default",
+        background: "#14b8a6", color: "#04201b", opacity: valid ? 1 : .45,
+      }}>➕ Agregar después de la actual</button>
     </div>
   );
 }
@@ -582,4 +643,5 @@ window.useLectioRemote = useLectioRemote;
 window.LectioRemotePanel = LectioRemotePanel;
 window.LectioEsmigolTV = LectioEsmigolTV;
 window.LectioRemoteControl = LectioRemoteControl;
+window.LiveClosedQuestionForm = LiveClosedQuestionForm;
 window.mandoPlain = mandoPlain;

@@ -172,7 +172,12 @@ function LectioPresenter({ quiz, onExit }) {
   // Por ahora este modo solo soporta opción múltiple: se filtra por si
   // el quiz trae preguntas de otro tipo (p. ej. quedaron de un cambio
   // de modo anterior).
-  const slides = (quiz.questions || []).filter(q => q.type === "multi");
+  const baseSlides = (quiz.questions || []).filter(q => q.type === "multi");
+  // Preguntas agregadas EN VIVO (desde el computador o el mando): solo para
+  // esta presentación, insertadas justo después de la actual. El quiz
+  // guardado no cambia.
+  const [liveSlides, setLiveSlides] = useStateLec(null);
+  const slides = liveSlides || baseSlides;
   const [idx, setIdx] = useStateLec(0);
   const [revealed, setRevealed] = useStateLec(false);
   const [finished, setFinished] = useStateLec(false);
@@ -303,6 +308,27 @@ function LectioPresenter({ quiz, onExit }) {
 
   // ---- MANDO DEL CELULAR (19-mando.js) ----
   // Reto físico y Esmigol en grande, lanzados desde el celular del docente.
+  // Pregunta en vivo (cerrada): { text, options:[4 textos], correctIdx, timer }
+  const [showAddQ, setShowAddQ] = useStateLec(false);
+  const addLiveSlide = (p) => {
+    const opts = (p.options || []).map(t => String(t || "").trim());
+    const filled = opts.filter(Boolean);
+    if (!String(p.text || "").trim() || filled.length < 2) return false;
+    const ci = opts.slice(0, p.correctIdx || 0).filter(Boolean).length; // índice entre las llenas
+    const q = {
+      id: "qq-live-" + Date.now(), type: "multi", liveAdded: true,
+      text: String(p.text).trim(), timer: Number(p.timer) > 0 ? Number(p.timer) : 60,
+      options: filled.map((t, i) => ({ id: "abcdefgh"[i], text: t, correct: i === ci })),
+    };
+    setLiveSlides(list => {
+      const l = list || baseSlides;
+      const at = finished ? l.length : Math.min(l.length, safeIdx + 1);
+      return [...l.slice(0, at), q, ...l.slice(at)];
+    });
+    // Si la presentación ya había terminado, se va directo a la nueva.
+    if (finished) { setIdx(slides.length); setRevealed(false); setFinished(false); }
+    return true;
+  };
   const [tvChallenge, setTvChallenge] = useStateLec(null); // { id, text }
   const [tvEsmigol, setTvEsmigol] = useStateLec(null);     // { text, expression, at }
   const [showRemote, setShowRemote] = useStateLec(false);
@@ -324,6 +350,7 @@ function LectioPresenter({ quiz, onExit }) {
       case "clockReset": clockReset(); break;
       case "challenge": if (p && p.text) setTvChallenge({ id: cmd.id, text: p.text }); break;
       case "challengeEnd": setTvChallenge(null); break;
+      case "addQuestion": if (p) addLiveSlide(p); break;
       case "esmigol": if (p && p.text) setTvEsmigol({ text: p.text, expression: p.expression, at: cmd.at || Date.now() }); break;
       default: break;
     }
@@ -353,6 +380,27 @@ function LectioPresenter({ quiz, onExit }) {
     <>
       {tvChallenge && window.PhysicalChallengeTV && <window.PhysicalChallengeTV key={tvChallenge.id} challenge={tvChallenge} />}
       {tvEsmigol && window.LectioEsmigolTV && <window.LectioEsmigolTV msg={tvEsmigol} onDone={() => setTvEsmigol(null)} />}
+      {showAddQ && window.LiveClosedQuestionForm && (
+        <div onClick={() => setShowAddQ(false)} style={{
+          position: "fixed", inset: 0, zIndex: 960, background: "rgba(2,6,23,.75)", display: "grid", placeItems: "center", padding: 16,
+        }}>
+          <div onClick={e => e.stopPropagation()} style={{
+            width: "100%", maxWidth: 560, maxHeight: "92vh", overflowY: "auto", borderRadius: 22, padding: 22,
+            background: "#0f172a", color: "#f1f5f9", border: "2px solid #14b8a6",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 10 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 20, fontWeight: 900 }}>➕ Pregunta en vivo</div>
+                <div style={{ fontSize: 13, color: "#94a3b8", lineHeight: 1.5 }}>
+                  Sale justo después de la actual. Solo para esta presentación: el quiz guardado no cambia.
+                </div>
+              </div>
+              <button onClick={() => setShowAddQ(false)} style={{ background: "transparent", border: 0, color: "#fff", fontSize: 20, cursor: "pointer" }}>✕</button>
+            </div>
+            <window.LiveClosedQuestionForm onSubmit={(p) => { if (addLiveSlide(p)) setShowAddQ(false); }} />
+          </div>
+        </div>
+      )}
       {showRemote && window.LectioRemotePanel && (
         <window.LectioRemotePanel remoteId={remote.remoteId} connected={remote.connected} onClose={() => setShowRemote(false)} />
       )}
@@ -468,6 +516,10 @@ function LectioPresenter({ quiz, onExit }) {
         {extra}
       </div>
       <div style={{ display: "flex", gap: 8, justifySelf: "end", flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <button onClick={() => setShowAddQ(true)} title="Agregar una pregunta solo para esta presentación" style={{
+          background: theme.chipBg, color: theme.text, border: "1px solid " + theme.border,
+          borderRadius: 10, padding: "8px 14px", fontSize: 13, fontWeight: 700, cursor: "pointer",
+        }}>➕ Pregunta</button>
         <button onClick={openRemote} title="Controlar la presentación desde tu celular" style={{
           background: remote.connected ? "rgba(16,185,129,.18)" : theme.chipBg, color: remote.connected ? "#10b981" : theme.text,
           border: "1px solid " + (remote.connected ? "#10b981" : theme.border),

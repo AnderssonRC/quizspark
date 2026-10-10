@@ -1696,6 +1696,173 @@ function EsmigolHostSender({ sessionId, quiz }) {
   );
 }
 
+// ---------- Pregunta EN VIVO: botón + formulario del docente ----------
+// Arma la pregunta con la misma forma que el editor (03-creator.js →
+// addQuestion), según el modo de la sala. La inserción en la sala la hace
+// LiveSessionHost (addLiveQuestion).
+function buildLiveQuestion({ mode, kind, text, options, correctIdx, timer, points }) {
+  const id = "qq-live-" + Date.now();
+  const base = mode === "workshop" ? { id, text, timer } : mode === "survey" ? { id, text, timer }
+    : { id, text, timer, pointsCorrect: points, pointsWrong: 0, pointsSpeedBonus: 0 };
+  const extra = { liveAdded: true };
+  if (kind === "open") {
+    // Abierta: en quiz/taller la califica el docente al revelar.
+    return mode === "survey" ? { ...base, ...extra, type: "text" }
+      : { ...base, ...extra, type: "text", acceptedAnswers: [], gradeMode: "live" };
+  }
+  if (kind === "truefalse") {
+    return { ...base, ...extra, type: "truefalse", options: [
+      { id: "t", text: "Verdadero", correct: correctIdx === 0 },
+      { id: "f", text: "Falso", correct: correctIdx === 1 },
+    ] };
+  }
+  const opts = options.map(t => t.trim()).filter(Boolean)
+    .map((t, i) => ({ id: "abcdefgh"[i], text: t, correct: mode !== "survey" && i === correctIdx }));
+  return { ...base, ...extra, type: mode === "survey" ? "poll" : "multi", options: opts };
+}
+
+function LiveQuestionAdder({ quiz, session, onAdd }) {
+  const mode = quiz.mode || "quiz";
+  const isSurvey = mode === "survey";
+  const [open, setOpen] = useStateL(false);
+  const [kind, setKind] = useStateL("closed");
+  const [text, setText] = useStateL("");
+  const [options, setOptions] = useStateL(["", "", "", ""]);
+  const [correctIdx, setCorrectIdx] = useStateL(0);
+  const [timer, setTimer] = useStateL(mode === "workshop" ? 120 : 30);
+  const [points, setPoints] = useStateL(10);
+  const [busy, setBusy] = useStateL(false);
+  const [done, setDone] = useStateL("");
+
+  const filled = options.map(o => o.trim()).filter(Boolean);
+  const needsCorrect = !isSurvey && kind === "closed";
+  const valid = text.trim() && (
+    kind === "open" || kind === "truefalse" ||
+    (filled.length >= 2 && (!needsCorrect || (options[correctIdx] || "").trim()))
+  );
+  const nextNumber = Math.max(0, (session.currentQuestionIdx ?? -1) + 1) + 1;
+
+  const reset = () => { setText(""); setOptions(["", "", "", ""]); setCorrectIdx(0); };
+  const submit = async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      // correctIdx apunta a la lista con huecos: reubicarlo en la de opciones llenas.
+      const ci = kind === "closed" ? options.slice(0, correctIdx).filter(o => o.trim()).length : correctIdx;
+      const q = buildLiveQuestion({ mode, kind, text: text.trim(), options, correctIdx: ci, timer: Number(timer) || 30, points: Number(points) || 10 });
+      await onAdd(q);
+      setDone(`✅ Agregada como pregunta ${nextNumber}: sale después de la actual.`);
+      reset();
+      setTimeout(() => setDone(""), 4000);
+    } catch (err) {
+      alert("No se pudo agregar la pregunta: " + err.message);
+    } finally { setBusy(false); }
+  };
+
+  const kinds = isSurvey
+    ? [{ id: "closed", label: "📊 Opciones" }, { id: "open", label: "✍️ Abierta" }]
+    : [{ id: "closed", label: "🔘 Cerrada" }, { id: "truefalse", label: "✔️ V / F" }, { id: "open", label: "✍️ Abierta" }];
+  const chip = (on) => ({
+    padding: "7px 12px", borderRadius: 999, fontSize: 13, fontWeight: 800, cursor: "pointer",
+    background: on ? "var(--violet-600)" : "var(--ink-50)", color: on ? "#fff" : "var(--ink-700)",
+    border: "1px solid " + (on ? "var(--violet-600)" : "var(--ink-200)"),
+  });
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} title="Agregar una pregunta solo para esta sesión" style={{
+        position: "fixed", left: 390, bottom: 16, zIndex: 860,
+        padding: "10px 16px", borderRadius: 999, cursor: "pointer", fontWeight: 900, fontSize: 14,
+        color: "#fff", background: "var(--violet-600)", border: 0,
+        boxShadow: "0 4px 0 var(--violet-900), 0 10px 24px rgba(0,0,0,.3)",
+      }}>➕ Pregunta en vivo</button>
+
+      {open && (
+        <div onClick={() => setOpen(false)} style={{
+          position: "fixed", inset: 0, zIndex: 940, background: "rgba(15,10,40,.6)",
+          display: "grid", placeItems: "center", padding: 16,
+        }}>
+          <div onClick={e => e.stopPropagation()} className="qs-card" style={{
+            width: "100%", maxWidth: 560, maxHeight: "92vh", overflowY: "auto", padding: 22, color: "var(--ink-900)",
+          }}>
+            <div style={{ display: "flex", alignItems: "flex-start", gap: 10, marginBottom: 6 }}>
+              <div style={{ flex: 1 }}>
+                <h2 style={{ fontSize: 20, margin: 0 }}>➕ Pregunta en vivo</h2>
+                <p style={{ fontSize: 13, color: "var(--ink-500)", margin: "4px 0 0", lineHeight: 1.5 }}>
+                  Solo para esta sesión: sale como <b>pregunta {nextNumber}</b>, justo después de la actual.
+                  {isSurvey ? "" : " Queda en los resultados y suma a la nota si la aciertan."} El quiz guardado no cambia.
+                </p>
+              </div>
+              <button onClick={() => setOpen(false)} style={{ background: "transparent", border: 0, fontSize: 20, cursor: "pointer", color: "var(--ink-500)" }}>✕</button>
+            </div>
+
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "12px 0" }}>
+              {kinds.map(k => <button key={k.id} onClick={() => setKind(k.id)} style={chip(kind === k.id)}>{k.label}</button>)}
+            </div>
+
+            <textarea className="qs-input" rows={2} value={text} onChange={e => setText(e.target.value)}
+              placeholder="Escribe la pregunta…" style={{ width: "100%", resize: "vertical", marginBottom: 10, fontSize: 15 }} />
+
+            {kind === "closed" && (
+              <div style={{ display: "grid", gap: 6, marginBottom: 10 }}>
+                {options.map((o, i) => (
+                  <div key={i} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    {!isSurvey && (
+                      <input type="radio" name="live-correct" checked={correctIdx === i} onChange={() => setCorrectIdx(i)}
+                        title="Marcar como correcta" style={{ width: 18, height: 18, accentColor: "#10b981" }} />
+                    )}
+                    <span style={{ width: 22, fontWeight: 900, color: "var(--ink-500)" }}>{"ABCD"[i]}</span>
+                    <input className="qs-input" value={o} placeholder={`Opción ${"ABCD"[i]}`}
+                      onChange={e => setOptions(list => list.map((x, j) => (j === i ? e.target.value : x)))}
+                      style={{ flex: 1, borderColor: !isSurvey && correctIdx === i ? "#10b981" : undefined }} />
+                  </div>
+                ))}
+                {!isSurvey && <div style={{ fontSize: 12, color: "var(--ink-500)" }}>Marca con el círculo la opción correcta. Mínimo 2 opciones.</div>}
+              </div>
+            )}
+            {kind === "truefalse" && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                {["Verdadero", "Falso"].map((t, i) => (
+                  <button key={t} onClick={() => setCorrectIdx(i)} style={{ ...chip(correctIdx === i), flex: 1, padding: "10px 12px" }}>
+                    {correctIdx === i ? "✅ " : ""}{t} es la correcta
+                  </button>
+                ))}
+              </div>
+            )}
+            {kind === "open" && !isSurvey && (
+              <p style={{ fontSize: 12, color: "var(--ink-500)", margin: "0 0 10px" }}>
+                ✍️ Los estudiantes escriben su respuesta y tú la calificas al revelar{mode === "workshop" ? " (de 1 a 10)" : " (correcta / parcial / incorrecta)"}.
+              </p>
+            )}
+
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
+              <label style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                ⏱ Tiempo
+                <select className="qs-input" value={timer} onChange={e => setTimer(Number(e.target.value))} style={{ width: "auto" }}>
+                  {[15, 20, 30, 45, 60, 90, 120, 180, 300].map(s => <option key={s} value={s}>{s < 60 ? s + " s" : (s / 60) + " min"}</option>)}
+                </select>
+              </label>
+              {!isSurvey && mode !== "workshop" && (
+                <label style={{ fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+                  ⭐ Puntos
+                  <input type="number" min={1} max={100} className="qs-input" value={points}
+                    onChange={e => setPoints(e.target.value)} style={{ width: 80 }} />
+                </label>
+              )}
+            </div>
+
+            {done && <div style={{ fontSize: 13, fontWeight: 800, color: "#059669", marginBottom: 10 }}>{done}</div>}
+            <button onClick={submit} disabled={!valid || busy} className="qs-btn qs-btn--primary qs-btn--lg"
+              style={{ width: "100%", opacity: !valid || busy ? .5 : 1 }}>
+              {busy ? "Agregando…" : "➕ Agregar a la sesión"}
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function JoinRequestsBanner({ requests, onApprove, onReject }) {
   const [busyId, setBusyId] = useStateL(null);
   const act = async (fn, req) => {
@@ -1756,12 +1923,31 @@ async function findOpenLiveSessions(uid) {
     .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
 }
 
+// ---------- Preguntas agregadas EN VIVO (solo para esta sesión) ----------
+// El docente puede agregar una pregunta durante la sala. NO se toca el quiz
+// guardado: la sala guarda su propia lista (session.questionsOverride, con
+// la pregunta nueva insertada justo después de la actual, para no mover los
+// índices de lo ya respondido) y questionsVersion sube con cada cambio.
+// Docente y celulares usan esa lista; los resultados de la sesión la
+// incluyen, así la pregunta queda registrada y cuenta para la nota.
+function liveEffectiveQuiz(quizBase, session) {
+  if (!quizBase || !session || !Array.isArray(session.questionsOverride)) return quizBase;
+  return { ...quizBase, questions: session.questionsOverride };
+}
+// Memorizado por versión: el objeto `quiz` solo cambia cuando cambia la
+// lista (no en cada snapshot de la sala), para no relanzar efectos.
+function useLiveQuiz(quizBase, session) {
+  const version = (session && session.questionsVersion) || 0;
+  return React.useMemo(() => liveEffectiveQuiz(quizBase, session), [quizBase, version]);
+}
+
 // resumeSessionId: si viene, se RECONECTA a esa sala existente en vez de
 // crear una nueva (ver "Retomar" en el dashboard).
 function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   const [loading, setLoading] = useStateL(true);
   const [session, setSession] = useStateL(null);
-  const [quiz, setQuiz] = useStateL(null);
+  const [quizBase, setQuiz] = useStateL(null);
+  const quiz = useLiveQuiz(quizBase, session);
   const [answersByQuestion, setAnswersByQuestion] = useStateL({});
   const [showParticipants, setShowParticipants] = useStateL(false);
   const [pendingJoinRequests, setPendingJoinRequests] = useStateL([]);
@@ -1972,6 +2158,19 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     } else {
       await ref.update({ pausedAt: Date.now() });
     }
+  };
+
+  // ---- PREGUNTA EN VIVO (solo esta sesión; ver liveEffectiveQuiz) ----
+  // Se inserta justo DESPUÉS de la pregunta actual (o al inicio si aún
+  // están en el lobby): los índices de lo ya respondido no se mueven.
+  const addLiveQuestion = async (q) => {
+    const list = quiz.questions || [];
+    const at = Math.max(0, (session.currentQuestionIdx ?? -1) + 1);
+    const next = [...list.slice(0, at), q, ...list.slice(at)];
+    await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+      questionsOverride: next,
+      questionsVersion: firebase.firestore.FieldValue.increment(1),
+    });
   };
 
   // ---- RETO FÍSICO (18-reto-fisico.js) ----
@@ -2376,14 +2575,22 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   const esmigolSender = <EsmigolHostSender sessionId={sessionId} quiz={quiz} />;
 
   // Botón "¡Reto Físico!" (junto a Esmigol en vivo) en las pantallas de juego.
-  const physicalButton = window.PhysicalChallengeButton && session.status !== "lobby" && session.status !== "finished"
-    ? <window.PhysicalChallengeButton onLaunch={startPhysicalChallenge} /> : null;
+  const physicalButton = (
+    <>
+      {window.PhysicalChallengeButton && session.status !== "lobby" && session.status !== "finished" && (
+        <window.PhysicalChallengeButton onLaunch={startPhysicalChallenge} />
+      )}
+      {/* Pregunta en vivo: también desde el lobby (sería la primera) */}
+      {session.status !== "finished" && <LiveQuestionAdder quiz={quiz} session={session} onAdd={addLiveQuestion} />}
+    </>
+  );
 
   if (session.status === "lobby") {
     return (
       <>
         <HostLobby session={session} quiz={quiz} onStart={startMetaCountdown} onCancel={cancelSession} onKick={kickParticipant} />
         {!metaCountdown && esmigolSender}
+        {!metaCountdown && physicalButton}
         {metaCountdown && (
           <window.MetaCountdown
             mode="live"
@@ -3005,7 +3212,9 @@ function StudentJoinLive({ initialCode, onCancel }) {
 // ============================================================
 function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   const [session, setSession] = useStateL(null);
-  const [quiz] = useStateL(quizInitial);
+  const [quizBase] = useStateL(quizInitial);
+  // Incluye las preguntas que el docente agregue en vivo (useLiveQuiz).
+  const quiz = useLiveQuiz(quizBase, session);
   const [myAnswer, setMyAnswer] = useStateL(null);
   const [answeredAtIdx, setAnsweredAtIdx] = useStateL(-1);
   const [secondsLeft, setSecondsLeft] = useStateL(0);
@@ -4106,7 +4315,8 @@ function LiveHistoryPanel({ onBack }) {
     try {
       const quizDoc = await window.QS.db.collection("quizzes").doc(s.quizId).get();
       if (!quizDoc.exists) throw new Error("El quiz de esta sesión ya no existe.");
-      const quiz = { id: quizDoc.id, ...quizDoc.data() };
+      // Con las preguntas que se agregaron en vivo en esa sesión.
+      const quiz = liveEffectiveQuiz({ id: quizDoc.id, ...quizDoc.data() }, s);
       const snap = await window.QS.db.collection("liveSessions")
         .doc(s.id).collection("answers").get();
       const answers = snap.docs.map(d => d.data());
@@ -4158,7 +4368,8 @@ function LiveHistoryPanel({ onBack }) {
       if (!uid) throw new Error("No hay sesión activa");
       const quizDoc = await window.QS.db.collection("quizzes").doc(s.quizId).get();
       if (!quizDoc.exists) throw new Error("El quiz de esta sesión ya no existe, no es posible calificar.");
-      const quiz = { id: quizDoc.id, ...quizDoc.data() };
+      // Con las preguntas que se agregaron en vivo en esa sesión.
+      const quiz = liveEffectiveQuiz({ id: quizDoc.id, ...quizDoc.data() }, s);
       if (quiz.mode === "survey") throw new Error("Las encuestas no generan calificaciones. Usa el botón \"📋 Respuestas\" para verlas y descargarlas en CSV.");
       const participants = Object.values(s.participants || {});
       if (participants.length === 0) throw new Error("Esta sesión no tuvo participantes.");
