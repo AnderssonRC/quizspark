@@ -28,10 +28,11 @@
     extra por archivo. Fijar la versión elimina ese viaje de ida y vuelta.
     "defer": descarga en paralelo sin bloquear el parseo del HTML,
     manteniendo el orden de ejecución entre scripts.
+    Babel (el compilador de JSX, 2,9 MB) ya NO se carga aquí: lo pide el
+    cargador del final de la página solo si algún archivo cambió.
   -->
   <script defer crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
   <script defer crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
-  <script defer src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 
   <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
   <script defer src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
@@ -40,12 +41,11 @@
   <!-- Generador de códigos QR (para el modo proyección de la sala en vivo, y para las hojas OMR) -->
   <script defer src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 
-  <!-- Generador de PDF (hojas de respuesta del Modo Lector de Respuesta / OMR) -->
-  <script defer src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- El generador de PDF (jsPDF, hojas OMR) se descarga solo al exportar: ver 12-omr.js -->
 
   <style>
-    /* Splash de carga: visible al instante mientras Babel compila la app.
-       React lo reemplaza automáticamente al montar en #root. */
+    /* Splash de carga: visible al instante mientras la app carga (y la
+       primera vez, mientras se compila). React lo reemplaza al montar en #root. */
     .qs-splash {
       min-height: 100vh; display: grid; place-items: center;
       background: #f8fafc; font-family: "Segoe UI", system-ui, sans-serif;
@@ -64,7 +64,7 @@
     <div class="qs-splash">
       <div class="qs-splash-inner">
         <div class="qs-splash-spinner"></div>
-        <p style="font-weight:600;margin:0;">Cargando Desafíate…</p>
+        <p id="qs-splash-msg" style="font-weight:600;margin:0;">Cargando Desafíate…</p>
       </div>
     </div>
   </div>
@@ -92,6 +92,8 @@
           String(detail).replace(/</g, "&lt;") + "</pre></details>" +
           "</div></div>";
       }
+      // El cargador de la app (al final de la página) avisa aquí sus fallas.
+      window.qsBootFail = showFatal;
       window.addEventListener("error", function (e) {
         showFatal(e.message + (e.filename ? "\n" + e.filename + ":" + e.lineno : ""));
       });
@@ -114,58 +116,227 @@
     VERSIONADO: el "?v=2" obliga a los navegadores a descargar la versión
     nueva de cada archivo. Al subir cualquier cambio de .js o .css, sube
     el número en TODOS los src/href de archivos locales (v=3, v=4, ...).
+
+    ARCHIVOS DE LA APP (JSX): type="text/x-qs-app" — el navegador NO los
+    ejecuta solo; los carga EN ESTE ORDEN el cargador del final de la
+    página. Para agregar un archivo nuevo basta con agregar su línea aquí.
   -->
   <!-- Configuración + auth -->
   <script defer src="00-firebase.js?v=3"></script>
-  <script type="text/babel" data-presets="react" src="00b-auth.js?v=4"></script>
+  <script type="text/x-qs-app" src="00b-auth.js?v=4"></script>
 
   <!-- Núcleo -->
-  <script type="text/babel" data-presets="react" src="01-core.js?v=3"></script>
-  <script type="text/babel" data-presets="react" src="02-tweaks.js?v=3"></script>
+  <script type="text/x-qs-app" src="01-core.js?v=3"></script>
+  <script type="text/x-qs-app" src="02-tweaks.js?v=3"></script>
 
   <!-- Texto con formato (negrita, color, centrado...) en enunciados y opciones; renderizado seguro sin innerHTML -->
-  <script type="text/babel" data-presets="react" src="17-richtext.js?v=2"></script>
+  <script type="text/x-qs-app" src="17-richtext.js?v=2"></script>
 
   <!-- META: espacio metacognitivo transversal (cuenta regresiva antes de cada modo) -->
-  <script type="text/babel" data-presets="react" src="14-meta.js?v=17"></script>
+  <script type="text/x-qs-app" src="14-meta.js?v=18"></script>
 
   <!-- COMPETENCIA EXTREMA: ranking cada 3 preguntas + rachas y privilegios (sala en vivo) -->
-  <script type="text/babel" data-presets="react" src="15-extreme.js?v=4"></script>
+  <script type="text/x-qs-app" src="15-extreme.js?v=4"></script>
 
   <!-- RETO FÍSICO: el docente pausa la sala en vivo con un reto en el salón (+10 a los 3 primeros) -->
-  <script type="text/babel" data-presets="react" src="18-reto-fisico.js?v=3"></script>
+  <script type="text/x-qs-app" src="18-reto-fisico.js?v=3"></script>
 
   <!-- MANDO DEL CELULAR: controlar el Modo Sin Celular (Presentar) desde el celular del docente, con QR + inicio de sesión -->
-  <script type="text/babel" data-presets="react" src="19-mando.js?v=5"></script>
+  <script type="text/x-qs-app" src="19-mando.js?v=5"></script>
 
   <!-- Importar preguntas al editor (Excel/CSV con SheetJS bajo demanda, o texto con comandos) -->
-  <script type="text/babel" data-presets="react" src="16-import.js?v=2"></script>
+  <script type="text/x-qs-app" src="16-import.js?v=2"></script>
 
   <!-- Creator -->
-  <script type="text/babel" data-presets="react" src="03-creator.js?v=41"></script>
+  <script type="text/x-qs-app" src="03-creator.js?v=42"></script>
 
   <!-- Evaluación asincrónica online -->
-  <script type="text/babel" data-presets="react" src="08-online.js?v=27"></script>
+  <script type="text/x-qs-app" src="08-online.js?v=28"></script>
 
   <!-- Sala en vivo -->
-  <script type="text/babel" data-presets="react" src="09-live.js?v=31"></script>
+  <script type="text/x-qs-app" src="09-live.js?v=32"></script>
 
   <!-- Taller Evaluativo (modo de actividad nuevo, junto a Quiz y Encuesta) -->
-  <script type="text/babel" data-presets="react" src="10-workshop.js?v=20"></script>
+  <script type="text/x-qs-app" src="10-workshop.js?v=21"></script>
 
   <!-- Lectio / Modo Sin Celular (presentación de diapositivas, sin sala en línea) -->
-  <script type="text/babel" data-presets="react" src="11-lectio.js?v=16"></script>
+  <script type="text/x-qs-app" src="11-lectio.js?v=17"></script>
 
   <!-- Modo Lector de Respuesta (hojas OMR en PDF, geometría en SHEET_SPEC) -->
-  <script type="text/babel" data-presets="react" src="12-omr.js?v=14"></script>
+  <script type="text/x-qs-app" src="12-omr.js?v=15"></script>
 
   <!-- Lector OMR: leer hojas escaneadas. pdf.js bajo demanda; OpenCV en 13b-omr-worker.js -->
-  <script type="text/babel" data-presets="react" src="13-omr-reader.js?v=16"></script>
+  <script type="text/x-qs-app" src="13-omr-reader.js?v=16"></script>
 
   <!-- Lector OMR: tabla de resultados + editor + guardado (fórmula lineal propia, siempre 1 hoja) -->
-  <script type="text/babel" data-presets="react" src="13c-omr-results.js?v=12"></script>
+  <script type="text/x-qs-app" src="13c-omr-results.js?v=12"></script>
 
   <!-- App principal -->
-  <script type="text/babel" data-presets="react" src="07-app.js?v=6"></script>
+  <script type="text/x-qs-app" src="07-app.js?v=6"></script>
+
+  <!--
+    CARGADOR CON CACHÉ DE COMPILACIÓN
+    Antes, Babel (2,9 MB) se descargaba y compilaba los ~950 KB de JSX en
+    CADA visita: 2-3 s en un computador y bastante más en el celular de un
+    estudiante. Ahora cada archivo compilado se guarda en este navegador
+    (IndexedDB) y solo se vuelve a compilar el archivo cuyo contenido
+    cambió; si todo está guardado, Babel ni se descarga. Mismas opciones
+    de compilación que usaba @babel/standalone con data-presets="react".
+    Si el navegador no deja guardar (modo privado, etc.), compila cada vez
+    como antes.
+  -->
+  <script>
+    (function () {
+      "use strict";
+      var BABEL_SRC = "https://unpkg.com/@babel/standalone@7.24.7/babel.min.js";
+      var BABEL_OPTS = {
+        presets: ["react"],
+        plugins: ["transform-class-properties", "transform-object-rest-spread", "transform-flow-strip-types"],
+      };
+      // Cambiar CACHE_TAG invalida todo lo guardado (p. ej. al cambiar de Babel).
+      var CACHE_TAG = "babel-7.24.7|react|1";
+      var DB_NAME = "desafiate-compilado", STORE = "archivos";
+      var t0 = Date.now();
+      var files = Array.prototype.slice.call(document.querySelectorAll('script[type="text/x-qs-app"]'))
+        .map(function (s) { var src = s.getAttribute("src"); return { src: src, name: src.split("?")[0] }; });
+
+      function fail(detail) {
+        if (window.qsBootFail) window.qsBootFail(detail);
+        else setTimeout(function () { throw new Error(detail); });
+      }
+      function say(msg) { var el = document.getElementById("qs-splash-msg"); if (el) el.textContent = msg; }
+      // Huella del contenido (cyrb53 + largo): si el archivo cambia, cambia.
+      function hash(str) {
+        var h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+        for (var i = 0, ch; i < str.length; i++) {
+          ch = str.charCodeAt(i);
+          h1 = Math.imul(h1 ^ ch, 2654435761);
+          h2 = Math.imul(h2 ^ ch, 1597334677);
+        }
+        h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+        h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+        return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36) + "-" + str.length;
+      }
+      function openDb() {
+        return new Promise(function (resolve) {
+          var done = false;
+          function fin(v) { if (!done) { done = true; resolve(v); } }
+          setTimeout(function () { fin(null); }, 3000); // IndexedDB colgado: seguir sin caché
+          try {
+            var req = indexedDB.open(DB_NAME, 1);
+            req.onupgradeneeded = function () { req.result.createObjectStore(STORE); };
+            req.onsuccess = function () { fin(req.result); };
+            req.onerror = function () { fin(null); };
+            req.onblocked = function () { fin(null); };
+          } catch (e) { fin(null); }
+        });
+      }
+      function readAll(db) {
+        return new Promise(function (resolve) {
+          if (!db) return resolve({});
+          try {
+            var out = {};
+            var req = db.transaction(STORE, "readonly").objectStore(STORE).openCursor();
+            req.onsuccess = function () {
+              var c = req.result;
+              if (c) { out[c.key] = c.value; c.continue(); } else resolve(out);
+            };
+            req.onerror = function () { resolve({}); };
+          } catch (e) { resolve({}); }
+        });
+      }
+      function writeAll(db, entries, stale) {
+        if (!db) return;
+        try {
+          var st = db.transaction(STORE, "readwrite").objectStore(STORE);
+          entries.forEach(function (e) { st.put(e, e.name); });
+          stale.forEach(function (k) { st.delete(k); });
+        } catch (e) { /* sin espacio o sin permiso: la próxima vez compila de nuevo */ }
+      }
+      function fetchText(src) {
+        return fetch(src).then(function (r) {
+          if (!r.ok) throw new Error("No se pudo cargar " + src + " (HTTP " + r.status + ")");
+          return r.text();
+        });
+      }
+      var babelP = null;
+      function loadBabel() {
+        if (window.Babel) return Promise.resolve(window.Babel);
+        if (!babelP) {
+          babelP = new Promise(function (resolve, reject) {
+            var s = document.createElement("script");
+            s.src = BABEL_SRC;
+            s.onload = function () { window.Babel ? resolve(window.Babel) : reject(new Error("El compilador (Babel) no cargó.")); };
+            s.onerror = function () { reject(new Error("No se pudo descargar el compilador (Babel). Revisa la conexión.")); };
+            document.head.appendChild(s);
+          });
+          babelP.catch(function () { babelP = null; });
+        }
+        return babelP;
+      }
+      // React, Firebase y 00-firebase.js (scripts "defer") corren justo ANTES
+      // del evento DOMContentLoaded. Ojo: readyState ya dice "interactive"
+      // antes de que corran, por eso se espera el evento, que se escucha
+      // desde ya (este script corre mientras la página todavía se lee).
+      var domReadyP = new Promise(function (resolve) {
+        if (document.readyState === "complete") resolve();
+        else document.addEventListener("DOMContentLoaded", function () { resolve(); });
+      });
+      function domReady() { return domReadyP; }
+      // Ejecuta en el ámbito global, igual que hacía @babel/standalone.
+      function run(name, code) {
+        var s = document.createElement("script");
+        s.text = code + "\n//# sourceURL=" + name;
+        document.head.appendChild(s);
+      }
+
+      var dbP = openDb();
+      var cacheP = dbP.then(readAll).then(function (cache) {
+        // Primera visita (o caché de otra versión): ir bajando Babel desde ya.
+        if (files.some(function (f) { return !cache[f.name] || cache[f.name].tag !== CACHE_TAG; })) loadBabel().catch(function () {});
+        return cache;
+      });
+      var srcP = Promise.all(files.map(function (f) { return fetchText(f.src); }));
+
+      Promise.all([dbP, cacheP, srcP]).then(function (r) {
+        var db = r[0], cache = r[1], sources = r[2];
+        var codes = [], misses = [], toStore = [];
+        files.forEach(function (f, i) {
+          f.hash = hash(sources[i]);
+          var e = cache[f.name];
+          if (e && e.tag === CACHE_TAG && e.hash === f.hash && typeof e.code === "string") codes[i] = e.code;
+          else misses.push(i);
+        });
+        var compiled = !misses.length ? Promise.resolve() : loadBabel().then(function (Babel) {
+          var n = 0;
+          return misses.reduce(function (p, i) {
+            return p.then(function () {
+              var f = files[i];
+              say("Preparando Desafíate… " + Math.round((n++ / misses.length) * 100) + " %");
+              try {
+                codes[i] = Babel.transform(sources[i], Object.assign({ filename: f.name }, BABEL_OPTS)).code;
+              } catch (e) {
+                throw new Error("Error de sintaxis en " + f.name + ": " + e.message);
+              }
+              toStore.push({ name: f.name, hash: f.hash, tag: CACHE_TAG, code: codes[i], at: Date.now() });
+              // Pausa breve: deja que la pantalla de carga se actualice.
+              return new Promise(function (res) { setTimeout(res, 0); });
+            });
+          }, Promise.resolve());
+        });
+        return compiled.then(function () {
+          // Guardar YA (antes de arrancar la app): así queda guardado aunque
+          // la persona recargue enseguida.
+          var stale = Object.keys(cache).filter(function (k) { return !files.some(function (f) { return f.name === k; }); });
+          if (toStore.length || stale.length) writeAll(db, toStore, stale);
+        }).then(domReady).then(function () {
+          files.forEach(function (f, i) { run(f.name, codes[i]); });
+          // Diagnóstico: <html data-qs-boot="…"> dice cuánto salió de la caché.
+          document.documentElement.setAttribute("data-qs-boot",
+            (files.length - misses.length) + "/" + files.length + " desde caché · " + (Date.now() - t0) + " ms");
+        });
+      }).catch(function (err) { fail(err && err.message ? err.message : String(err)); });
+    })();
+  </script>
 </body>
 </html>

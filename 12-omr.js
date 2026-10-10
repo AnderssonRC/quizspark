@@ -408,6 +408,25 @@ function drawSheet(doc, origin, job, quiz, logoInfo) {
   });
 }
 
+// ---------- jsPDF bajo demanda ----------
+// Antes se descargaba en index.html para TODOS (estudiantes incluidos) y
+// retrasaba el arranque de la app; solo se usa al exportar las hojas.
+const JSPDF_CDN = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+let _jspdfPromise = null;
+function loadJsPDF() {
+  if (window.jspdf && window.jspdf.jsPDF) return Promise.resolve(window.jspdf);
+  if (_jspdfPromise) return _jspdfPromise;
+  _jspdfPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = JSPDF_CDN;
+    s.onload = () => (window.jspdf && window.jspdf.jsPDF) ? resolve(window.jspdf) : reject(new Error("La librería de PDF (jsPDF) no cargó."));
+    s.onerror = () => reject(new Error("No se pudo descargar la librería de PDF (jsPDF). Revisa tu conexión e inténtalo de nuevo."));
+    document.head.appendChild(s);
+  });
+  _jspdfPromise.catch(() => { _jspdfPromise = null; });
+  return _jspdfPromise;
+}
+
 // ---------------------------------------------------------------
 // Generador principal: SIEMPRE una sola hoja por estudiante — el Modo Sin
 // Celular no soporta varias hojas por estudiante (el lector OMR solo
@@ -416,9 +435,6 @@ function drawSheet(doc, origin, job, quiz, logoInfo) {
 // preguntas primero (ver también el aviso en OMRReaderPanel más abajo).
 // ---------------------------------------------------------------
 async function buildOMRAnswerSheetsPDF({ quiz, students }) {
-  if (!window.jspdf || !window.jspdf.jsPDF) {
-    throw new Error("La librería de PDF (jsPDF) no cargó. Revisa tu conexión e inténtalo de nuevo.");
-  }
   const questions = (quiz.questions || []).filter(q => q.type === "multi");
   if (!questions.length) throw new Error("El quiz no tiene preguntas de opción múltiple.");
   if (!students || !students.length) throw new Error("Agrega al menos un estudiante.");
@@ -431,6 +447,9 @@ async function buildOMRAnswerSheetsPDF({ quiz, students }) {
       `soporta varias hojas por estudiante.`
     );
   }
+
+  // La librería del PDF se descarga recién ahora (ver loadJsPDF).
+  await loadJsPDF();
 
   // El logo se carga y se atenúa UNA sola vez (es el mismo en las 4 hojas
   // de cada página y en todas las páginas) — si falla, sigue sin logo.

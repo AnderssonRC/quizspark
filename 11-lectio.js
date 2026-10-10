@@ -254,10 +254,19 @@ function LectioPresenter({ quiz, onExit }) {
     setClockEnd(now + qSeconds * 1000); setClockPausedLeft(null); setClockNow(now);
     setTimeUpFor(null); setTimeUpShow(false);
   }, [metaDone, finished, q?.id]);
+  // Un tick por segundo, justo después de que cambia el segundo visible
+  // (antes 4 por segundo: toda la presentación se redibujaba sin necesidad).
   useEffectLec(() => {
     if (clockEnd == null || clockPausedLeft != null) return;
-    const id = setInterval(() => setClockNow(Date.now()), 250);
-    return () => clearInterval(id);
+    let t = null;
+    const tick = () => {
+      const now = Date.now();
+      setClockNow(now);
+      const left = clockEnd - now;
+      if (left > 0) t = setTimeout(tick, (left % 1000) + 20);
+    };
+    tick();
+    return () => clearTimeout(t);
   }, [clockEnd, clockPausedLeft]);
   const clockOn = clockEnd != null || clockPausedLeft != null;
   const clockLeft = clockPausedLeft != null ? clockPausedLeft : Math.max(0, (clockEnd || 0) - clockNow);

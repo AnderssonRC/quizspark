@@ -869,7 +869,7 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
   if (!q) return null;
   const progress = ((currentIdx + 1) / questions.length) * 100;
   return (
-    <div style={{ ...shellStyle, paddingBottom: 100, fontFamily: WORKSHOP_FONT }}>
+    <div style={{ ...shellStyle, padding: "20px 20px 100px", fontFamily: WORKSHOP_FONT }}>
       <div style={{ maxWidth: 620, margin: "0 auto" }}>
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",

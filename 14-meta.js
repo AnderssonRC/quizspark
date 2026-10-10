@@ -308,7 +308,7 @@ window.MetaTimerBadge = MetaTimerBadge;
 // una expresión nueva sin tocar el número de versión del script en index.html.
 // Nombres de archivo: "esmigol-<emoción>.webp", en minúsculas y sin espacios
 // (el servidor distingue mayúsculas y un espacio rompe la URL).
-const ESMIGOL_ASSET_VERSION = "2.0.0";
+const ESMIGOL_ASSET_VERSION = "2.1.0"; // 2.1.0: imágenes a 500×600 (antes 1145×1374), 55 % más livianas
 const ESMIGOL_EXPRESSIONS = {
   default:          "esmigol-alegre.webp",
   "alegre":         "esmigol-alegre.webp",

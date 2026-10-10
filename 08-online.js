@@ -142,7 +142,9 @@ function gradeSubmission(quiz, answers) {
     }
 
     detail.push({
-      qid: q.id, type: q.type, userAnswer, correct: isCorrect, attempted,
+      // ?? null: Firestore rechaza el envío COMPLETO si un campo es
+      // undefined (pasaba con cada pregunta sin responder).
+      qid: q.id, type: q.type, userAnswer: userAnswer ?? null, correct: isCorrect, attempted,
       points: pointsForThisQuestion, pointsMax: maxForThisQuestion,
     });
   }
@@ -584,6 +586,10 @@ function StudentExam({ examCode }) {
     setSubmitError("");
     const finishedAt = Date.now();
     const totalSeconds = Math.round((finishedAt - startedAt) / 1000);
+    // Siempre las respuestas MÁS RECIENTES: cuando se acaba el tiempo de la
+    // última pregunta, esta función la llama el cronómetro con una copia
+    // vieja del componente, y lo marcado en esa pregunta se perdía.
+    const answers = answersRef.current;
     const grade = gradeSubmission(quiz, answers);
     const submission = {
       quizId: quiz.id,
@@ -965,7 +971,7 @@ function StudentExam({ examCode }) {
     <div style={{
       minHeight: "100vh",
       background: quizBgExam(quiz?.color),
-      padding: 20, paddingBottom: 100,
+      padding: "20px 20px 100px",
     }}>
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
         {/* Header con progreso */}

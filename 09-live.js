@@ -664,6 +664,11 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
   const isPaused = !!session.pausedAt;
   const [secondsLeft, setSecondsLeft] = useStateL(totalSeconds);
   const [showLive, setShowLive] = useStateL(false);
+  // Revelado automático: UNA vez por pregunta. El intervalo sigue corriendo
+  // hasta que llega desde Firestore el cambio a "showResults" (varias
+  // décimas de segundo con la red del colegio) y antes volvía a revelar en
+  // cada tick: más lecturas de respuestas y escrituras repetidas.
+  const autoRevealedRef = useRefL(null);
 
   // El gráfico en vivo se oculta al cambiar de pregunta, para que el
   // docente decida en cada una si lo proyecta (evita sesgar las votaciones
@@ -679,7 +684,11 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
       // Solo actualizar estado cuando cambia el segundo visible: evita
       // re-renderizar toda la vista 5 veces por segundo.
       setSecondsLeft(prev => (Math.ceil(left) === Math.ceil(prev) ? prev : left));
-      if (left <= 0 && !isPaused) {
+      // La clave cambia si se re-lanza la pregunta o se suma tiempo: ahí sí
+      // puede volver a revelarse sola.
+      const runKey = session.currentQuestionIdx + ":" + startedAt + ":" + totalSeconds;
+      if (left <= 0 && !isPaused && autoRevealedRef.current !== runKey) {
+        autoRevealedRef.current = runKey;
         onReveal();
       }
     };
@@ -1913,9 +1922,19 @@ function JoinRequestsBanner({ requests, onApprove, onReject }) {
 // una sala abandonada de días atrás no debe seguir apareciendo).
 const LIVE_OPEN_STATUSES = ["lobby", "playing", "showResults", "ranking"];
 const LIVE_RESUME_MAX_AGE_MS = 12 * 60 * 60 * 1000;
+// Solo se piden a Firestore las salas ABIERTAS (antes se leían todas las
+// salas que el docente ha creado, y crecen con cada clase). Si esa consulta
+// fallara (p. ej. Firestore pidiera un índice), se usa la consulta amplia.
 async function findOpenLiveSessions(uid) {
   if (!uid) return [];
-  const snap = await window.QS.db.collection("liveSessions").where("ownerId", "==", uid).get();
+  const col = window.QS.db.collection("liveSessions");
+  let snap;
+  try {
+    snap = await col.where("ownerId", "==", uid).where("status", "in", LIVE_OPEN_STATUSES).get();
+  } catch (err) {
+    console.warn("Salas abiertas: se usa la consulta completa.", err);
+    snap = await col.where("ownerId", "==", uid).get();
+  }
   const now = Date.now();
   return snap.docs
     .map(d => ({ id: d.id, ...d.data() }))
@@ -1925,14 +1944,25 @@ async function findOpenLiveSessions(uid) {
 
 // ---------- Preguntas agregadas EN VIVO (solo para esta sesión) ----------
 // El docente puede agregar una pregunta durante la sala. NO se toca el quiz
-// guardado: la sala guarda su propia lista (session.questionsOverride, con
-// la pregunta nueva insertada justo después de la actual, para no mover los
-// índices de lo ya respondido) y questionsVersion sube con cada cambio.
-// Docente y celulares usan esa lista; los resultados de la sesión la
-// incluyen, así la pregunta queda registrada y cuenta para la nota.
+// guardado: la sala guarda SOLO las preguntas nuevas, cada una con la
+// posición donde entró (session.liveInserts = [{ at, q }], justo después de
+// la actual, para no mover los índices de lo ya respondido) y
+// questionsVersion sube con cada cambio. Docente y celulares las insertan
+// en su copia del quiz; los resultados de la sesión las incluyen, así la
+// pregunta queda registrada y cuenta para la nota.
+// (Antes se copiaba la lista completa en session.questionsOverride: el quiz
+// entero viajaba a todos los celulares en cada cambio de la sala. Las salas
+// viejas que la tengan se siguen leyendo igual.)
 function liveEffectiveQuiz(quizBase, session) {
-  if (!quizBase || !session || !Array.isArray(session.questionsOverride)) return quizBase;
-  return { ...quizBase, questions: session.questionsOverride };
+  if (!quizBase || !session) return quizBase;
+  if (Array.isArray(session.questionsOverride)) return { ...quizBase, questions: session.questionsOverride };
+  const inserts = Array.isArray(session.liveInserts) ? session.liveInserts : [];
+  if (!inserts.length) return quizBase;
+  const questions = [...(quizBase.questions || [])];
+  inserts.forEach(ins => {
+    if (ins && ins.q) questions.splice(Math.min(Math.max(0, ins.at || 0), questions.length), 0, ins.q);
+  });
+  return { ...quizBase, questions };
 }
 // Memorizado por versión: el objeto `quiz` solo cambia cuando cambia la
 // lista (no en cada snapshot de la sala), para no relanzar efectos.
@@ -2137,6 +2167,14 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       extraSeconds: 0,
       pausedAt: null,
     });
+    // "Sesiones jugadas" del dashboard: la sala suma 1 a su quiz al
+    // arrancar (antes el dashboard leía TODAS las salas del docente en
+    // cada visita para contarlas).
+    if (quiz && quiz.id) {
+      window.QS.db.collection("quizzes").doc(quiz.id)
+        .update({ plays: firebase.firestore.FieldValue.increment(1) })
+        .catch(err => console.error("Error contando la sesión jugada:", err));
+    }
   };
 
   // Aumentar el tiempo de la pregunta actual (visible para host y estudiantes)
@@ -2164,11 +2202,18 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   // Se inserta justo DESPUÉS de la pregunta actual (o al inicio si aún
   // están en el lobby): los índices de lo ya respondido no se mueven.
   const addLiveQuestion = async (q) => {
-    const list = quiz.questions || [];
     const at = Math.max(0, (session.currentQuestionIdx ?? -1) + 1);
-    const next = [...list.slice(0, at), q, ...list.slice(at)];
+    // Sala vieja que ya traía la lista completa: se sigue con ese formato.
+    if (Array.isArray(session.questionsOverride)) {
+      const list = quiz.questions || [];
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+        questionsOverride: [...list.slice(0, at), q, ...list.slice(at)],
+        questionsVersion: firebase.firestore.FieldValue.increment(1),
+      });
+      return;
+    }
     await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
-      questionsOverride: next,
+      liveInserts: firebase.firestore.FieldValue.arrayUnion({ at, q }),
       questionsVersion: firebase.firestore.FieldValue.increment(1),
     });
   };
@@ -2310,7 +2355,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       await saveLiveResults();
     } catch (err) {
       console.error("Error guardando resultados:", err);
-      alert("⚠️ Los resultados no se pudieron archivar automáticamente: " + err.message + "\\n\\nNo se perdieron: podrás reenviarlos desde Resultados → Sesiones en vivo.");
+      alert("⚠️ Los resultados no se pudieron archivar automáticamente: " + err.message + "\n\nNo se perdieron: podrás reenviarlos desde Resultados → Sesiones en vivo.");
     }
     await ref.update({
       status: "finished",
@@ -2318,7 +2363,20 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     });
   };
 
+  // Un solo revelado a la vez (doble clic, o el botón justo cuando se acaba
+  // el tiempo), y nunca sobre una pregunta que ya no está "en juego".
+  // latestSessionRef: la sesión más reciente (los callbacks pueden traer
+  // una copia vieja de `session`).
+  const revealingRef = useRefL(false);
+  const latestSessionRef = useRefL(null);
+  latestSessionRef.current = session;
   const revealCurrent = async () => {
+    const live = latestSessionRef.current || session;
+    if (revealingRef.current || !live || live.status !== "playing") return;
+    revealingRef.current = true;
+    try { await revealCurrentNow(live); } finally { revealingRef.current = false; }
+  };
+  const revealCurrentNow = async (session) => {
     const qIdx = session.currentQuestionIdx;
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
     let answerDocs = []; // se reutiliza para las rachas (sin volver a leer)
@@ -2488,7 +2546,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
         await saveLiveResults();
       } catch (err) {
         console.error("Error guardando resultados:", err);
-        alert("⚠️ Los resultados no se pudieron archivar automáticamente: " + err.message + "\\n\\nNo se perdieron: podrás reenviarlos desde Resultados → Sesiones en vivo.");
+        alert("⚠️ Los resultados no se pudieron archivar automáticamente: " + err.message + "\n\nNo se perdieron: podrás reenviarlos desde Resultados → Sesiones en vivo.");
       }
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
         status: "finished",

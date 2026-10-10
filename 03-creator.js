@@ -169,6 +169,10 @@ function TopNav({ active, onNav, onLaunch, user, onLogout, onAdmin }) {
 }
 
 // =================== DASHBOARD ===================
+// Versión del recálculo único de "sesiones jugadas" desde el historial
+// (ver la carga de quizzes del Dashboard).
+const PLAYS_COUNT_VERSION = 1;
+
 function Dashboard({ onOpenEditor, onLaunch, onResults, onResumeLive }) {
   const [quizzes, setQuizzes] = useStateC([]);
   // Salas en vivo que siguen abiertas (el docente recargó o cerró la pestaña
@@ -229,21 +233,35 @@ function Dashboard({ onOpenEditor, onLaunch, onResults, onResumeLive }) {
         });
         list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
 
-        // Conteo real de sesiones jugadas por quiz: se cuenta toda sala
-        // que efectivamente arrancó (pasó del lobby) o se finalizó.
-        try {
-          const sesSnap = await window.QS.db.collection("liveSessions")
-            .where("ownerId", "==", uid).get();
-          const playedByQuiz = {};
-          sesSnap.docs.forEach(d => {
-            const s = d.data();
-            const started = (s.currentQuestionIdx != null && s.currentQuestionIdx >= 0) || s.status === "finished";
-            if (started && s.quizId) playedByQuiz[s.quizId] = (playedByQuiz[s.quizId] || 0) + 1;
-          });
-          list.forEach(q => { q.plays = playedByQuiz[q.id] || 0; });
-        } catch (err) {
-          console.error("Error contando sesiones:", err);
-          // Si falla el conteo, se muestran los quizzes igual (plays queda en su valor previo)
+        // Sesiones jugadas por quiz: cada sala suma 1 a su quiz al arrancar
+        // (09-live.js → startQuiz). Antes se leían aquí TODAS las salas del
+        // docente en cada visita (cada vez más lento). Solo la primera vez
+        // se recalcula desde el historial (toda sala que pasó del lobby o
+        // se finalizó), se guarda en cada quiz y queda marcado en el perfil.
+        if ((userData?.playsCountedV || 0) < PLAYS_COUNT_VERSION) {
+          try {
+            const sesSnap = await window.QS.db.collection("liveSessions")
+              .where("ownerId", "==", uid).get();
+            const playedByQuiz = {};
+            sesSnap.docs.forEach(d => {
+              const s = d.data();
+              const started = (s.currentQuestionIdx != null && s.currentQuestionIdx >= 0) || s.status === "finished";
+              if (started && s.quizId) playedByQuiz[s.quizId] = (playedByQuiz[s.quizId] || 0) + 1;
+            });
+            const changed = list.filter(q => (q.plays || 0) !== (playedByQuiz[q.id] || 0));
+            for (let i = 0; i < changed.length; i += 400) {
+              const batch = window.QS.db.batch();
+              changed.slice(i, i + 400).forEach(q => batch.update(
+                window.QS.db.collection("quizzes").doc(q.id), { plays: playedByQuiz[q.id] || 0 }));
+              await batch.commit();
+            }
+            await window.QS.db.collection("users").doc(uid).set({ playsCountedV: PLAYS_COUNT_VERSION }, { merge: true });
+            if (window.QS.currentUserData) window.QS.currentUserData.playsCountedV = PLAYS_COUNT_VERSION;
+            list.forEach(q => { q.plays = playedByQuiz[q.id] || 0; });
+          } catch (err) {
+            console.error("Error contando sesiones:", err);
+            // Si falla, se muestran los quizzes igual (con el conteo guardado)
+          }
         }
 
         if (!cancelled) { setQuizzes(list); setLoadingQuizzes(false); }
@@ -678,6 +696,9 @@ function Editor({ quizId, onBack, onLaunch }) {
       const isNewId = String(quiz.id).startsWith("new-") || !quiz.id;
       const effectiveId = isNewId ? savedIdRef.current : quiz.id;
       const data = { ...quiz, ownerId: uid, updatedAt: Date.now() };
+      // "Sesiones jugadas" lo suma cada sala en vivo (09-live.js): el editor
+      // no lo toca, para no pisarlo con el valor que tenía al abrirse.
+      delete data.plays;
       // Esmigol se configura desde el dashboard, una vez para todos los
       // quizzes: cada quiz guarda una copia (el estudiante no puede leer
       // el perfil del docente). Sin config global, se deja la que ya traía.
@@ -1637,7 +1658,7 @@ function Editor({ quizId, onBack, onLaunch }) {
 
               <Field label="Contraseña">
                 <div style={{ position: "relative" }}>
-                  <input className="qs-input" value={quiz.password}
+                  <input className="qs-input" value={quiz.password || ""}
                     onChange={e => setQuiz({ ...quiz, password: e.target.value.toUpperCase() })}/>
                   <button onClick={() => setQuiz({ ...quiz, password: Math.random().toString(36).slice(2, 8).toUpperCase() })}
                     style={{ position: "absolute", right: 8, top: 8, fontSize: 11, color: "var(--violet-600)", fontWeight: 700 }}>
