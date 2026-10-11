@@ -203,6 +203,14 @@ function youtubeId(url) {
   return null;
 }
 
+// Fecha local AAAA-MM-DD de un instante (por defecto, ahora). No usar
+// toISOString(): da la fecha en UTC y en Colombia (UTC-5), desde las 7 p. m.,
+// ya marca el día siguiente.
+function localDateISO(t) {
+  const d = t == null ? new Date() : new Date(t);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 // Footer global con autoría — discreto, gris claro
 function Footer() {
   const [showAbout, setShowAbout] = useState(false);

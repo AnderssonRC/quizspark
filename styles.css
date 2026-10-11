@@ -288,3 +288,8 @@ button { font-family: inherit; }
 @media (max-width: 920px) {
   .qs-live-panel { grid-template-columns: 1fr !important; }
 }
+/* Barra flotante del docente en el celular: "Esmigol", "➕ Pregunta" y
+   "💪 ¡Reto!" (texto corto) para que quepan juntos en una fila */
+@media (max-width: 480px) {
+  .qs-host-tool-long { display: none; }
+}

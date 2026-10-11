@@ -108,7 +108,7 @@ function buildOmrResultData(quiz, answers, student, meta) {
     quizId: quiz.id, quizTitle: quiz.title || "Quiz",
     studentName: (student && student.name) || "(sin asignar)",
     studentCourse: (student && student.course) || "—",
-    examDate: (meta && meta.examDate) || new Date().toISOString().slice(0, 10),
+    examDate: (meta && meta.examDate) || localDateISO(),
     gradeDetail,
     correct: correctCount, total: mcQuestions.length, answered: answeredCount,
     percent, score: correctCount, pointsMax: mcQuestions.length, grade,

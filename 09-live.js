@@ -1638,22 +1638,23 @@ function EsmigolHostSender({ sessionId, quiz }) {
     }
   };
 
+  // El botón va en la barra flotante del docente (ver hostTools en
+  // LiveSessionHost); el panel se abre encima de esa barra.
   return (
     <>
       <button onClick={() => setOpen(o => !o)} title="Enviar a Esmigol a los celulares" style={{
-        position: "fixed", left: 16, bottom: 16, zIndex: 860,
         display: "flex", alignItems: "center", gap: 8, padding: "8px 14px 8px 8px",
-        borderRadius: 999, border: 0, cursor: "pointer", fontWeight: 800, fontSize: 14,
+        borderRadius: 999, border: 0, cursor: "pointer", fontWeight: 800, fontSize: 14, whiteSpace: "nowrap",
         background: "#f59e0b", color: "#fff", boxShadow: "0 4px 0 #b45309, 0 10px 24px rgba(0,0,0,.3)",
       }}>
         <img src={window.esmigolImageSrc ? window.esmigolImageSrc("retador") : ""} alt=""
           style={{ width: 34, height: 34, objectFit: "contain", background: "#fff7ed", borderRadius: "50%" }} />
-        {open ? "Cerrar" : "Esmigol en vivo"}
+        {open ? "Cerrar" : <span>Esmigol<span className="qs-host-tool-long"> en vivo</span></span>}
       </button>
 
       {open && (
         <div className="qs-card" style={{
-          position: "fixed", left: 16, bottom: 74, zIndex: 860, width: "min(380px, calc(100vw - 32px))",
+          position: "absolute", left: 0, bottom: "calc(100% + 10px)", width: "min(380px, calc(100vw - 32px))",
           maxHeight: "min(70vh, 560px)", overflowY: "auto", padding: 16,
         }}>
           <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 2 }}>🎙️ Docente en vivo</div>
@@ -1780,11 +1781,10 @@ function LiveQuestionAdder({ quiz, session, onAdd }) {
   return (
     <>
       <button onClick={() => setOpen(true)} title="Agregar una pregunta solo para esta sesión" style={{
-        position: "fixed", left: 390, bottom: 16, zIndex: 860,
-        padding: "10px 16px", borderRadius: 999, cursor: "pointer", fontWeight: 900, fontSize: 14,
+        padding: "10px 16px", borderRadius: 999, cursor: "pointer", fontWeight: 900, fontSize: 14, whiteSpace: "nowrap",
         color: "#fff", background: "var(--violet-600)", border: 0,
         boxShadow: "0 4px 0 var(--violet-900), 0 10px 24px rgba(0,0,0,.3)",
-      }}>➕ Pregunta en vivo</button>
+      }}>➕ Pregunta<span className="qs-host-tool-long"> en vivo</span></button>
 
       {open && (
         <div onClick={() => setOpen(false)} style={{
@@ -2574,7 +2574,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     const participants = Object.values(session.participants || {});
     if (participants.length === 0) return;
 
-    const today = new Date().toISOString().slice(0, 10);
+    const today = localDateISO();
 
     // Cargar todas las respuestas de esta sesión de una vez
     const answersSnap = await window.QS.db.collection("liveSessions")
@@ -2628,27 +2628,33 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   const currentQ = currentIdx >= 0 ? quiz.questions[currentIdx] : null;
   const answersThisQ = answersByQuestion[currentIdx] || {};
 
-  // Esmigol en vivo: botón flotante para enviar frases a los celulares
-  // (sala de espera, preguntas, diapositivas, revelación y ranking).
-  const esmigolSender = <EsmigolHostSender sessionId={sessionId} quiz={quiz} />;
-
-  // Botón "¡Reto Físico!" (junto a Esmigol en vivo) en las pantallas de juego.
-  const physicalButton = (
-    <>
-      {window.PhysicalChallengeButton && session.status !== "lobby" && session.status !== "finished" && (
-        <window.PhysicalChallengeButton onLaunch={startPhysicalChallenge} />
-      )}
-      {/* Pregunta en vivo: también desde el lobby (sería la primera) */}
+  // Barra flotante del docente, abajo a la izquierda, con los botones uno
+  // al lado del otro: Esmigol en vivo (frases a los celulares), Pregunta en
+  // vivo (también desde el lobby, sería la primera) y ¡Reto Físico! (solo en
+  // las pantallas de juego). Antes cada uno iba en una posición fija y en el
+  // celular "Pregunta en vivo" quedaba fuera de la pantalla; ahora, si no
+  // caben en una fila, pasan a la de arriba.
+  // La key la conserva al cambiar de pantalla (pregunta → resultados →
+  // ranking): sin ella React la volvía a crear y se cerraba lo que el
+  // docente tuviera abierto, perdiendo la pregunta a medio escribir.
+  const hostTools = (
+    <div key="host-tools" style={{
+      position: "fixed", left: 16, bottom: 16, zIndex: 860, maxWidth: "calc(100vw - 32px)",
+      display: "flex", flexWrap: "wrap-reverse", alignItems: "center", gap: 8,
+    }}>
+      <EsmigolHostSender sessionId={sessionId} quiz={quiz} />
       {session.status !== "finished" && <LiveQuestionAdder quiz={quiz} session={session} onAdd={addLiveQuestion} />}
-    </>
+      {window.PhysicalChallengeButton && session.status !== "lobby" && session.status !== "finished" && (
+        <window.PhysicalChallengeButton onLaunch={startPhysicalChallenge} style={{ position: "static" }} />
+      )}
+    </div>
   );
 
   if (session.status === "lobby") {
     return (
       <>
         <HostLobby session={session} quiz={quiz} onStart={startMetaCountdown} onCancel={cancelSession} onKick={kickParticipant} />
-        {!metaCountdown && esmigolSender}
-        {!metaCountdown && physicalButton}
+        {!metaCountdown && hostTools}
         {metaCountdown && (
           <window.MetaCountdown
             mode="live"
@@ -2705,7 +2711,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     return (
       <>
         <window.ExtremeRanking session={session} quiz={quiz} onContinue={goNext} />
-        {joinRequestsBanner}{esmigolSender}{physicalButton}
+        {joinRequestsBanner}{hostTools}
       </>
     );
   }
@@ -2721,7 +2727,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
             <window.WorkshopHostSlide session={session} quiz={quiz} currentQ={currentQ}
               onNext={goNext} onFinish={finishNow}/>
             {participantsModal}
-            {joinRequestsBanner}{esmigolSender}{physicalButton}
+            {joinRequestsBanner}{hostTools}
           </>
         );
       }
@@ -2730,7 +2736,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
           <HostSlide session={session} quiz={quiz} currentQ={currentQ}
             onNext={goNext} onFinish={finishNow}/>
           {participantsModal}
-          {joinRequestsBanner}{esmigolSender}{physicalButton}
+          {joinRequestsBanner}{hostTools}
         </>
       );
     }
@@ -2747,7 +2753,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
         {extremeBanner}
         {extremePanel}
         {participantsModal}
-        {joinRequestsBanner}{esmigolSender}{physicalButton}
+        {joinRequestsBanner}{hostTools}
       </>
     );
   }
@@ -2761,7 +2767,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
             answersThisQ={answersThisQ} onNext={goNext} onGradeWorkshop={gradeWorkshopAnswer} onFinish={finishNow} />
           {extremePanel}
           {participantsModal}
-          {joinRequestsBanner}{esmigolSender}{physicalButton}
+          {joinRequestsBanner}{hostTools}
         </>
       );
     }
@@ -2771,7 +2777,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
           answersThisQ={answersThisQ} onNext={goNext} onGradeLive={gradeLiveAnswer} onFinish={finishNow} />
         {extremePanel}
         {participantsModal}
-        {joinRequestsBanner}{esmigolSender}{physicalButton}
+        {joinRequestsBanner}{hostTools}
       </>
     );
   }
@@ -4448,7 +4454,7 @@ function LiveHistoryPanel({ onBack }) {
         .where("quizId", "==", s.quizId)
         .where("sessionCode", "==", s.code).get();
 
-      const today = new Date(s.createdAt || Date.now()).toISOString().slice(0, 10);
+      const today = localDateISO(s.createdAt || Date.now());
       const batch = window.QS.db.batch();
       prev.docs.forEach(d => batch.delete(d.ref));
 

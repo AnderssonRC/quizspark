@@ -709,7 +709,7 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
         studentName: studentName.trim(),
         studentCourse: studentCourse.trim(),
         partnerName: partnerName.trim() || null,
-        examDate: new Date().toISOString().slice(0, 10),
+        examDate: localDateISO(),
         activityType: "workshop",
         workshopMode: "offline",
         answers,

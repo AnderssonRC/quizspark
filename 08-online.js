@@ -6,7 +6,7 @@
 //   - StudentExam: pantalla del estudiante (sin login)
 //   - OnlineResultsPanel: panel del profesor para ver respuestas
 // ============================================================
-const { useState: useStateO, useEffect: useEffectO, useRef: useRefO } = React;
+const { useState: useStateO, useEffect: useEffectO, useRef: useRefO, useMemo: useMemoO } = React;
 
 // ---------- Helpers ----------
 
@@ -424,7 +424,7 @@ function StudentExam({ examCode }) {
   const [studentName, setStudentName] = useStateO("");
   const [studentCourse, setStudentCourse] = useStateO("");
   const [partnerName, setPartnerName] = useStateO("");
-  const [examDate, setExamDate] = useStateO(new Date().toISOString().slice(0, 10));
+  const [examDate, setExamDate] = useStateO(localDateISO());
   const [questionsOrder, setQuestionsOrder] = useStateO([]); // preguntas (posiblemente mezcladas)
   const [currentIdx, setCurrentIdx] = useStateO(0);
   const [answers, setAnswers] = useStateO({});
@@ -1270,27 +1270,211 @@ function baseUrlNoQuery() {
   return window.location.origin + window.location.pathname;
 }
 
+// =================== RESULTADOS: evaluaciones agrupadas ===================
+// El docente suele tener varias copias de la misma evaluación (duplicada o
+// creada de nuevo con el mismo título). En Resultados se muestran como UNA
+// sola, con cuántas veces se ha realizado y la fecha de la última vez.
+
+// Misma evaluación = mismo tipo de actividad y mismo título, sin importar
+// mayúsculas, tildes, espacios de más ni el " (copia)" que agrega Duplicar.
+function resultsGroupKey(quiz) {
+  const title = String(quiz.title || "")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/\s+/g, " ").trim()
+    .replace(/(\s*\(copia\))+$/, "");
+  const kind = quiz.mode === "workshop" ? "workshop-" + (quiz.workshopMode || "live") : (quiz.mode || "quiz");
+  return kind + "|" + title;
+}
+
+function resultsDisplayTitle(title) {
+  return String(title || "").replace(/(\s*\(copia\))+\s*$/i, "").trim() || "Sin título";
+}
+
+// Una "vez" que se realizó = una sala en vivo (por su código) o un día de
+// entregas de la misma versión (examen online, taller offline u hojas OMR).
+function resultApplication(r) {
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(r.examDate || "") ? r.examDate
+    : (r.submittedAt ? localDateISO(r.submittedAt) : "");
+  return { key: r.quizId + "|" + (r.sessionCode ? "sala-" + r.sessionCode : "dia") + "|" + date, date };
+}
+
+// La más reciente primero: por fecha y, el mismo día, por hora de envío.
+function compareResultApps(a, b) {
+  if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+  return (b.lastAt || 0) - (a.lastAt || 0);
+}
+
+const RESULTS_MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+function formatResultsDate(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || "");
+  return m ? `${Number(m[3])} ${RESULTS_MONTHS[Number(m[2]) - 1]} ${m[1]}` : "sin fecha";
+}
+
+// Cursos de una vez realizada, los más numerosos primero (ej. "10A, 10B +1").
+function resultCoursesLabel(courses) {
+  const list = Object.keys(courses).sort((a, b) => courses[b] - courses[a] || a.localeCompare(b, "es", { numeric: true }));
+  return list.slice(0, 2).join(", ") + (list.length > 2 ? ` +${list.length - 2}` : "");
+}
+
+// Agrupa los quizzes del docente y les suma las veces realizadas según el
+// índice de respuestas (null = no se pudo cargar: se agrupa sin conteo).
+function buildResultGroups(quizzes, index) {
+  const byKey = new Map(), groupOf = {};
+  quizzes.forEach(q => {
+    const key = resultsGroupKey(q);
+    if (!byKey.has(key)) byKey.set(key, { key, quizzes: [], apps: new Map(), responses: 0 });
+    byKey.get(key).quizzes.push(q);
+    groupOf[q.id] = byKey.get(key);
+  });
+  (index || []).forEach(r => {
+    const g = groupOf[r.quizId];
+    if (!g) return;
+    const { key, date } = resultApplication(r);
+    const app = g.apps.get(key) || { date, lastAt: 0 };
+    app.lastAt = Math.max(app.lastAt, r.submittedAt || 0);
+    g.apps.set(key, app);
+    g.responses++;
+  });
+  const groups = [...byKey.values()].map(g => {
+    const versions = g.quizzes.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    const last = [...g.apps.values()].sort(compareResultApps)[0] || null;
+    return {
+      key: g.key,
+      quizzes: versions,
+      main: versions[0],
+      title: resultsDisplayTitle(versions[0].title),
+      times: g.apps.size,
+      responses: g.responses,
+      lastDate: last ? last.date : "",
+      lastAt: last ? last.lastAt : 0,
+      isOpen: versions.some(q => q.isPublished),
+    };
+  });
+  groups.sort((a, b) => {
+    if (!a.times !== !b.times) return a.times ? -1 : 1;
+    if (a.times) return compareResultApps({ date: a.lastDate, lastAt: a.lastAt }, { date: b.lastDate, lastAt: b.lastAt });
+    return (b.main.updatedAt || 0) - (a.main.updatedAt || 0);
+  });
+  return groups;
+}
+
+// Índice liviano de TODAS las respuestas del docente: solo los campos que
+// necesita el selector, no las respuestas completas (que pesan mucho más y
+// crecen con cada clase). El SDK web no permite pedir solo algunos campos;
+// la API REST de Firestore sí, con la misma sesión y las mismas reglas de
+// seguridad. Si la REST falla por cualquier motivo, se usa el SDK.
+const RESULTS_INDEX_FIELDS = ["quizId", "examDate", "sessionCode", "submittedAt"];
+
+async function loadResultsIndex(uid) {
+  // Las hojas OMR no guardan ownerId: se encuentran por quién las confirmó.
+  // Si esa consulta falla sola, se sigue sin ellas; si falla la principal,
+  // falla todo (y se prueba el SDK).
+  const fetchAll = async (run) => {
+    let omrErr = null;
+    const omrP = run("confirmedBy").catch(err => { omrErr = err; return []; });
+    const own = await run("ownerId");
+    const omr = await omrP;
+    if (omrErr) console.warn("Índice de resultados (hojas OMR):", omrErr);
+    const seen = new Set();
+    return own.concat(omr).filter(r => {
+      if (!r.quizId || seen.has(r.id)) return false;
+      seen.add(r.id);
+      return true;
+    });
+  };
+  try {
+    return await fetchAll(field => queryResultsIndexRest(field, uid));
+  } catch (err) {
+    console.warn("Índice de resultados por REST no disponible, se usa el SDK:", err);
+    return fetchAll(field => window.QS.db.collection("results").where(field, "==", uid).get()
+      .then(snap => snap.docs.map(d => {
+        const x = d.data();
+        return { id: d.id, quizId: x.quizId, examDate: x.examDate, sessionCode: x.sessionCode, submittedAt: x.submittedAt };
+      })));
+  }
+}
+
+async function queryResultsIndexRest(field, value) {
+  const user = window.QS.auth.currentUser;
+  if (!user || !window.fetch) throw new Error("Sin sesión o sin fetch");
+  const token = await user.getIdToken();
+  const projectId = window.QS.firebase.app().options.projectId;
+  const ctrl = window.AbortController ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), 10000) : null;
+  try {
+    const res = await fetch(`https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents:runQuery`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+      body: JSON.stringify({
+        structuredQuery: {
+          from: [{ collectionId: "results" }],
+          where: { fieldFilter: { field: { fieldPath: field }, op: "EQUAL", value: { stringValue: value } } },
+          select: { fields: RESULTS_INDEX_FIELDS.map(f => ({ fieldPath: f })) },
+        },
+      }),
+      signal: ctrl ? ctrl.signal : undefined,
+    });
+    const body = await res.json();
+    if (!res.ok || !Array.isArray(body) || body.some(x => x.error)) {
+      throw new Error(`HTTP ${res.status}: ${JSON.stringify(body).slice(0, 300)}`);
+    }
+    return body.filter(x => x.document).map(x => {
+      const f = x.document.fields || {};
+      return {
+        id: x.document.name.split("/").pop(),
+        quizId: restFieldValue(f.quizId),
+        examDate: restFieldValue(f.examDate),
+        sessionCode: restFieldValue(f.sessionCode),
+        submittedAt: restFieldValue(f.submittedAt),
+      };
+    });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+// Valor simple de un campo en el formato JSON de la API REST de Firestore.
+function restFieldValue(v) {
+  if (!v) return undefined;
+  if ("stringValue" in v) return v.stringValue;
+  if ("integerValue" in v) return Number(v.integerValue);
+  if ("doubleValue" in v) return v.doubleValue;
+  if ("timestampValue" in v) return Date.parse(v.timestampValue);
+  return undefined;
+}
+
+const RESULTS_MODE_ICON = { survey: "📊 ", workshop: "🛠️ ", lectio: "📵 " };
+
 // =================== ONLINE RESULTS PANEL ===================
 function OnlineResultsPanel({ onBack }) {
   const [showLiveHistory, setShowLiveHistory] = useStateO(false);
   const [quizzes, setQuizzes] = useStateO([]);
-  const [selectedQuizId, setSelectedQuizId] = useStateO(null);
+  // Índice liviano de respuestas (ver loadResultsIndex); null = no disponible
+  const [resultsIndex, setResultsIndex] = useStateO(null);
+  const [selectedKey, setSelectedKey] = useStateO(null);   // evaluación (grupo de copias)
+  const [selectedApp, setSelectedApp] = useStateO("all");  // una de las veces realizadas, o todas
+  const [showAllApps, setShowAllApps] = useStateO(false);
   const [submissions, setSubmissions] = useStateO([]);
+  const [loadingSubs, setLoadingSubs] = useStateO(false);
   const [loading, setLoading] = useStateO(true);
   const [filterCourse, setFilterCourse] = useStateO("");
   const [filterDate, setFilterDate] = useStateO("");
   const [reviewing, setReviewing] = useStateO(null); // submission abierta para revisar
 
-  // Cargar quizzes propios al montar
+  // Cargar quizzes propios y el índice de respuestas al montar
   useEffectO(() => {
     const load = async () => {
       try {
         const uid = window.QS.currentUser?.uid;
-        const snap = await window.QS.db.collection("quizzes")
-          .where("ownerId", "==", uid).get();
+        const [snap, index] = await Promise.all([
+          window.QS.db.collection("quizzes").where("ownerId", "==", uid).get(),
+          loadResultsIndex(uid).catch(err => { console.error("Error cargando el índice de resultados:", err); return null; }),
+        ]);
         const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
         setQuizzes(list);
-        if (list.length > 0) setSelectedQuizId(list[0].id);
+        setResultsIndex(index);
+        const groups = buildResultGroups(list, index);
+        if (groups.length > 0) setSelectedKey(groups[0].key);
       } catch (err) {
         console.error(err);
       }
@@ -1299,28 +1483,69 @@ function OnlineResultsPanel({ onBack }) {
     load();
   }, []);
 
-  // Cargar submissions cuando cambia quiz seleccionado
+  const groups = useMemoO(() => buildResultGroups(quizzes, resultsIndex), [quizzes, resultsIndex]);
+  const group = groups.find(g => g.key === selectedKey) || null;
+  const groupIds = group ? group.quizzes.map(q => q.id).join(",") : "";
+  const selectedQuiz = group ? group.main : null;
+  const quizById = {};
+  quizzes.forEach(q => { quizById[q.id] = q; });
+
+  // Cargar las respuestas de todas las copias de la evaluación elegida
   useEffectO(() => {
-    if (!selectedQuizId) return;
-    const load = async () => {
-      try {
-        const snap = await window.QS.db.collection("results")
-          .where("quizId", "==", selectedQuizId).get();
-        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (!groupIds) return;
+    let cancelled = false;
+    setSubmissions([]);
+    setSelectedApp("all");
+    setShowAllApps(false);
+    setLoadingSubs(true);
+    const ids = groupIds.split(",");
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += 10) chunks.push(ids.slice(i, i + 10));
+    Promise.all(chunks.map(c => window.QS.db.collection("results").where("quizId", "in", c).get()))
+      .then(snaps => {
+        if (cancelled) return;
+        const list = [];
+        snaps.forEach(snap => snap.docs.forEach(d => list.push({ id: d.id, ...d.data() })));
         list.sort((a, b) => (b.submittedAt || 0) - (a.submittedAt || 0));
         setSubmissions(list);
-      } catch (err) {
-        console.error(err);
-      }
-    };
-    load();
-  }, [selectedQuizId]);
+        // El selector se actualiza con lo recién leído de esta evaluación
+        const idSet = new Set(ids);
+        setResultsIndex(idx => idx && idx.filter(r => !idSet.has(r.quizId)).concat(list.map(s => ({
+          id: s.id, quizId: s.quizId, examDate: s.examDate, sessionCode: s.sessionCode, submittedAt: s.submittedAt,
+        }))));
+      })
+      .catch(err => console.error(err))
+      .finally(() => { if (!cancelled) setLoadingSubs(false); });
+    return () => { cancelled = true; };
+  }, [groupIds]);
 
-  const selectedQuiz = quizzes.find(q => q.id === selectedQuizId);
+  // Cada vez que se realizó la evaluación elegida, la más reciente primero
+  const apps = useMemoO(() => {
+    const byKey = new Map();
+    submissions.forEach(s => {
+      const { key, date } = resultApplication(s);
+      let a = byKey.get(key);
+      if (!a) {
+        a = s.sessionCode ? { icon: "🎮", how: "En vivo · sala " + s.sessionCode }
+          : s.source === "omr" ? { icon: "📄", how: "Hojas de respuesta" }
+          : s.activityType === "workshop" ? { icon: "🛠️", how: "Taller offline" }
+          : { icon: "⚡", how: "Online" };
+        Object.assign(a, { key, date, lastAt: 0, count: 0, courses: {} });
+        byKey.set(key, a);
+      }
+      a.count++;
+      a.lastAt = Math.max(a.lastAt, s.submittedAt || 0);
+      const c = String(s.studentCourse || "").trim().toUpperCase();
+      if (/[A-Z0-9]/.test(c) && c !== "SIN CURSO") a.courses[c] = (a.courses[c] || 0) + 1;
+    });
+    return [...byKey.values()].sort(compareResultApps);
+  }, [submissions]);
+  const appFilter = apps.some(a => a.key === selectedApp) ? selectedApp : "all";
 
   // Filtros
   const filtered = submissions.filter(s => {
-    if (filterCourse && !s.studentCourse.toLowerCase().includes(filterCourse.toLowerCase())) return false;
+    if (appFilter !== "all" && resultApplication(s).key !== appFilter) return false;
+    if (filterCourse && !String(s.studentCourse || "").toLowerCase().includes(filterCourse.toLowerCase())) return false;
     if (filterDate && s.examDate !== filterDate) return false;
     return true;
   });
@@ -1340,24 +1565,31 @@ function OnlineResultsPanel({ onBack }) {
 
   const [deletingAll, setDeletingAll] = useStateO(false);
 
+  // Lo borrado deja de contar en el selector (veces realizadas y fecha)
+  const dropFromIndex = (ids) => {
+    const idSet = new Set(ids);
+    setResultsIndex(idx => idx && idx.filter(r => !idSet.has(r.id)));
+  };
+
   const deleteSubmission = async (id) => {
     if (!confirm("¿Eliminar este registro? Esta acción no se puede deshacer.")) return;
     try {
       await window.QS.db.collection("results").doc(id).delete();
       setSubmissions(submissions.filter(s => s.id !== id));
+      dropFromIndex([id]);
     } catch (err) {
       alert("Error al eliminar: " + err.message);
     }
   };
 
   // Borrado masivo: elimina TODAS las filas visibles en la tabla (respeta
-  // los filtros de curso/fecha si están activos), acotado a la actividad
+  // los filtros de curso/fecha y la vez elegida), acotado a la actividad
   // seleccionada. Doble confirmación por ser irreversible y afectar notas.
   const deleteAllSubmissions = async () => {
     if (filtered.length === 0 || deletingAll) return;
     const n = filtered.length;
-    const scopeNote = (filterCourse || filterDate) ? " (según el filtro que tienes activo)" : "";
-    if (!confirm(`⚠️ Vas a eliminar ${n} respuesta${n === 1 ? "" : "s"} de "${selectedQuiz.title}"${scopeNote}. Esta acción no se puede deshacer. ¿Continuar?`)) return;
+    const scopeNote = (filterCourse || filterDate || appFilter !== "all") ? " (según el filtro que tienes activo)" : "";
+    if (!confirm(`⚠️ Vas a eliminar ${n} respuesta${n === 1 ? "" : "s"} de "${group.title}"${scopeNote}. Esta acción no se puede deshacer. ¿Continuar?`)) return;
     const typed = prompt(`Para confirmar, escribe el número ${n}:`);
     if (typed === null) return;
     if (typed.trim() !== String(n)) { alert("El número no coincide. No se eliminó nada."); return; }
@@ -1372,6 +1604,7 @@ function OnlineResultsPanel({ onBack }) {
       }
       const idSet = new Set(ids);
       setSubmissions(subs => subs.filter(s => !idSet.has(s.id)));
+      dropFromIndex(ids);
     } catch (err) {
       alert("Error al eliminar en lote: " + err.message);
     } finally {
@@ -1379,14 +1612,31 @@ function OnlineResultsPanel({ onBack }) {
     }
   };
 
+  // Preguntas del Excel: las de cada copia de la evaluación que aparece en
+  // las filas exportadas (la más reciente primero), sin repetir. Las copias
+  // hechas con "Duplicar" conservan las preguntas, así que comparten columna.
+  const exportQuestions = (rows) => {
+    const used = new Set(rows.map(s => s.quizId));
+    const seen = new Set(), out = [];
+    group.quizzes.forEach(qz => {
+      if (!used.has(qz.id)) return;
+      (qz.questions || []).forEach(q => { if (!seen.has(q.id)) { seen.add(q.id); out.push(q); } });
+    });
+    return out;
+  };
+  // La pregunta tal como está en la copia que respondió el estudiante (pudo
+  // editarse después de duplicarla).
+  const questionAsAnswered = (s, q) => (quizById[s.quizId]?.questions || []).find(x => x.id === q.id) || q;
+
   const downloadExcel = () => {
     if (!selectedQuiz || filtered.length === 0) {
       alert("No hay registros para descargar.");
       return;
     }
+    const questions = exportQuestions(filtered);
     // Construimos CSV (compatible con Excel y Google Sheets)
     const header = ["Nombre", "Compañero", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Preguntas respondidas", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Enviado"];
-    selectedQuiz.questions.forEach((q, i) => {
+    questions.forEach((q, i) => {
       header.push(`P${i+1}: ${(window.richToPlain ? window.richToPlain(q.text) : (q.text || "")).substring(0, 50)}`);
       header.push(`P${i+1} ¿correcto?`);
       header.push(`P${i+1} puntos obtenidos`);
@@ -1407,7 +1657,8 @@ function OnlineResultsPanel({ onBack }) {
         s.totalSeconds || 0,
         new Date(s.submittedAt || 0).toLocaleString("es-CO"),
       ];
-      selectedQuiz.questions.forEach(q => {
+      questions.forEach(col => {
+        const q = questionAsAnswered(s, col);
         const det = (s.gradeDetail || []).find(d => d.qid === q.id);
         let answerText = "—";
         if (det) {
@@ -1445,9 +1696,9 @@ function OnlineResultsPanel({ onBack }) {
     const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const safeTitle = (selectedQuiz.title || "quiz").replace(/[^a-z0-9_-]/gi, "_");
+    const safeTitle = (group.title || "quiz").replace(/[^a-z0-9_-]/gi, "_");
     a.href = url;
-    a.download = `desafiate_${safeTitle}_${new Date().toISOString().slice(0,10)}.csv`;
+    a.download = `desafiate_${safeTitle}_${localDateISO()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1471,7 +1722,8 @@ function OnlineResultsPanel({ onBack }) {
       if (s.includes(SEP) || s.includes('"')) return '"' + s.replace(/"/g, '""') + '"';
       return s;
     };
-    const answerFor = (s, q) => {
+    const answerFor = (s, col) => {
+      const q = questionAsAnswered(s, col);
       const det = (s.gradeDetail || []).find(d => d.qid === q.id);
       const userAns = det ? det.userAnswer : (s.answers ? s.answers[q.id] : null);
       if (userAns == null || userAns === "") return "(sin respuesta)";
@@ -1495,7 +1747,7 @@ function OnlineResultsPanel({ onBack }) {
     rows.push(["Fecha", ...filtered.map(s => s.examDate)]);
     rows.push(["Nota final (0-5)", ...filtered.map(s => s.score != null ? s.score.toFixed(2) : "PENDIENTE")]);
     rows.push([]);
-    selectedQuiz.questions.filter(q => q.type !== "slide").forEach((q, i) => {
+    exportQuestions(filtered).filter(q => q.type !== "slide").forEach((q, i) => {
       rows.push([`P${i + 1}: ${(window.richToPlain ? window.richToPlain(q.text) : (q.text || "")).substring(0, 80)}`, ...filtered.map(s => answerFor(s, q))]);
     });
 
@@ -1503,14 +1755,30 @@ function OnlineResultsPanel({ onBack }) {
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const safeTitle = (selectedQuiz.title || "taller").replace(/[^a-z0-9_-]/gi, "_");
+    const safeTitle = (group.title || "taller").replace(/[^a-z0-9_-]/gi, "_");
     a.href = url;
-    a.download = `desafiate_taller_${safeTitle}_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `desafiate_taller_${safeTitle}_${localDateISO()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   };
+
+  // Opción del selector: "Título — 3 veces · última: 8 oct 2026 🟢"
+  const groupOption = (g) => {
+    let label = (RESULTS_MODE_ICON[g.main.mode] || "") + g.title;
+    if (g.times > 0) {
+      label += g.times === 1
+        ? ` — 1 vez · ${formatResultsDate(g.lastDate)}`
+        : ` — ${g.times} veces · última: ${formatResultsDate(g.lastDate)}`;
+    }
+    if (g.isOpen) label += " 🟢";
+    return <option key={g.key} value={g.key}>{label}</option>;
+  };
+  const doneGroups = groups.filter(g => g.times > 0);
+  const pendingGroups = groups.filter(g => !g.times);
+  const APPS_SHOWN = 10;
+  const visibleApps = showAllApps ? apps : apps.slice(0, APPS_SHOWN);
 
   if (loading) {
     return (
@@ -1548,27 +1816,65 @@ function OnlineResultsPanel({ onBack }) {
         </div>
       ) : (
         <>
-          {/* Selector de quiz */}
+          {/* Selector de evaluación: las copias repetidas salen una sola vez,
+              con cuántas veces se realizó y la fecha de la última */}
           <div style={{ marginBottom: 16 }}>
             <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
               Selecciona una evaluación
             </label>
             <select
               className="qs-input"
-              value={selectedQuizId || ""}
-              onChange={e => setSelectedQuizId(e.target.value)}
-              style={{ maxWidth: 420 }}
+              value={selectedKey || ""}
+              onChange={e => setSelectedKey(e.target.value)}
+              style={{ maxWidth: 720 }}
             >
-              {quizzes.map(q => (
-                <option key={q.id} value={q.id}>
-                  {q.mode === "workshop" ? "🛠️ " : ""}{q.title} {q.isPublished ? "🟢" : "⚪"}
-                </option>
-              ))}
+              {resultsIndex ? (
+                <>
+                  {doneGroups.length > 0 && (
+                    <optgroup label="Realizadas · la más reciente primero">{doneGroups.map(groupOption)}</optgroup>
+                  )}
+                  {pendingGroups.length > 0 && (
+                    <optgroup label="Sin respuestas todavía">{pendingGroups.map(groupOption)}</optgroup>
+                  )}
+                </>
+              ) : groups.map(groupOption)}
             </select>
           </div>
 
           {selectedQuiz && (
             <>
+              {/* Cada vez que se realizó: elegir una para ver solo esas respuestas */}
+              {apps.length > 0 && (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "var(--ink-500)", marginBottom: 6 }}>
+                    Realizada {apps.length === 1 ? "1 vez" : `${apps.length} veces`}
+                    {apps.length > 1 && " · elige una para ver solo esas respuestas"}
+                  </div>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {apps.length > 1 && (
+                      <button onClick={() => setSelectedApp("all")} title={`Todas las veces · ${submissions.length} respuestas`}
+                        className={"qs-btn qs-btn--sm " + (appFilter === "all" ? "qs-btn--primary" : "qs-btn--ghost")}>
+                        Todas · {submissions.length}
+                      </button>
+                    )}
+                    {visibleApps.map(a => {
+                      const courses = resultCoursesLabel(a.courses);
+                      return (
+                        <button key={a.key} onClick={() => setSelectedApp(a.key)}
+                          title={`${a.how} · ${a.count} respuesta${a.count === 1 ? "" : "s"}`}
+                          className={"qs-btn qs-btn--sm " + (appFilter === a.key || apps.length === 1 ? "qs-btn--primary" : "qs-btn--ghost")}>
+                          {a.icon} <b>{formatResultsDate(a.date)}</b>{courses ? ` · ${courses}` : ""} · {a.count}
+                        </button>
+                      );
+                    })}
+                    {apps.length > APPS_SHOWN && (
+                      <button onClick={() => setShowAllApps(v => !v)} className="qs-btn qs-btn--sm qs-btn--ghost">
+                        {showAllApps ? "Ver menos" : `+${apps.length - APPS_SHOWN} más`}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
               {isWorkshop && (
                 <div style={{
                   display: "inline-flex", alignItems: "center", gap: 6, marginBottom: 12,
@@ -1594,8 +1900,8 @@ function OnlineResultsPanel({ onBack }) {
                 </div>
                 <div className="qs-card" style={{ padding: 16 }}>
                   <div style={{ fontSize: 12, color: "var(--ink-500)", fontWeight: 600 }}>Estado</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, paddingTop: 6, color: selectedQuiz.isPublished ? "var(--emerald-600)" : "var(--ink-500)" }}>
-                    {selectedQuiz.isPublished ? "🟢 Abierto" : "⚪ Cerrado"}
+                  <div style={{ fontSize: 16, fontWeight: 700, paddingTop: 6, color: group.isOpen ? "var(--emerald-600)" : "var(--ink-500)" }}>
+                    {group.isOpen ? "🟢 Abierto" : "⚪ Cerrado"}
                   </div>
                 </div>
               </div>
@@ -1630,7 +1936,11 @@ function OnlineResultsPanel({ onBack }) {
               </div>
 
               {/* Tabla */}
-              {filtered.length === 0 ? (
+              {loadingSubs ? (
+                <div className="qs-card" style={{ padding: 40, textAlign: "center", color: "var(--ink-500)" }}>
+                  Cargando respuestas...
+                </div>
+              ) : filtered.length === 0 ? (
                 <div className="qs-card" style={{ padding: 40, textAlign: "center", color: "var(--ink-500)" }}>
                   <div style={{ fontSize: 36, marginBottom: 8 }}>📭</div>
                   <p>No hay respuestas {(filterCourse || filterDate) ? "con esos filtros." : "todavía."}</p>
@@ -1742,7 +2052,7 @@ function OnlineResultsPanel({ onBack }) {
       {reviewing && isWorkshopOffline && window.WorkshopGradeModal && (
         <window.WorkshopGradeModal
           submission={reviewing}
-          quiz={selectedQuiz}
+          quiz={quizById[reviewing.quizId] || selectedQuiz}
           onClose={() => setReviewing(null)}
           onSaved={(updated) => {
             setSubmissions(prev => prev.map(s => s.id === updated.id ? { ...s, ...updated } : s));
@@ -1753,7 +2063,7 @@ function OnlineResultsPanel({ onBack }) {
       {reviewing && !isWorkshopOffline && (
         <ReviewModal
           submission={reviewing}
-          quiz={selectedQuiz}
+          quiz={quizById[reviewing.quizId] || selectedQuiz}
           onClose={() => setReviewing(null)}
           onSaved={(updated) => {
             setSubmissions(prev => prev.map(s => s.id === updated.id ? { ...s, ...updated } : s));

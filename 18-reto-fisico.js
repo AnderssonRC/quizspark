@@ -170,8 +170,8 @@ function PhysicalChallengeButton({ onLaunch, style }) {
         position: "fixed", bottom: 16, left: 220, zIndex: 860,
         padding: "10px 16px", borderRadius: 999, cursor: "pointer", fontWeight: 900, fontSize: 14,
         fontFamily: RF_FONT, color: "#03200b", background: RF_NEON, border: 0,
-        boxShadow: "0 4px 0 #1b8a0a, 0 0 22px rgba(57,255,20,.6)", ...style,
-      }}>💪 ¡Reto Físico!</button>
+        boxShadow: "0 4px 0 #1b8a0a, 0 0 22px rgba(57,255,20,.6)", whiteSpace: "nowrap", ...style,
+      }}>💪 ¡Reto<span className="qs-host-tool-long"> Físico</span>!</button>
 
       {open && (
         <div onClick={() => setOpen(false)} style={{
