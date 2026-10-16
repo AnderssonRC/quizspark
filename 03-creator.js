@@ -203,6 +203,9 @@ function Dashboard({ onOpenEditor, onLaunch, onResults, onResumeLive }) {
   // Estudio de Esmigol (config global para todos los quizzes)
   const [showEsmigol, setShowEsmigol] = useStateC(false);
   const [, setEsmigolVersion] = useStateC(0);
+  // Estudio de Reto Físico (también global para todos los quizzes)
+  const [showReto, setShowReto] = useStateC(false);
+  const [retoVersion, setRetoVersion] = useStateC(0);
   const userData = window.QS.currentUserData;
   const userName = userData?.name || "Profesor";
   const firstName = userName.split(" ")[0];
@@ -407,6 +410,17 @@ function Dashboard({ onOpenEditor, onLaunch, onResults, onResumeLive }) {
           seedQuiz={quizzes.find(q => q.metaTriggers) || null}
           onSaved={() => setEsmigolVersion(v => v + 1)}
           onClose={() => setShowEsmigol(false)}
+        />
+      )}
+
+      {/* Reto Físico: retos, emojis, imágenes y color (18-reto-fisico.js) */}
+      {window.RetoFisicoDashboardCard && (
+        <window.RetoFisicoDashboardCard key={retoVersion} onEdit={() => setShowReto(true)} />
+      )}
+      {showReto && window.RetoFisicoStudioModal && (
+        <window.RetoFisicoStudioModal
+          onSaved={() => setRetoVersion(v => v + 1)}
+          onClose={() => setShowReto(false)}
         />
       )}
 
@@ -1603,6 +1617,17 @@ function Editor({ quizId, onBack, onLaunch }) {
             )}
           </Field>
 
+          {quiz.mode === "survey" && (
+            <Field label="Anónimo">
+              <Toggle label="🕶️ Encuesta anónima" value={!!quiz.anonymous}
+                onChange={(v) => setQuiz({ ...quiz, anonymous: v })} />
+              <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
+                El estudiante entra sin escribir su nombre, solo su curso, y ve un aviso de que puede responder
+                con total libertad. En los resultados aparece como «Anónimo».
+              </p>
+            </Field>
+          )}
+
           {quiz.mode === "workshop" && window.WorkshopEditorFields && (
             <window.WorkshopEditorFields quiz={quiz} setQuiz={setQuiz} />
           )}
@@ -1639,6 +1664,7 @@ function Editor({ quizId, onBack, onLaunch }) {
                   onChange={(v) => setQuiz({ ...quiz, pairMode: v })} />
                 <p style={{ fontSize: 11, color: "var(--ink-500)", marginTop: 8, lineHeight: 1.5 }}>
                   Al ingresar (sala en vivo o evaluación online), el estudiante podrá anotar el nombre de su compañero de equipo.
+                  {quiz.mode === "survey" && quiz.anonymous ? " En la encuesta anónima no se pide." : ""}
                 </p>
               </Field>
 
@@ -1692,10 +1718,21 @@ function Editor({ quizId, onBack, onLaunch }) {
                 </div>
               </Field>
 
-              <Field label="Mostrar después de cada pregunta">
-                <Toggle label="Respuesta correcta" defaultOn />
-                <Toggle label="Ranking actualizado" defaultOn />
-                <Toggle label="Estadísticas por opción" />
+              <Field label="Mostrar en la sala en vivo">
+                {quiz.mode !== "survey" && (
+                  <>
+                    <Toggle label="🏆 Ranking actualizado" value={!!quiz.showRanking}
+                      onChange={(v) => setQuiz({ ...quiz, showRanking: v })} />
+                    <p style={{ fontSize: 11, color: "var(--ink-500)", margin: "0 0 8px", lineHeight: 1.5 }}>
+                      {quiz.extremeMode
+                        ? "En Competencia Extrema el ranking ya sale cada 3 preguntas, con su propio estilo."
+                        : "Después de los resultados de cada pregunta, el ranking en la pantalla y en cada celular."}
+                    </p>
+                  </>
+                )}
+                <Toggle label="📊 Estadísticas" value={quiz.statsEnabled !== false}
+                  onChange={(v) => setQuiz({ ...quiz, statsEnabled: v })} />
+                {quiz.statsEnabled !== false && <StatsSettings quiz={quiz} setQuiz={setQuiz} />}
               </Field>
             </>
           )}
@@ -1739,6 +1776,66 @@ function AutoGrowTextarea({ value, onChange, placeholder, style, onFocusField })
       onFocus={e => onFocusField && onFocusField(e.target, onChange)}
       placeholder={placeholder}
       style={{ resize: "none", overflow: "hidden", lineHeight: 1.35, fontFamily: "inherit", ...style }}/>
+  );
+}
+
+// Opciones de "📊 Estadísticas" de la sala en vivo (las usa 09-live.js →
+// liveStatsConfig): sobre qué, qué gráfico, cuándo y si se ve la tendencia.
+function StatsSettings({ quiz, setQuiz }) {
+  const cfg = typeof liveStatsConfig === "function" ? liveStatsConfig(quiz)
+    : { of: "opciones", chart: "barras", when: "durante", trend: false };
+  const isSurvey = quiz.mode === "survey";
+  const chips = (field, value, options) => (
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+      {options.map(o => {
+        const on = value === o.id;
+        return (
+          <button key={o.id} onClick={() => setQuiz({ ...quiz, [field]: o.id })} title={o.title || ""} style={{
+            padding: "7px 10px", borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: "pointer",
+            background: on ? "var(--violet-600)" : "var(--ink-50)", color: on ? "#fff" : "var(--ink-700)",
+            border: "1px solid " + (on ? "var(--violet-600)" : "var(--ink-200)"),
+          }}>{o.label}</button>
+        );
+      })}
+    </div>
+  );
+  const sub = { fontSize: 11, fontWeight: 800, color: "var(--ink-500)", margin: "10px 0 6px" };
+  return (
+    <div style={{ padding: "4px 0 6px 10px", borderLeft: "2px solid var(--violet-200)", marginTop: 2 }}>
+      {!isSurvey && (
+        <>
+          <div style={sub}>¿Sobre qué?</div>
+          {chips("statsOf", cfg.of, [
+            { id: "opciones", label: "🔢 Cada opción", title: "Cuántos eligieron cada opción" },
+            { id: "aciertos", label: "✅ Aciertos y fallos" },
+            { id: "ambos", label: "Ambos" },
+          ])}
+        </>
+      )}
+      <div style={sub}>Tipo de gráfico</div>
+      {chips("statsChart", cfg.chart, [
+        { id: "barras", label: "📊 Barras" },
+        { id: "torta", label: "🥧 Torta" },
+      ])}
+      <div style={sub}>¿Cuándo?</div>
+      {chips("statsWhen", cfg.when, [
+        { id: "durante", label: "⏱️ Durante la pregunta" },
+        { id: "despues", label: "📋 En los resultados" },
+        { id: "ambos", label: "En ambos" },
+      ])}
+      {(cfg.when === "durante" || cfg.when === "ambos") && (
+        <>
+          <Toggle label="📈 Ver la tendencia en vivo" value={cfg.trend}
+            onChange={(v) => setQuiz({ ...quiz, statsTrend: v })} />
+          <p style={{ fontSize: 11, color: "var(--ink-500)", margin: 0, lineHeight: 1.5 }}>
+            {cfg.trend
+              ? "La gráfica se ve desde que empieza la pregunta y cambia a medida que responden."
+              : "La gráfica queda oculta hasta que pulses «Ver» durante la pregunta."}
+            {!quiz.noProjection && " Con proyección, los estudiantes también la verán (los aciertos solo salen en los resultados)."}
+          </p>
+        </>
+      )}
+    </div>
   );
 }
 

@@ -654,26 +654,250 @@ function LiveCorrectPie({ answersThisQ }) {
   );
 }
 
+// ---------- Estadísticas de la sala (se configuran en el editor) ----------
+// quiz.statsEnabled · statsOf: "opciones" | "aciertos" | "ambos" ·
+// statsChart: "barras" | "torta" · statsWhen: "durante" | "despues" |
+// "ambos" · statsTrend: la gráfica se ve desde el inicio de la pregunta y
+// se actualiza mientras responden (si no, se abre con "Ver").
+// Quizzes sin estos campos: igual que antes — durante la pregunta, cerrada
+// hasta "Ver"; sin proyección, torta de aciertos; con proyección, barras.
+const LIVE_CORRECT_TYPES = ["multi", "truefalse", "checks", "order"];
+const LIVE_OPTION_TYPES = ["multi", "truefalse", "checks", "poll", "scale"];
+function liveStatsConfig(quiz) {
+  const noProj = !!quiz.noProjection && quiz.mode !== "survey";
+  const of = quiz.statsOf || (noProj ? "aciertos" : "opciones");
+  return {
+    enabled: quiz.statsEnabled !== false,
+    of,
+    chart: quiz.statsChart || (of === "aciertos" ? "torta" : "barras"),
+    when: quiz.statsWhen || "durante",
+    trend: !!quiz.statsTrend,
+  };
+}
+const liveStatsDuring = (cfg) => cfg.enabled && (cfg.when === "durante" || cfg.when === "ambos");
+const liveStatsAfter = (cfg) => cfg.enabled && (cfg.when === "despues" || cfg.when === "ambos");
+
+// Cuántos eligieron cada opción (o cada nivel de la escala).
+function liveOptionCounts(currentQ, answersThisQ) {
+  const entries = Object.values(answersThisQ || {});
+  if (currentQ.type === "scale") {
+    const lbls = currentQ.scaleLabels || SCALE_LABELS;
+    const counts = lbls.map(() => 0);
+    entries.forEach(e => { const i = Number(e.answer); if (!isNaN(i) && i >= 0 && i < counts.length) counts[i]++; });
+    return {
+      labels: lbls, counts,
+      colors: lbls.map((_, i, arr) => `hsl(${Math.round((arr.length > 1 ? i / (arr.length - 1) : 0.5) * 130)}, 65%, 48%)`),
+    };
+  }
+  const opts = currentQ.options || [];
+  const byId = {};
+  entries.forEach(e => {
+    const a = e.answer;
+    if (Array.isArray(a)) a.forEach(id => { byId[id] = (byId[id] || 0) + 1; });
+    else if (typeof a === "string") byId[a] = (byId[a] || 0) + 1;
+  });
+  return {
+    labels: opts.map((o, i) => (window.richToPlain ? window.richToPlain(o.text) : o.text) || String.fromCharCode(65 + i)),
+    counts: opts.map(o => byId[o.id] || 0),
+    colors: opts.map((_, i) => tileColor(i)),
+  };
+}
+
+// Torta genérica (conic-gradient) con leyenda; `center` = texto del centro.
+function LivePie({ slices, center, centerLabel, empty }) {
+  const total = slices.reduce((s, x) => s + x.n, 0);
+  let acc = 0;
+  const stops = slices.filter(s => s.n > 0).map(s => {
+    const from = (acc / total) * 360; acc += s.n;
+    return `${s.color} ${from}deg ${(acc / total) * 360}deg`;
+  }).join(", ");
+  return (
+    <div style={{ marginTop: 14, padding: 14, background: "var(--ink-50)", borderRadius: 12, display: "flex", alignItems: "center", gap: 18, flexWrap: "wrap" }}>
+      <div style={{
+        width: 128, height: 128, borderRadius: "50%", flexShrink: 0, position: "relative",
+        background: total ? `conic-gradient(${stops})` : "var(--ink-200)", transition: "background .4s",
+      }}>
+        <div style={{
+          position: "absolute", inset: 22, borderRadius: "50%", background: "var(--white)",
+          display: "grid", placeItems: "center", textAlign: "center", lineHeight: 1.1,
+        }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: "var(--ink-900)" }}>{center}</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "var(--ink-500)" }}>{centerLabel}</div>
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gap: 6, minWidth: 140, flex: 1 }}>
+        {slices.map(s => (
+          <div key={s.label} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 700, color: "var(--ink-700)" }}>
+            <span style={{ width: 12, height: 12, borderRadius: 3, background: s.color, flexShrink: 0 }} />
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.label}</span>
+            <span style={{ fontWeight: 900, color: "var(--ink-900)" }}>{s.n}</span>
+          </div>
+        ))}
+        {total === 0 && <div style={{ fontSize: 12, color: "var(--ink-500)" }}>{empty || "Aún no hay respuestas."}</div>}
+      </div>
+    </div>
+  );
+}
+
+// Torta por opción: qué porcentaje eligió cada opción.
+function LiveOptionsPie({ currentQ, answersThisQ }) {
+  const { labels, counts, colors } = liveOptionCounts(currentQ, answersThisQ);
+  const total = Object.keys(answersThisQ || {}).length;
+  const top = counts.indexOf(Math.max(...counts));
+  return (
+    <LivePie
+      slices={labels.map((l, i) => ({ label: `${currentQ.type === "scale" ? i + 1 + "." : tileShape(i)} ${l}`, n: counts[i], color: colors[i] }))}
+      center={total ? Math.round((counts[top] / Math.max(1, counts.reduce((a, b) => a + b, 0))) * 100) + "%" : "0%"}
+      centerLabel={total ? "la más elegida" : "respuestas"} />
+  );
+}
+
+// Barras de aciertos / fallos.
+function LiveCorrectBars({ answersThisQ }) {
+  const list = Object.values(answersThisQ || {});
+  const ok = list.filter(a => a.correct === true).length;
+  const bad = list.filter(a => a.correct === false).length;
+  const pend = list.length - ok - bad;
+  const rows = [
+    { label: "Acertaron", n: ok, color: "#10b981" },
+    { label: "Fallaron", n: bad, color: "#ef4444" },
+    ...(pend > 0 ? [{ label: "Por calificar", n: pend, color: "#94a3b8" }] : []),
+  ];
+  const max = Math.max(1, ...rows.map(r => r.n));
+  return (
+    <div style={{ marginTop: 14, padding: 14, background: "var(--ink-50)", borderRadius: 12, display: "grid", gap: 10 }}>
+      {rows.map(r => (
+        <div key={r.label} style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 700, color: "var(--ink-700)" }}>
+          <span style={{ width: 92, flexShrink: 0 }}>{r.label}</span>
+          <div style={{ flex: 1, height: 22, background: "var(--ink-100)", borderRadius: 8, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: Math.max(r.n ? 4 : 0, (r.n / max) * 100) + "%", background: r.color, borderRadius: 8, transition: "width .45s ease" }} />
+          </div>
+          <span style={{ width: 28, textAlign: "right", fontWeight: 900, color: "var(--ink-900)" }}>{r.n}</span>
+        </div>
+      ))}
+      {list.length === 0 && <div style={{ fontSize: 12, color: "var(--ink-500)" }}>Aún no hay respuestas.</div>}
+    </div>
+  );
+}
+
+// La gráfica (o gráficas) que eligió el docente para esta pregunta.
+// En preguntas sin respuesta correcta (encuesta, abiertas) "aciertos" no
+// aplica y se muestran las opciones. `inReveal`: en la pantalla de
+// resultados no se repite la lista de respuestas abiertas.
+function LiveStatsChart({ cfg, quiz, currentQ, answersThisQ, session, inReveal = false, hideCorrect = false }) {
+  const type = currentQ.type;
+  const canCorrect = !hideCorrect && quiz.mode !== "survey" && LIVE_CORRECT_TYPES.includes(type);
+  const canOptions = LIVE_OPTION_TYPES.includes(type);
+  const textual = type === "text" || type === "wordcloud";
+  const showCorrect = canCorrect && (cfg.of !== "opciones" || (!canOptions && !textual));
+  const showOptions = (canOptions || (textual && !inReveal)) && (cfg.of !== "aciertos" || !canCorrect);
+  return (
+    <>
+      {showCorrect && (cfg.chart === "torta"
+        ? <LiveCorrectPie answersThisQ={answersThisQ} />
+        : <LiveCorrectBars answersThisQ={answersThisQ} />)}
+      {showOptions && (canOptions && cfg.chart === "torta"
+        ? <LiveOptionsPie currentQ={currentQ} answersThisQ={answersThisQ} />
+        : <LiveAnswersPanel currentQ={currentQ} answersThisQ={answersThisQ} session={session} />)}
+    </>
+  );
+}
+
+// ---------- Ranking entre preguntas ("Ranking actualizado" del editor) ----------
+// Docente (onContinue) y celulares (myId). En Competencia Extrema se usa su
+// propio ranking (15-extreme.js).
+function LiveRanking({ session, quiz, myId, onContinue }) {
+  const list = Object.values(session.participants || {}).sort((a, b) => (b.score || 0) - (a.score || 0));
+  const max = Math.max(1, ...list.map(p => p.score || 0));
+  const meIdx = myId ? list.findIndex(p => p.id === myId) : -1;
+  const shown = list.slice(0, myId ? 5 : 10);
+  const medal = ["🥇", "🥈", "🥉"];
+  const nonSlides = (quiz.questions || []).filter(q => q.type !== "slide").length;
+  const done = (quiz.questions || []).slice(0, session.currentQuestionIdx + 1).filter(q => q.type !== "slide").length;
+  return (
+    <div style={{ minHeight: "100vh", background: quizBg(quiz?.color), padding: 24, color: "white" }}>
+      <div style={{ maxWidth: 640, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 18 }}>
+          <div style={{ fontSize: 48 }} className="qs-bob">🏆</div>
+          <h2 style={{ fontSize: 30 }}>Ranking</h2>
+          <p style={{ opacity: .85 }}>Después de la pregunta {done} de {nonSlides}</p>
+        </div>
+        {myId && meIdx >= 0 && (
+          <div className="qs-pop-in" style={{
+            textAlign: "center", marginBottom: 14, padding: "12px 16px", borderRadius: 14, fontWeight: 800, fontSize: 18,
+            background: "rgba(255,255,255,.18)", border: "2px solid rgba(255,255,255,.55)",
+          }}>
+            {medal[meIdx] || "⭐"} Vas en el puesto #{meIdx + 1} · {fmtPts(list[meIdx].score)} pts
+          </div>
+        )}
+        <div className="qs-card" style={{ padding: 12, color: "var(--ink-900)", display: "grid", gap: 6 }}>
+          {shown.map((p, i) => {
+            const me = p.id === myId;
+            return (
+              <div key={p.id} className="qs-fade-in" style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "8px 10px", borderRadius: 10,
+                background: me ? "var(--violet-100)" : "var(--ink-50)", border: me ? "2px solid var(--violet-500)" : "2px solid transparent",
+                animationDelay: (i * 0.06) + "s",
+              }}>
+                <span style={{ width: 30, textAlign: "center", fontWeight: 900, fontSize: medal[i] ? 22 : 15 }}>{medal[i] || i + 1}</span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</div>
+                  <div style={{ height: 6, marginTop: 4, background: "var(--ink-100)", borderRadius: 4, overflow: "hidden" }}>
+                    <div style={{ height: "100%", width: ((p.score || 0) / max) * 100 + "%", background: "linear-gradient(90deg, var(--violet-500), var(--pink-500))", transition: "width .6s ease" }} />
+                  </div>
+                </div>
+                <span style={{ fontWeight: 900, color: "var(--violet-700)" }}>{fmtPts(p.score)}</span>
+              </div>
+            );
+          })}
+          {list.length === 0 && <p style={{ textAlign: "center", color: "var(--ink-500)", padding: 12 }}>Aún no hay estudiantes.</p>}
+        </div>
+        {onContinue ? (
+          <button onClick={onContinue} className="qs-btn qs-btn--lg" style={{
+            width: "100%", marginTop: 18, background: "white", color: "var(--violet-700)", fontWeight: 800,
+          }}>➡️ Siguiente pregunta</button>
+        ) : (
+          <p style={{ textAlign: "center", marginTop: 18, opacity: .85, fontWeight: 600 }}>Esperando que el docente continúe…</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============================================================
 // HOST QUESTION — el profe mira la pregunta en curso
 // ============================================================
+// Cuánto tiempo puede agregar el docente a la pregunta en curso (segundos).
+const ADD_TIME_OPTIONS = [10, 20, 30, 45, 60, 90, 120, 180, 300];
+function fmtAddTime(s) {
+  if (s < 60) return s + " s";
+  const m = Math.floor(s / 60), r = s % 60;
+  return r ? `${m}:${String(r).padStart(2, "0")}` : `${m} min`;
+}
+
 function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants, onSkip, onReveal, onAddTime, onFinish, onTogglePause, onRelaunch, onShowParticipants }) {
+  const [addedFlash, setAddedFlash] = useStateL(null); // "✓ +30 s" tras agregar tiempo
+  const [timeMenu, setTimeMenu] = useStateL(false);    // panel de "Agregar tiempo" abierto
+  const [timeSheet, setTimeSheet] = useStateL(false);  // en pantalla angosta: hoja desde abajo
   const extraSeconds = session.extraSeconds || 0;
   const totalSeconds = (currentQ.timer || 60) + extraSeconds;
   const startedAt = session.questionStartedAt || Date.now();
   const isPaused = !!session.pausedAt;
   const [secondsLeft, setSecondsLeft] = useStateL(totalSeconds);
-  const [showLive, setShowLive] = useStateL(false);
+  // Tendencia en vivo (editor): la gráfica abierta desde el inicio.
+  const [showLive, setShowLive] = useStateL(() => liveStatsConfig(quiz).trend);
   // Revelado automático: UNA vez por pregunta. El intervalo sigue corriendo
   // hasta que llega desde Firestore el cambio a "showResults" (varias
   // décimas de segundo con la red del colegio) y antes volvía a revelar en
   // cada tick: más lecturas de respuestas y escrituras repetidas.
   const autoRevealedRef = useRefL(null);
 
-  // El gráfico en vivo se oculta al cambiar de pregunta, para que el
-  // docente decida en cada una si lo proyecta (evita sesgar las votaciones
-  // sin querer).
-  useEffectL(() => { setShowLive(false); }, [session.currentQuestionIdx]);
+  // Al cambiar de pregunta el gráfico vuelve a como lo dejó el docente en
+  // el editor: oculto (decide en cada una si lo proyecta, para no sesgar las
+  // votaciones sin querer) o, con "tendencia en vivo", abierto.
+  useEffectL(() => { setShowLive(liveStatsConfig(quiz).trend); }, [session.currentQuestionIdx]);
 
   useEffectL(() => {
     const tick = () => {
@@ -721,6 +945,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
   // pantalla → puede ver la correcta, la torta de aciertos y si cada
   // estudiante acertó. Nunca en encuesta (no hay respuesta correcta).
   const noProj = !!quiz.noProjection && quiz.mode !== "survey";
+  const stats = liveStatsConfig(quiz);
   const resultOf = (pid) => {
     const c = answersThisQ?.[pid]?.correct;
     return c === true ? "ok" : c === false ? "bad" : "pend";
@@ -892,7 +1117,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
             </div>
 
             {/* Distribución en tiempo real (opcional, lo activa el docente) */}
-            {((currentQ.type !== "order" || noProj) && currentQ.type !== "slide") && (
+            {liveStatsDuring(stats) && currentQ.type !== "slide" && (noProj || currentQ.type !== "order") && (
               <div style={{ marginTop: 12 }}>
                 <button onClick={() => setShowLive(v => !v)}
                   className="qs-btn qs-btn--sm"
@@ -912,10 +1137,11 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                         ⚠️ Visible en la proyección: los estudiantes verán la tendencia
                       </div>
                     )}
-                    {/* Sin proyección: torta de aciertos / fallos (lo que ya
-                        respondieron) antes de la distribución por opción. */}
-                    {noProj && <LiveCorrectPie answersThisQ={answersThisQ} />}
-                    <LiveAnswersPanel currentQ={currentQ} answersThisQ={answersThisQ} session={session} />
+                    {/* Las gráficas que eligió el docente en el editor */}
+                    {/* Con proyección, durante la pregunta NO se muestran
+                        aciertos: la pantalla la ven los estudiantes. */}
+                    <LiveStatsChart cfg={stats} quiz={quiz} currentQ={currentQ} answersThisQ={answersThisQ} session={session}
+                      hideCorrect={!noProj} />
                   </>
                 )}
               </div>
@@ -974,12 +1200,55 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
               ⏭️ Mostrar respuesta
             </button>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
-              <button onClick={onAddTime} className="qs-btn" style={{
-                background: "rgba(255,255,255,0.18)", color: "white", fontWeight: 700,
-                boxShadow: "0 0 0 2px rgba(255,255,255,.4) inset",
-              }}>
-                ⏱️ +30s
-              </button>
+              {/* Agregar tiempo: botón que abre un panel con las opciones en
+                  fichas de colores (las del juego): un toque y se suma. */}
+              <div style={{ position: "relative", minWidth: 0 }}>
+                <button onClick={() => { setTimeSheet(window.innerWidth < 640); setTimeMenu(v => !v); }} aria-expanded={timeMenu}
+                  title="Agregar tiempo a esta pregunta" className="qs-btn" style={{
+                    width: "100%", color: "white", fontWeight: 800,
+                    background: addedFlash ? "linear-gradient(135deg, #059669, #10b981)" : "linear-gradient(135deg, var(--violet-600), var(--pink-500))",
+                    border: "2px solid rgba(255,255,255,.75)",
+                    boxShadow: addedFlash ? "0 4px 0 #065f46, 0 0 18px rgba(16,185,129,.6)" : "0 4px 0 var(--violet-900), 0 0 18px rgba(252,36,149,.45)",
+                  }}>
+                  {addedFlash ? `✓ +${fmtAddTime(addedFlash)}` : <>⏱️ Agregar tiempo {timeMenu ? "▴" : "▾"}</>}
+                </button>
+                {timeMenu && (
+                  <>
+                    {/* En el celular sale como hoja desde abajo, encima de todo
+                        (la burbuja ✨ de herramientas tapaba las fichas). */}
+                    <div onClick={() => setTimeMenu(false)} style={{
+                      position: "fixed", inset: 0, zIndex: timeSheet ? 949 : 40,
+                      background: timeSheet ? "rgba(10,4,28,.55)" : "transparent",
+                    }} />
+                    <div role="menu" aria-label="Agregar tiempo a esta pregunta" className="qs-pop-in" style={{
+                      ...(timeSheet
+                        ? { position: "fixed", left: 12, right: 12, bottom: 12, zIndex: 950, padding: 14 }
+                        : { position: "absolute", top: "calc(100% + 8px)", left: 0, zIndex: 41, width: "max(100%, 250px)", padding: 10 }),
+                      borderRadius: 16, background: "var(--white)",
+                      border: "2px solid var(--violet-500)", boxShadow: "0 16px 36px rgba(0,0,0,.45), 0 0 22px rgba(165,59,255,.35)",
+                    }}>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: "var(--ink-500)", marginBottom: 8, textAlign: "center" }}>
+                        ¿Cuánto tiempo agregar?
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8 }}>
+                        {ADD_TIME_OPTIONS.map((s, i) => (
+                          <button key={s} role="menuitem" onClick={() => {
+                            onAddTime(s);
+                            setTimeMenu(false);
+                            setAddedFlash(s);
+                            setTimeout(() => setAddedFlash(f => (f === s ? null : f)), 1800);
+                          }} style={{
+                            padding: "12px 4px", borderRadius: 12, border: "2px solid rgba(255,255,255,.35)", cursor: "pointer",
+                            background: tileColor(i), color: "white", fontWeight: 900, fontSize: 16,
+                            fontFamily: "var(--font-display)", boxShadow: "0 4px 0 rgba(0,0,0,.35)",
+                            textShadow: "0 1px 2px rgba(0,0,0,.35)",
+                          }}>+{fmtAddTime(s)}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
               <button onClick={onTogglePause} className="qs-btn" style={{
                 background: isPaused ? "var(--emerald-500)" : "var(--amber-500)",
                 color: "white", fontWeight: 700,
@@ -1124,6 +1393,15 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
   });
   const maxCount = Math.max(1, ...Object.values(optionCounts));
 
+  // Estadísticas en la pantalla de resultados (si el docente lo eligió).
+  const stats = liveStatsConfig(quiz);
+  const statsAfterNode = liveStatsAfter(stats) && currentQ.type !== "slide" ? (
+    <div className="qs-card" style={{ padding: "14px 16px", marginBottom: 16, color: "var(--ink-900)" }}>
+      <div style={{ fontSize: 13, fontWeight: 800, color: "var(--violet-700)" }}>📊 Estadísticas de la pregunta</div>
+      <LiveStatsChart cfg={stats} quiz={quiz} currentQ={currentQ} answersThisQ={answersThisQ} session={session} inReveal />
+    </div>
+  ) : null;
+
   const nextButton = (
     <button onClick={onNext} className="qs-btn qs-btn--lg" style={{
       width: "100%", background: "white", color: "var(--violet-700)", fontWeight: 800, fontSize: 16,
@@ -1159,10 +1437,11 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
           )}
         </div>
         {inner}
+        {statsAfterNode}
         {currentQ.feedback && currentQ.feedback.trim() && (
           <div style={{
             marginTop: 4, marginBottom: 16, padding: 14, borderRadius: 12,
-            background: "rgba(255,255,255,0.92)", color: "var(--ink-900)",
+            background: "rgba(255,255,255,0.92)", color: "#1e1b4b", // fondo claro: texto oscuro fijo
             borderLeft: "4px solid var(--violet-500)", textAlign: "left",
           }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: "var(--violet-700)", marginBottom: 4 }}>💬 Retroalimentación</div>
@@ -1260,7 +1539,7 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
           {(currentQ.items || []).map((it, i) => (
             <div key={it.id} style={{
               display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
-              borderRadius: 10, background: "var(--emerald-50, #d1fae5)",
+              borderRadius: 10, background: "var(--emerald-50, #d1fae5)", color: "#064e3b",
               borderLeft: "4px solid var(--emerald-500)",
             }}>
               <span style={{
@@ -1542,7 +1821,77 @@ function HostFinal({ session, quiz, onFinish }) {
 // ============================================================
 // PARTICIPANTS MODAL — lista con opción de expulsar
 // ============================================================
-function ParticipantsModal({ participants, onKick, onClose }) {
+// Puntos extra para un estudiante, desde su fila en la lista de
+// participantes: se escribe cuántos y se pulsa "+ Sumar" o "− Quitar".
+function ExtraPointsControl({ onAdd }) {
+  const [pts, setPts] = useStateL("10");
+  const [busy, setBusy] = useStateL(false);
+  const [done, setDone] = useStateL(null); // último cambio aplicado (con signo)
+  const n = Math.round(Number(pts));
+  const valid = Number.isFinite(n) && n >= 1 && n <= 1000;
+  const apply = async (sign) => {
+    if (!valid || busy) return;
+    setBusy(true);
+    try {
+      await onAdd(sign * n);
+      setDone(sign * n);
+      setTimeout(() => setDone(null), 1800);
+    } catch (err) {
+      alert("No se pudieron cambiar los puntos: " + err.message);
+    } finally { setBusy(false); }
+  };
+  return (
+    <>
+      <input type="number" min={1} max={1000} value={pts} onChange={e => setPts(e.target.value)}
+        onKeyDown={e => e.key === "Enter" && apply(1)}
+        title="Puntos extra" aria-label="Puntos extra" className="qs-input"
+        style={{ width: 64, padding: "6px 8px", fontSize: 13, textAlign: "center" }} />
+      <button onClick={() => apply(1)} disabled={!valid || busy} className="qs-btn qs-btn--sm" style={{
+        background: done > 0 ? "var(--emerald-600)" : "var(--emerald-500)", color: "#05231a", fontWeight: 800,
+      }}>
+        {done > 0 ? `✓ +${done}` : "+ Sumar"}
+      </button>
+      <button onClick={() => apply(-1)} disabled={!valid || busy} className="qs-btn qs-btn--sm" style={{
+        background: done < 0 ? "#b45309" : "var(--amber-500)", color: "#2a1503", fontWeight: 800,
+      }}>
+        {done < 0 ? `✓ −${-done}` : "− Quitar"}
+      </button>
+    </>
+  );
+}
+
+// Notificación pequeña en el celular del estudiante cuando el docente le
+// suma o le quita puntos: baja desde arriba y se va sola.
+function BonusToast({ pts, onDone }) {
+  useEffectL(() => {
+    const t = setTimeout(onDone, 3600);
+    return () => clearTimeout(t);
+  }, []);
+  const up = pts > 0;
+  return (
+    <div role="status" style={{
+      position: "fixed", top: 12, left: "50%", zIndex: 960, pointerEvents: "none",
+      width: "max-content", maxWidth: "calc(100vw - 32px)",
+      display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderRadius: 999,
+      background: up ? "#059669" : "#c2410c", color: "#fff", fontWeight: 800, fontSize: 14,
+      boxShadow: "0 10px 26px rgba(0,0,0,.35)",
+      animation: "qs-bonus-toast 3.6s ease forwards",
+    }}>
+      <style>{`
+        @keyframes qs-bonus-toast {
+          0%   { transform: translate(-50%, -140%); opacity: 0; }
+          10%  { transform: translate(-50%, 0); opacity: 1; }
+          88%  { transform: translate(-50%, 0); opacity: 1; }
+          100% { transform: translate(-50%, -140%); opacity: 0; }
+        }
+      `}</style>
+      <span style={{ fontSize: 22 }}>{up ? "🎉" : "😬"}</span>
+      <span>{up ? `¡+${pts} puntos extra! Tu profe te premió.` : `−${-pts} puntos. Tu profe te quitó puntos.`}</span>
+    </div>
+  );
+}
+
+function ParticipantsModal({ participants, onKick, onClose, onAddPoints }) {
   const list = Object.entries(participants)
     .map(([pid, p]) => ({ pid, ...p }))
     .sort((a, b) => (b.score || 0) - (a.score || 0));
@@ -1581,14 +1930,23 @@ function ParticipantsModal({ participants, onKick, onClose }) {
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
-                    {p.course} · {fmtPts(p.score)} pts{p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
+                    {p.course} · {fmtPts(p.score)} pts
+                    {p.bonusPoints ? (
+                      <span style={{ color: p.bonusPoints > 0 ? "var(--emerald-500)" : "var(--amber-400)", fontWeight: 700 }}>
+                        {" · "}{p.bonusPoints > 0 ? `+${p.bonusPoints}` : `−${-p.bonusPoints}`} extra
+                      </span>
+                    ) : null}
+                    {p.partnerName ? ` · 👥 ${p.partnerName}` : ""}
                   </div>
                 </div>
-                <button onClick={() => onKick(p.pid)} className="qs-btn qs-btn--sm" style={{
-                  background: "var(--red-500)", color: "white",
-                }}>
-                  Sacar
-                </button>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  {onAddPoints && <ExtraPointsControl onAdd={(pts) => onAddPoints(p.pid, pts)} />}
+                  <button onClick={() => onKick(p.pid)} className="qs-btn qs-btn--sm" style={{
+                    background: "var(--red-500)", color: "white",
+                  }}>
+                    Sacar
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -1649,7 +2007,7 @@ function EsmigolHostSender({ sessionId, quiz }) {
       }}>
         <img src={window.esmigolImageSrc ? window.esmigolImageSrc("retador") : ""} alt=""
           style={{ width: 34, height: 34, objectFit: "contain", background: "#fff7ed", borderRadius: "50%" }} />
-        {open ? "Cerrar" : <span>Esmigol<span className="qs-host-tool-long"> en vivo</span></span>}
+        {open ? "Cerrar" : "Esmigol en vivo"}
       </button>
 
       {open && (
@@ -1784,7 +2142,7 @@ function LiveQuestionAdder({ quiz, session, onAdd }) {
         padding: "10px 16px", borderRadius: 999, cursor: "pointer", fontWeight: 900, fontSize: 14, whiteSpace: "nowrap",
         color: "#fff", background: "var(--violet-600)", border: 0,
         boxShadow: "0 4px 0 var(--violet-900), 0 10px 24px rgba(0,0,0,.3)",
-      }}>➕ Pregunta<span className="qs-host-tool-long"> en vivo</span></button>
+      }}>➕ Pregunta en vivo</button>
 
       {open && (
         <div onClick={() => setOpen(false)} style={{
@@ -1980,6 +2338,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   const quiz = useLiveQuiz(quizBase, session);
   const [answersByQuestion, setAnswersByQuestion] = useStateL({});
   const [showParticipants, setShowParticipants] = useStateL(false);
+  const [toolsOpen, setToolsOpen] = useStateL(false); // burbuja de herramientas desplegada
   const [pendingJoinRequests, setPendingJoinRequests] = useStateL([]);
   // Cuenta regresiva META (14-meta.js) en la proyección, entre "Iniciar" y
   // la primera pregunta. Los estudiantes siguen en el lobby mientras tanto.
@@ -2031,6 +2390,8 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
           quizTitle: quizData.title || "Quiz",
           pairMode: quizData.pairMode || false,
           mode: quizData.mode || "quiz",
+          // Encuesta anónima: el estudiante entra solo con el curso
+          anonymous: quizData.mode === "survey" && !!quizData.anonymous,
           learningObjective: quizData.learningObjective || "",
           introText: quizData.introText || "",
           introImage: quizData.introImage || "",
@@ -2221,13 +2582,16 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   // ---- RETO FÍSICO (18-reto-fisico.js) ----
   // Lanzar: pausa la pregunta (si corría) y publica el reto. Se recuerda si
   // la pausa la puso el reto, para reanudar solo en ese caso al volver.
-  const startPhysicalChallenge = async (text) => {
+  // `challenge` = reto con el estilo del docente (rfBuildChallenge: texto,
+  // emoji, imagen, color, puntos, ganadores…); un texto suelto también sirve.
+  const startPhysicalChallenge = async (challenge) => {
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
     const pauseNow = session.status === "playing" && !session.pausedAt;
+    const data = typeof challenge === "string" ? { text: challenge } : challenge;
     try {
       await ref.update({
         physicalChallenge: {
-          id: "rf-" + Date.now(), text, startedAt: Date.now(), winners: [], pausedByChallenge: pauseNow,
+          ...data, id: "rf-" + Date.now(), startedAt: Date.now(), winners: [], pausedByChallenge: pauseNow,
         },
         ...(pauseNow ? { pausedAt: Date.now() } : {}),
       });
@@ -2236,15 +2600,16 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       alert("No se pudo lanzar el reto: " + err.message);
     }
   };
-  // +10 a uno de los primeros 3 (solo ranking).
+  // Puntos a uno de los primeros (solo ranking). Puntos y cuántos ganan
+  // vienen del reto (los configura el docente; por defecto +10 a 3).
   const awardPhysicalChallenge = async (pid) => {
     const ch = session.physicalChallenge;
-    const max = window.RF_WINNERS || 3;
+    const max = (ch && ch.winnersMax) || window.RF_WINNERS || 3;
     if (!ch || (ch.winners || []).includes(pid) || (ch.winners || []).length >= max) return;
     try {
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
         "physicalChallenge.winners": [...(ch.winners || []), pid],
-        [`participants.${pid}.score`]: firebase.firestore.FieldValue.increment(window.RF_POINTS || 10),
+        [`participants.${pid}.score`]: firebase.firestore.FieldValue.increment(ch.points || window.RF_POINTS || 10),
       });
     } catch (err) {
       console.error("Error premiando reto físico:", err);
@@ -2315,6 +2680,18 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
 
   // Expulsar a un participante (conserva su registro en 'results' al final,
   // pero lo saca del juego activo).
+  // Puntos extra a mano (lista de participantes): suman (o restan, con pts
+  // negativo) al puntaje de la sala, igual que el Reto Físico. bonusPoints
+  // lleva la cuenta neta; lastBonus avisa al celular del estudiante.
+  const addExtraPoints = async (pid, pts) => {
+    if (!session.participants?.[pid]) throw new Error("El estudiante ya no está en la sala.");
+    await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+      [`participants.${pid}.score`]: firebase.firestore.FieldValue.increment(pts),
+      [`participants.${pid}.bonusPoints`]: firebase.firestore.FieldValue.increment(pts),
+      [`participants.${pid}.lastBonus`]: { pts, at: Date.now() },
+    });
+  };
+
   const kickParticipant = async (pid) => {
     const p = session.participants?.[pid];
     if (!confirm(`¿Sacar a ${p?.name || "este participante"} de la sala?`)) return;
@@ -2532,6 +2909,13 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
 
   const goNext = async () => {
     const nextIdx = session.currentQuestionIdx + 1;
+    // RANKING ACTUALIZADO (opción del editor): después de los resultados de
+    // cada pregunta, antes de la siguiente. Competencia Extrema tiene el suyo.
+    if (!quiz.extremeMode && quiz.showRanking && quiz.mode !== "survey"
+        && session.status === "showResults" && nextIdx < quiz.questions.length) {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({ status: "ranking" });
+      return;
+    }
     // COMPETENCIA EXTREMA: ranking animado cada 3 preguntas antes de avanzar.
     if (quiz.extremeMode && session.status !== "ranking" && window.extremeRankingDue
         && window.extremeRankingDue(quiz, session.currentQuestionIdx)) {
@@ -2628,25 +3012,36 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   const currentQ = currentIdx >= 0 ? quiz.questions[currentIdx] : null;
   const answersThisQ = answersByQuestion[currentIdx] || {};
 
-  // Barra flotante del docente, abajo a la izquierda, con los botones uno
-  // al lado del otro: Esmigol en vivo (frases a los celulares), Pregunta en
-  // vivo (también desde el lobby, sería la primera) y ¡Reto Físico! (solo en
-  // las pantallas de juego). Antes cada uno iba en una posición fija y en el
-  // celular "Pregunta en vivo" quedaba fuera de la pantalla; ahora, si no
-  // caben en una fila, pasan a la de arriba.
-  // La key la conserva al cambiar de pantalla (pregunta → resultados →
-  // ranking): sin ella React la volvía a crear y se cerraba lo que el
-  // docente tuviera abierto, perdiendo la pregunta a medio escribir.
+  // Herramientas del docente en UNA burbuja abajo a la izquierda (antes eran
+  // botones sueltos que tapaban otros botones de la pantalla). Al tocarla
+  // se despliegan hacia arriba: Esmigol en vivo (frases a los celulares),
+  // Pregunta en vivo (también desde el lobby, sería la primera) y ¡Reto
+  // Físico! (solo en las pantallas de juego).
+  // Al plegarla se OCULTAN (display none), no se desmontan: así no se pierde
+  // lo que el docente tenga a medio hacer. Por lo mismo la key la conserva al
+  // cambiar de pantalla (pregunta → resultados → ranking): sin ella React la
+  // volvía a crear y se cerraba lo abierto, perdiendo la pregunta a medio escribir.
   const hostTools = (
     <div key="host-tools" style={{
-      position: "fixed", left: 16, bottom: 16, zIndex: 860, maxWidth: "calc(100vw - 32px)",
-      display: "flex", flexWrap: "wrap-reverse", alignItems: "center", gap: 8,
+      position: "fixed", left: 16, bottom: 16, zIndex: 860,
+      display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 8,
     }}>
-      <EsmigolHostSender sessionId={sessionId} quiz={quiz} />
-      {session.status !== "finished" && <LiveQuestionAdder quiz={quiz} session={session} onAdd={addLiveQuestion} />}
-      {window.PhysicalChallengeButton && session.status !== "lobby" && session.status !== "finished" && (
-        <window.PhysicalChallengeButton onLaunch={startPhysicalChallenge} style={{ position: "static" }} />
-      )}
+      <div style={{ display: toolsOpen ? "flex" : "none", flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
+        <EsmigolHostSender sessionId={sessionId} quiz={quiz} />
+        {session.status !== "finished" && <LiveQuestionAdder quiz={quiz} session={session} onAdd={addLiveQuestion} />}
+        {window.PhysicalChallengeButton && session.status !== "lobby" && session.status !== "finished" && (
+          <window.PhysicalChallengeButton onLaunch={startPhysicalChallenge} style={{ position: "static" }} />
+        )}
+      </div>
+      <button onClick={() => setToolsOpen(o => !o)} aria-expanded={toolsOpen}
+        title={toolsOpen ? "Ocultar herramientas" : "Herramientas: Esmigol, Pregunta en vivo, Reto Físico"}
+        style={{
+          width: 54, height: 54, borderRadius: "50%", border: 0, cursor: "pointer",
+          fontSize: toolsOpen ? 22 : 26, fontWeight: 900, color: "#fff",
+          background: toolsOpen ? "var(--ink-200)" : "linear-gradient(135deg, var(--violet-600), var(--pink-500))",
+          boxShadow: "0 4px 0 var(--violet-900), 0 10px 24px rgba(0,0,0,.35)",
+          display: "grid", placeItems: "center",
+        }}>{toolsOpen ? "✕" : "✨"}</button>
     </div>
   );
 
@@ -2672,6 +3067,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     <ParticipantsModal
       participants={session.participants || {}}
       onKick={kickParticipant}
+      onAddPoints={quiz.mode === "survey" ? null : addExtraPoints}
       onClose={() => setShowParticipants(false)}
     />
   ) : null;
@@ -2715,6 +3111,15 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       </>
     );
   }
+  // Ranking actualizado (opción del editor), fuera de Competencia Extrema
+  if (session.status === "ranking") {
+    return (
+      <>
+        <LiveRanking session={session} quiz={quiz} onContinue={goNext} />
+        {joinRequestsBanner}{hostTools}
+      </>
+    );
+  }
 
   if (session.status === "playing") {
     // Si el elemento actual es una diapositiva: pantalla especial sin cronómetro
@@ -2746,7 +3151,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
           session={session} quiz={quiz} currentQ={currentQ}
           answersThisQ={answersThisQ} totalParticipants={participants.length}
           onReveal={revealCurrent} onSkip={revealCurrent}
-          onAddTime={() => addTime(30)} onFinish={finishNow}
+          onAddTime={(s) => addTime(s)} onFinish={finishNow}
           onTogglePause={togglePause} onRelaunch={() => relaunchQuestion()}
           onShowParticipants={() => setShowParticipants(true)}
         />
@@ -2795,6 +3200,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
   const [name, setName] = useStateL("");
   const [course, setCourse] = useStateL("");
   const [partnerName, setPartnerName] = useStateL("");
+  const [bonusToast, setBonusToast] = useStateL(null); // { pts, at }: aviso de puntos del docente
   // code | checking | identify | joining | requesting | waitingApproval | rejected | live
   const [step, setStep] = useStateL(initialCode ? "checking" : "code");
   const [error, setError] = useStateL("");
@@ -2935,7 +3341,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
         saveLiveSession(session.code, {
           sessionId: session.id,
           participantId: d.participantId,
-          name: name.trim(),
+          name: d.name || name.trim(),
           course: course.trim(),
           savedAt: Date.now(),
         });
@@ -2998,8 +3404,9 @@ function StudentJoinLive({ initialCode, onCancel }) {
 
   const handleJoin = async () => {
     setError("");
-    if (!name.trim() || !course.trim()) {
-      setError("Completa nombre y curso.");
+    const anon = !!session?.anonymous;
+    if ((!anon && !name.trim()) || !course.trim()) {
+      setError(anon ? "Escribe tu curso." : "Completa nombre y curso.");
       return;
     }
     if (!session || !session.id) {
@@ -3011,16 +3418,22 @@ function StudentJoinLive({ initialCode, onCancel }) {
       return;
     }
 
+    // Encuesta anónima: no se pide el nombre; cada estudiante queda como
+    // "Anónimo 1234" (número al azar) para que el docente vea cuántos hay
+    // sin saber quién es quién.
+    const joinName = anon ? "Anónimo " + Math.floor(1000 + Math.random() * 9000) : name.trim();
+
     // Tope de ingresos por estudiante (mismo nombre + curso), cuenta tanto la
     // entrada normal por el lobby como los ingresos tardíos ya aprobados.
-    const identityKey = (name.trim() + "|" + course.trim()).toLowerCase();
+    // En anónimo no aplica: sin nombre, todo el curso compartiría el tope.
+    const identityKey = (joinName + "|" + course.trim()).toLowerCase();
     const priorEntries = (session.joinCounts && session.joinCounts[identityKey]) || 0;
-    if (priorEntries >= 2) {
+    if (!anon && priorEntries >= 2) {
       setError("Ya ingresaste el máximo de veces permitido a esta sala (2).");
       return;
     }
 
-    const partnerToSave = (session.pairMode && partnerName.trim()) ? partnerName.trim() : null;
+    const partnerToSave = (!anon && session.pairMode && partnerName.trim()) ? partnerName.trim() : null;
 
     // La sala sigue en el lobby: entra directo, sin aprobación.
     if (session.status === "lobby") {
@@ -3029,7 +3442,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
         const pid = "p-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
         const participantData = {
           id: pid,
-          name: name.trim(),
+          name: joinName,
           course: course.trim(),
           partnerName: partnerToSave,
           joinedAt: Date.now(),
@@ -3045,7 +3458,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
         saveLiveSession(session.code, {
           sessionId: session.id,
           participantId: pid,
-          name: name.trim(),
+          name: joinName,
           course: course.trim(),
           savedAt: Date.now(),
         });
@@ -3082,7 +3495,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
     try {
       const reqRef = await window.QS.db.collection("liveSessions").doc(session.id)
         .collection("joinRequests").add({
-          name: name.trim(),
+          name: joinName,
           course: course.trim(),
           partnerName: partnerToSave,
           identityKey,
@@ -3099,7 +3512,13 @@ function StudentJoinLive({ initialCode, onCancel }) {
   };
 
   if (step === "live" && session && quiz && participantId) {
-    return <StudentLive sessionId={session.id} participantId={participantId} quizInitial={quiz} onExit={onCancel}/>;
+    return (
+      <>
+        <StudentLive sessionId={session.id} participantId={participantId} quizInitial={quiz} onExit={onCancel}
+          onBonus={(b) => setBonusToast(b)} />
+        {bonusToast && <BonusToast key={bonusToast.at} pts={bonusToast.pts} onDone={() => setBonusToast(null)} />}
+      </>
+    );
   }
 
   return (
@@ -3173,23 +3592,31 @@ function StudentJoinLive({ initialCode, onCancel }) {
                 aprobarlo y no recibirás los puntos de las preguntas ya jugadas.
               </div>
             )}
-            <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
-              Tu nombre completo
-            </label>
-            <input
-              type="text" className="qs-input" placeholder="Ana María Pérez"
-              value={name} onChange={e => setName(e.target.value)}
-              style={{ marginBottom: 14 }} autoFocus
-            />
+            {session?.anonymous ? (
+              <AnonymousNotice style={{ marginBottom: 16 }} />
+            ) : (
+              <>
+                <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
+                  Tu nombre completo
+                </label>
+                <input
+                  type="text" className="qs-input" placeholder="Ana María Pérez"
+                  value={name} onChange={e => setName(e.target.value)}
+                  style={{ marginBottom: 14 }} autoFocus
+                />
+              </>
+            )}
             <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
               Curso
             </label>
             <input
               type="text" className="qs-input" placeholder="Ej: 10A"
               value={course} onChange={e => setCourse(e.target.value)}
-              style={{ marginBottom: session?.pairMode ? 14 : 0 }}
+              onKeyDown={e => session?.anonymous && e.key === "Enter" && handleJoin()}
+              style={{ marginBottom: session?.pairMode && !session?.anonymous ? 14 : 0 }}
+              autoFocus={!!session?.anonymous}
             />
-            {session?.pairMode && (
+            {session?.pairMode && !session?.anonymous && (
               <>
                 <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
                   👥 Nombre de tu compañero (opcional)
@@ -3274,8 +3701,21 @@ function StudentJoinLive({ initialCode, onCancel }) {
 // ============================================================
 // STUDENT LIVE — el estudiante durante la sesión
 // ============================================================
-function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
+function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus }) {
   const [session, setSession] = useStateL(null);
+  // Puntos extra del docente: avisar solo los que lleguen DESPUÉS de entrar
+  // (al reconectar no se repite el último aviso).
+  const lastBonus = session?.participants?.[participantId]?.lastBonus || null;
+  const seenBonusAtRef = useRefL(undefined);
+  useEffectL(() => {
+    if (!session) return;
+    const at = lastBonus ? lastBonus.at : null;
+    if (seenBonusAtRef.current === undefined) { seenBonusAtRef.current = at; return; }
+    if (at && at !== seenBonusAtRef.current) {
+      seenBonusAtRef.current = at;
+      if (onBonus && lastBonus.pts) onBonus(lastBonus);
+    }
+  }, [session ? 1 : 0, lastBonus && lastBonus.at]);
   const [quizBase] = useStateL(quizInitial);
   // Incluye las preguntas que el docente agregue en vivo (useLiveQuiz).
   const quiz = useLiveQuiz(quizBase, session);
@@ -3356,6 +3796,40 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
     setLiveGrade(null);
     setAnsweredAtIdx(-1);
   }, [session?.currentQuestionIdx, session?.questionVersion]);
+
+  // Reconexión (recargó la página o se le cerró el navegador) en plena
+  // pregunta: lo respondido vive en Firestore, no en este celular. Se lee
+  // UNA vez la respuesta de la pregunta en curso y, si ya existe, se
+  // restaura (sin esto volvían a salir las opciones y podía responder otra
+  // vez, reemplazando su respuesta). Mientras se verifica, no deja responder.
+  // Las preguntas siguientes no necesitan esta lectura: arrancan en memoria.
+  const [restoreKey, setRestoreKey] = useStateL(undefined); // pregunta pendiente de verificar
+  useEffectL(() => {
+    if (!session || restoreKey !== undefined) return;
+    if (session.status !== "playing" && session.status !== "showResults") { setRestoreKey(null); return; }
+    const qIdx = session.currentQuestionIdx;
+    const key = qIdx + ":" + (session.questionVersion || 0);
+    setRestoreKey(key);
+    window.QS.db.collection("liveSessions").doc(sessionId)
+      .collection("answers").doc(`${participantId}-${qIdx}`).get()
+      .then(doc => {
+        if (doc.exists) {
+          const d = doc.data();
+          const q = quiz.questions[qIdx];
+          const isSurvey = quiz.mode === "survey";
+          const isLiveGradedOpen = !isSurvey && q && q.type === "text" && (q.gradeMode || "live") === "live";
+          setMyAnswer(d.answer);
+          setAnsweredAtIdx(qIdx);
+          setMyResultThisQ({
+            correct: d.correct ?? null, points: d.points || 0, survey: isSurvey,
+            pendingGrade: isLiveGradedOpen, concentration: d.extremeWin !== undefined,
+          });
+        }
+      })
+      .catch(err => console.warn("No se pudo verificar la respuesta guardada:", err))
+      .finally(() => setRestoreKey(null));
+  }, [session ? 1 : 0]);
+  const restoring = restoreKey !== undefined && restoreKey !== null;
 
   // Si la pregunta es abierta con calificación en vivo, durante "showResults"
   // escuchar mi doc de respuesta para recibir la nota que ponga el docente.
@@ -3453,6 +3927,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   const submitAnswer = async (answer) => {
     if (!session || session.status !== "playing") return;
     if (session.pausedAt) return; // no se puede responder en pausa
+    if (restoring) return; // verificando si ya había respondido (reconexión)
     if (answeredAtIdx === session.currentQuestionIdx) return;
     const qIdx = session.currentQuestionIdx;
     const currentQ = quiz.questions[qIdx];
@@ -3658,10 +4133,14 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
         <div className="qs-card" style={{ padding: 32, textAlign: "center", maxWidth: 400, color: "var(--ink-900)" }}>
           <div style={{ fontSize: 48, marginBottom: 12 }} className="qs-bob">🎉</div>
           <h2 style={{ fontSize: 22, marginBottom: 8 }}>¡Estás dentro!</h2>
-          <p style={{ marginBottom: 16, color: "var(--ink-500)" }}>
-            <b>{me?.name}</b> · {me?.course}
-            {me?.partnerName ? <><br/>👥 Con {me.partnerName}</> : null}
-          </p>
+          {isAnonymousSurvey(quiz) ? (
+            <AnonymousNotice style={{ marginBottom: 16 }} />
+          ) : (
+            <p style={{ marginBottom: 16, color: "var(--ink-500)" }}>
+              <b>{me?.name}</b> · {me?.course}
+              {me?.partnerName ? <><br/>👥 Con {me.partnerName}</> : null}
+            </p>
+          )}
           <div style={{ padding: 14, background: "var(--violet-50)", borderRadius: 10, marginBottom: 16 }}>
             <p style={{ fontSize: 14, color: "var(--violet-700)", fontWeight: 600 }}>
               {quiz?.mode === "workshop" ? "Espera a que el Docente Comience" : "Esperando que el profesor inicie el quiz..."}
@@ -3770,6 +4249,9 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
   // === COMPETENCIA EXTREMA: ranking cada 3 preguntas y elección de privilegio ===
   if (isExtremeStudent && session.status === "ranking" && window.ExtremeRanking) {
     return <window.ExtremeRanking session={session} quiz={quiz} myId={participantId} />;
+  }
+  if (session.status === "ranking") {
+    return <LiveRanking session={session} quiz={quiz} myId={participantId} />;
   }
   if (isExtremeStudent && session.privilegeOffer && window.ExtremePrivilegePicker) {
     const offer = session.privilegeOffer;
@@ -4034,6 +4516,12 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit }) {
           }}>
             <span style={{ fontWeight: 600 }}>Pregunta {session.currentQuestionIdx + 1} / {quiz.questions.length}</span>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              {isAnonymousSurvey(quiz) && (
+                <span title="Encuesta anónima: nadie sabrá cuáles son tus respuestas" style={{
+                  background: "rgba(20,184,166,0.9)", color: "white", padding: "6px 12px",
+                  borderRadius: 10, fontWeight: 800, fontSize: 13,
+                }}>🕶️ Anónimo</span>
+              )}
               {quiz.mode !== "survey" && (
                 <span style={{
                   background: "rgba(255,255,255,0.18)", color: "white", padding: "6px 12px",
@@ -4274,7 +4762,9 @@ function OrderSelector({ items, onSubmit }) {
           return (
             <div key={id} style={{
               display: "flex", alignItems: "center", gap: 8, padding: "10px 12px",
-              borderRadius: 12, background: "rgba(255,255,255,0.95)", color: "var(--ink-900)",
+              // Texto oscuro FIJO: en el tema oscuro --ink-900 es casi blanco
+              // y sobre esta tarjeta clara las palabras no se veían.
+              borderRadius: 12, background: "rgba(255,255,255,0.95)", color: "#1e1b4b",
             }}>
               <span style={{
                 width: 26, height: 26, borderRadius: "50%", flexShrink: 0,

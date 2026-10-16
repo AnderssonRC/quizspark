@@ -357,7 +357,11 @@ function LectioPresenter({ quiz, onExit }) {
       case "clockPause": clockPause(); break;
       case "clockResume": clockResume(); break;
       case "clockReset": clockReset(); break;
-      case "challenge": if (p && p.text) setTvChallenge({ id: cmd.id, text: p.text }); break;
+      // El celular manda { text, retoId }; el estilo (emoji, imagen, color)
+      // sale de la configuración del docente en este computador.
+      case "challenge":
+        if (p && p.text) setTvChallenge({ ...(window.rfChallengeFromCommand ? window.rfChallengeFromCommand(p) : { text: p.text }), id: cmd.id });
+        break;
       case "challengeEnd": setTvChallenge(null); break;
       case "addQuestion": if (p) addLiveSlide(p); break;
       case "esmigol": if (p && p.text) setTvEsmigol({ text: p.text, expression: p.expression, at: cmd.at || Date.now() }); break;

@@ -38,6 +38,26 @@ function studentActivityNoun(mode) {
   return "quiz";
 }
 
+// Encuesta anónima (opción del editor, solo en modo Encuesta): el
+// estudiante entra solo con su curso y queda registrado como "Anónimo".
+function isAnonymousSurvey(quiz) {
+  return !!quiz && quiz.mode === "survey" && !!quiz.anonymous;
+}
+
+// Aviso para el estudiante (online y sala en vivo) de que la encuesta es anónima.
+function AnonymousNotice({ style }) {
+  return (
+    <div style={{
+      padding: "12px 14px", borderRadius: 12, textAlign: "left",
+      background: "rgba(20,184,166,0.14)", border: "1px solid rgba(20,184,166,0.45)",
+      color: "var(--ink-900)", fontSize: 13, lineHeight: 1.5, ...style,
+    }}>
+      <div style={{ fontWeight: 800, fontSize: 15, marginBottom: 2 }}>🕶️ Encuesta anónima</div>
+      No escribes tu nombre y nadie sabrá cuáles son tus respuestas. Puedes responder con total libertad.
+    </div>
+  );
+}
+
 function generateShortCode() {
   // Código de 6 caracteres alfanuméricos en mayúsculas
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sin O, 0, I, 1 para evitar confusión
@@ -440,6 +460,63 @@ function StudentExam({ examCode }) {
   const [questionStartedAt, setQuestionStartedAt] = useStateO(null);
   const [secondsLeft, setSecondsLeft] = useStateO(null);
 
+  // ---- Recargar la página / desconectarse (todo en ESTE dispositivo) ----
+  // · progreso: mientras responde se guarda lo respondido, la pregunta en
+  //   la que va y cuándo arrancó; al recargar sigue ahí mismo y el
+  //   cronómetro NO se reinicia (antes empezaba de cero y podía rehacerla).
+  // · enviado: tras enviar queda una marca; al recargar ya no deja enviarla
+  //   otra vez (con "Soy otro estudiante" para computadores compartidos).
+  // · el borrador de envío fallido (pendingSubmissionKey) se recupera.
+  const EXAM_KEEP_MS = 12 * 3600 * 1000;
+  const [alreadyInfo, setAlreadyInfo] = useStateO(null); // { name, at } si ya envió
+  const [resumed, setResumed] = useStateO(false);        // aviso "Seguimos donde ibas"
+  const restoredQStartRef = useRefO(null);               // { idx, at } del cronómetro guardado
+  const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sin almacenamiento: no se recuerda */ } };
+  const lsDel = (k) => { try { localStorage.removeItem(k); } catch (e) { /* no-op */ } };
+  const progressKey = (qid) => "qs_exam_progress_" + qid;
+  const doneKey = (qid) => "qs_exam_done_" + qid;
+
+  // Devuelve la fase en la que debe abrir, o null si empieza normal.
+  const restoreExamState = (data) => {
+    const pending = lsGet("qs_pending_submission_" + data.id);
+    if (pending) {
+      setStudentName(pending.studentName === "Anónimo" ? "" : (pending.studentName || ""));
+      setStudentCourse(pending.studentCourse || "");
+      setStartedAt(pending.startedAt || Date.now());
+      setSubmitError("Tus respuestas quedaron guardadas en este dispositivo, pero aún no se han enviado. Toca reintentar.");
+      return "submitting";
+    }
+    const done = lsGet(doneKey(data.id));
+    if (done && Date.now() - (done.at || 0) < EXAM_KEEP_MS) {
+      setAlreadyInfo(done);
+      return "already";
+    }
+    const pr = lsGet(progressKey(data.id));
+    if (!pr || Date.now() - (pr.savedAt || 0) > EXAM_KEEP_MS || !Array.isArray(pr.order)) return null;
+    // Mismo orden de preguntas y opciones que ya estaba viendo.
+    const byId = {}; (data.questions || []).forEach(q => { byId[q.id] = q; });
+    const qs = pr.order.filter(o => byId[o.id]).map(o => {
+      const q = byId[o.id];
+      if (!q.options || !Array.isArray(o.opts)) return q;
+      const ob = {}; q.options.forEach(op => { ob[op.id] = op; });
+      const opts = o.opts.filter(id => ob[id]).map(id => ob[id]);
+      return opts.length === q.options.length ? { ...q, options: opts } : q;
+    });
+    if (qs.length === 0) return null;
+    setQuestionsOrder(qs);
+    setStudentName(pr.studentName || ""); setStudentCourse(pr.studentCourse || "");
+    setPartnerName(pr.partnerName || ""); if (pr.examDate) setExamDate(pr.examDate);
+    setAnswers(pr.answers || {});
+    const idx = Math.min(Math.max(0, pr.currentIdx || 0), qs.length - 1);
+    setCurrentIdx(idx);
+    setStartedAt(pr.startedAt || Date.now());
+    if (pr.questionStartedAt) restoredQStartRef.current = { idx, at: pr.questionStartedAt };
+    setResumed(true);
+    setTimeout(() => setResumed(false), 5000);
+    return "exam";
+  };
+
   // Cargar quiz al montar
   useEffectO(() => {
     const load = async () => {
@@ -480,7 +557,7 @@ function StudentExam({ examCode }) {
         }
         setQuiz(data);
         setQuestionsOrder(qs);
-        setPhase("identify");
+        setPhase(restoreExamState(data) || "identify");
       } catch (err) {
         console.error(err);
         setErrorMsg("Error al cargar la evaluación: " + err.message);
@@ -491,7 +568,7 @@ function StudentExam({ examCode }) {
   }, [examCode]);
 
   const handleStart = () => {
-    if (!studentName.trim() || !studentCourse.trim() || !examDate) {
+    if ((!isAnonymousSurvey(quiz) && !studentName.trim()) || !studentCourse.trim() || !examDate) {
       alert("Por favor completa todos los campos.");
       return;
     }
@@ -524,9 +601,24 @@ function StudentExam({ examCode }) {
       setSecondsLeft(null);
       return;
     }
-    setQuestionStartedAt(Date.now());
-    setSecondsLeft(q.timer || 60);
+    // Al recargar en plena pregunta, el cronómetro sigue desde cuando
+    // arrancó de verdad (recargar no da tiempo extra).
+    const restored = restoredQStartRef.current;
+    restoredQStartRef.current = null;
+    const at = restored && restored.idx === currentIdx ? restored.at : Date.now();
+    setQuestionStartedAt(at);
+    setSecondsLeft(Math.max(0, (q.timer || 60) - (Date.now() - at) / 1000));
   }, [phase, currentIdx]);
+
+  // Guardar el progreso en este dispositivo (ver restoreExamState).
+  useEffectO(() => {
+    if (phase !== "exam" || !quiz) return;
+    lsSet(progressKey(quiz.id), {
+      studentName, studentCourse, partnerName, examDate, answers, currentIdx, startedAt, questionStartedAt,
+      order: questionsOrder.map(q => ({ id: q.id, opts: (q.options || []).map(o => o.id) })),
+      savedAt: Date.now(),
+    });
+  }, [phase, answers, currentIdx, questionStartedAt]);
 
   // Tick del cronómetro: cada segundo descontamos. Si llega a 0, avanzamos.
   useEffectO(() => {
@@ -569,6 +661,8 @@ function StudentExam({ examCode }) {
   const submitPayload = async (submission) => {
     await window.QS.db.collection("results").add(submission);
     try { localStorage.removeItem(pendingSubmissionKey()); } catch (e) { /* almacenamiento no disponible: no es crítico */ }
+    // Marca de "ya enviada" en este dispositivo: al recargar no se repite.
+    lsSet(doneKey(quiz.id), { name: submission.studentName, at: Date.now() });
     const grade = gradeSubmission(quiz, submission.answers);
     setResult(grade);
     setPhase("done");
@@ -594,9 +688,9 @@ function StudentExam({ examCode }) {
     const submission = {
       quizId: quiz.id,
       ownerId: quiz.ownerId,
-      studentName: studentName.trim(),
+      studentName: isAnonymousSurvey(quiz) ? "Anónimo" : studentName.trim(),
       studentCourse: studentCourse.trim(),
-      partnerName: partnerName.trim() || null,
+      partnerName: isAnonymousSurvey(quiz) ? null : (partnerName.trim() || null),
       examDate,
       answers,
       gradeDetail: grade.detail,
@@ -617,6 +711,8 @@ function StudentExam({ examCode }) {
     // Guardar el borrador ANTES de intentar enviar: si la escritura a
     // Firestore falla, lo respondido queda a salvo en este dispositivo.
     try { localStorage.setItem(pendingSubmissionKey(), JSON.stringify(submission)); } catch (e) { /* almacenamiento no disponible: se sigue igual, solo sin respaldo local */ }
+    // Desde aquí manda el borrador de envío: el progreso ya no hace falta.
+    lsDel(progressKey(quiz.id));
     try {
       await submitPayload(submission);
     } catch (err) {
@@ -741,6 +837,35 @@ function StudentExam({ examCode }) {
     );
   }
 
+  // Ya se envió desde este dispositivo (recargó la página después de enviar).
+  if (phase === "already") {
+    const when = alreadyInfo && alreadyInfo.at
+      ? new Date(alreadyInfo.at).toLocaleTimeString("es-CO", { hour: "numeric", minute: "2-digit" }) : "";
+    return (
+      <div style={{
+        minHeight: "100vh", display: "grid", placeItems: "center",
+        background: quizBgExam(quiz?.color), padding: 20,
+      }}>
+        <div className="qs-card" style={{ padding: 32, maxWidth: 440, textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+          <h2 style={{ fontSize: 22, marginBottom: 8 }}>Ya enviaste {isSurvey ? "esta encuesta" : "este " + activityNoun}</h2>
+          <p style={{ color: "var(--ink-500)", marginBottom: 20, lineHeight: 1.5 }}>
+            Tus respuestas{alreadyInfo?.name && alreadyInfo.name !== "Anónimo" ? <> a nombre de <b>{alreadyInfo.name}</b></> : null} quedaron
+            guardadas{when ? ` a las ${when}` : ""}. No hace falta responder otra vez.
+          </p>
+          <button className="qs-btn qs-btn--ghost qs-btn--sm" onClick={() => {
+            if (!window.confirm("¿Eres OTRO estudiante usando este mismo dispositivo?")) return;
+            lsDel(doneKey(quiz.id));
+            setStudentName(""); setStudentCourse(""); setPartnerName(""); setAnswers({}); setCurrentIdx(0);
+            setAlreadyInfo(null); setPhase("identify");
+          }}>
+            Soy otro estudiante
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (phase === "error") {
     return (
       <div style={{
@@ -775,18 +900,22 @@ function StudentExam({ examCode }) {
             </p>
           </div>
 
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
-              Nombre completo
-            </label>
-            <input
-              type="text" className="qs-input"
-              placeholder="Ana María Pérez"
-              value={studentName}
-              onChange={e => setStudentName(e.target.value)}
-              autoFocus
-            />
-          </div>
+          {isAnonymousSurvey(quiz) ? (
+            <AnonymousNotice style={{ marginBottom: 16 }} />
+          ) : (
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
+                Nombre completo
+              </label>
+              <input
+                type="text" className="qs-input"
+                placeholder="Ana María Pérez"
+                value={studentName}
+                onChange={e => setStudentName(e.target.value)}
+                autoFocus
+              />
+            </div>
+          )}
 
           <div style={{ marginBottom: 14 }}>
             <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
@@ -797,10 +926,11 @@ function StudentExam({ examCode }) {
               placeholder="Ej: 10A, 11B, Filosofía Once..."
               value={studentCourse}
               onChange={e => setStudentCourse(e.target.value)}
+              autoFocus={isAnonymousSurvey(quiz)}
             />
           </div>
 
-          {quiz.pairMode && (
+          {quiz.pairMode && !isAnonymousSurvey(quiz) && (
             <div style={{ marginBottom: 14 }}>
               <label style={{ fontSize: 13, fontWeight: 600, marginBottom: 6, display: "block" }}>
                 👥 Nombre de tu compañero (opcional)
@@ -947,7 +1077,9 @@ function StudentExam({ examCode }) {
           )}
 
           <p style={{ fontSize: 12, color: "var(--ink-500)" }}>
-            Tu profesor podrá ver el detalle de tus respuestas.
+            {isAnonymousSurvey(quiz)
+              ? "🕶️ Tus respuestas se enviaron sin tu nombre."
+              : "Tu profesor podrá ver el detalle de tus respuestas."}
           </p>
         </div>
         {esmigol.node}
@@ -974,6 +1106,12 @@ function StudentExam({ examCode }) {
       padding: "20px 20px 100px",
     }}>
       <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        {resumed && (
+          <div role="status" style={{
+            marginBottom: 12, padding: "10px 14px", borderRadius: 12, fontWeight: 700, fontSize: 14,
+            background: "rgba(16,185,129,0.9)", color: "white", textAlign: "center",
+          }}>🔄 Seguimos donde ibas: tus respuestas estaban guardadas en este dispositivo.</div>
+        )}
         {/* Header con progreso */}
         <div style={{
           background: "rgba(255,255,255,0.15)", padding: "12px 20px", borderRadius: 12,
@@ -981,7 +1119,9 @@ function StudentExam({ examCode }) {
           alignItems: "center", flexWrap: "wrap", gap: 8,
         }}>
           <div style={{ fontWeight: 600 }}>
-            {studentName} · {studentCourse}
+            {isAnonymousSurvey(quiz)
+              ? <span title="Encuesta anónima: nadie sabrá cuáles son tus respuestas">🕶️ Anónimo · {studentCourse}</span>
+              : <>{studentName} · {studentCourse}</>}
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             {q.type !== "slide" && secondsLeft != null && (
@@ -1074,8 +1214,8 @@ function StudentExam({ examCode }) {
             </div>
           )}
 
-          {/* Multi (una correcta) */}
-          {q.type === "multi" && (
+          {/* Multi (una correcta) — y "Opciones" de encuesta, que se vota igual */}
+          {(q.type === "multi" || q.type === "poll") && (
             <div style={{ display: "grid", gap: 10 }}>
               {(q.options || []).map(opt => {
                 const selected = userAnswer === opt.id;
@@ -1156,15 +1296,41 @@ function StudentExam({ examCode }) {
             </div>
           )}
 
-          {/* Texto */}
-          {q.type === "text" && (
+          {/* Texto — y "Nube de palabras" de encuesta */}
+          {(q.type === "text" || q.type === "wordcloud") && (
             <input
               type="text" className="qs-input"
-              placeholder="Escribe tu respuesta..."
+              placeholder={q.type === "wordcloud" ? "Escribe una palabra o frase corta..." : "Escribe tu respuesta..."}
               value={userAnswer || ""}
               onChange={e => setAnswer(q.id, e.target.value)}
               style={{ fontSize: 16 }}
             />
+          )}
+
+          {/* Escala de acuerdo (encuesta): la respuesta es la posición elegida,
+              igual que en la sala en vivo */}
+          {q.type === "scale" && (
+            <div style={{ display: "grid", gap: 8 }}>
+              {(q.scaleLabels || SCALE_LABELS).map((lbl, i, arr) => {
+                const ratio = arr.length > 1 ? i / (arr.length - 1) : 0.5;
+                const selected = userAnswer === i;
+                return (
+                  <button key={i} onClick={() => setAnswer(q.id, i)} style={{
+                    padding: "14px 16px", borderRadius: 12, textAlign: "left", cursor: "pointer",
+                    background: `hsl(${Math.round(ratio * 130)}, 65%, 48%)`, color: "white",
+                    fontSize: 15, fontWeight: 700, display: "flex", alignItems: "center", gap: 10,
+                    border: selected ? "3px solid white" : "3px solid transparent",
+                    opacity: userAnswer == null || selected ? 1 : 0.6,
+                  }}>
+                    <span style={{
+                      width: 26, height: 26, borderRadius: "50%", flexShrink: 0, background: "rgba(255,255,255,0.25)",
+                      display: "grid", placeItems: "center", fontWeight: 800,
+                    }}>{selected ? "✓" : i + 1}</span>
+                    {lbl}
+                  </button>
+                );
+              })}
+            </div>
           )}
 
           {/* Ordenar */}
@@ -1663,7 +1829,7 @@ function OnlineResultsPanel({ onBack }) {
         let answerText = "—";
         if (det) {
           const userAns = det.userAnswer;
-          if (q.type === "multi" || q.type === "truefalse") {
+          if (q.type === "multi" || q.type === "truefalse" || q.type === "poll") {
             const opt = (q.options || []).find(o => o.id === userAns);
             answerText = opt ? (window.richToPlain ? window.richToPlain(opt.text) : opt.text) : "(sin respuesta)";
           } else if (q.type === "checks") {
@@ -1672,8 +1838,10 @@ function OnlineResultsPanel({ onBack }) {
               const o = (q.options || []).find(x => x.id === id);
               return o ? (window.richToPlain ? window.richToPlain(o.text) : o.text) : id;
             }).join(" | ");
-          } else if (q.type === "text") {
+          } else if (q.type === "text" || q.type === "wordcloud") {
             answerText = userAns || "(sin respuesta)";
+          } else if (q.type === "scale") {
+            answerText = typeof userAns === "number" ? ((q.scaleLabels || SCALE_LABELS)[userAns] || String(userAns + 1)) : "(sin respuesta)";
           }
         }
         row.push(answerText);
@@ -2156,8 +2324,10 @@ function ReviewModal({ submission, quiz, onClose, onSaved }) {
             if (userAnswer != null && userAnswer !== "") {
               if (Array.isArray(userAnswer)) {
                 answerText = userAnswer.map(id => (q.options || []).find(o => o.id === id)?.text || id).join(", ");
-              } else if (q.type === "multi" || q.type === "truefalse") {
+              } else if (q.type === "multi" || q.type === "truefalse" || q.type === "poll") {
                 answerText = (q.options || []).find(o => o.id === userAnswer)?.text || String(userAnswer);
+              } else if (q.type === "scale" && typeof userAnswer === "number") {
+                answerText = (q.scaleLabels || SCALE_LABELS)[userAnswer] || String(userAnswer + 1);
               } else {
                 answerText = String(userAnswer);
               }

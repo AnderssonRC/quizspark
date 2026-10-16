@@ -418,7 +418,7 @@ function LectioRemoteControl({ remoteId }) {
       </button>
     )}
     {panel === "reto" && !st.challenge && (
-      <MandoRetoPicker onLaunch={(text) => { send("challenge", { text }, "💪 Reto lanzado"); setPanel(null); }} />
+      <MandoRetoPicker onLaunch={(r) => { send("challenge", { text: r.text, retoId: r.id }, "💪 Reto lanzado"); setPanel(null); }} />
     )}
 
     {/* Esmigol */}
@@ -543,29 +543,42 @@ function LiveClosedQuestionForm({ onSubmit }) {
   );
 }
 
-// Reto físico desde el mando: los base + "Mis retos" (los mismos que guarda
-// el botón de la sala en vivo en este dispositivo) + escribir uno nuevo.
+// Reto físico desde el mando: los retos del docente (los del Estudio de
+// Reto Físico, leídos de su perfil: el celular no carga el dashboard) +
+// escribir uno nuevo (queda guardado en sus retos). Se manda { text,
+// retoId }: el televisor pone el emoji, la imagen y el color.
 function MandoRetoPicker({ onLaunch }) {
-  const presets = window.RF_PRESETS || [];
-  const [custom, setCustom] = useStateMd(() => (window.rfLoadCustom ? window.rfLoadCustom() : []));
+  const [cfg, setCfg] = useStateMd(() => (window.rfConfigFrom ? window.rfConfigFrom(null) : { retos: [] }));
   const [draft, setDraft] = useStateMd("");
+  const uid = window.QS.auth.currentUser?.uid;
+  useEffectMd(() => {
+    if (!uid || !window.rfConfigFrom) return;
+    window.QS.db.collection("users").doc(uid).get()
+      .then(doc => setCfg(window.rfConfigFrom(doc.exists ? doc.data() : null)))
+      .catch(err => console.warn("No se pudieron leer tus retos:", err));
+  }, [uid]);
   const add = () => {
-    const t = draft.trim(); if (!t) return;
-    const next = [t, ...custom.filter(c => c !== t)];
-    setCustom(next); window.rfSaveCustom && window.rfSaveCustom(next); setDraft("");
-    onLaunch(t);
+    const text = draft.trim(); if (!text) return;
+    const reto = { id: "rf-" + Date.now().toString(36), text, emoji: window.rfEmojiFor ? window.rfEmojiFor(text) : "⚡", image: "" };
+    const next = { ...cfg, retos: [...cfg.retos, reto] };
+    setCfg(next); setDraft("");
+    if (window.rfSaveConfig && uid) window.rfSaveConfig(next, uid).catch(err => console.warn("No se pudo guardar el reto:", err));
+    onLaunch(reto);
   };
-  const row = (t) => (
-    <button key={t} onClick={() => onLaunch(t)} style={{
+  const row = (r) => (
+    <button key={r.id} onClick={() => onLaunch(r)} style={{
+      display: "flex", alignItems: "center", gap: 10,
       textAlign: "left", padding: "12px 12px", borderRadius: 12, fontSize: 14, fontWeight: 700, fontFamily: MANDO_FONT,
       background: "rgba(57,255,20,.08)", color: "#eaffe0", border: "1px solid rgba(57,255,20,.35)", cursor: "pointer",
-    }}>💪 {t}</button>
+    }}>
+      <span style={{ fontSize: 20 }}>{r.emoji || (window.rfEmojiFor ? window.rfEmojiFor(r.text) : "💪")}</span>
+      <span style={{ flex: 1 }}>{r.text}</span>
+      {r.image && <img src={r.image} alt="" style={{ width: 30, height: 30, objectFit: "cover", borderRadius: 6 }} />}
+    </button>
   );
   return (
     <div style={{ display: "grid", gap: 6, marginBottom: 12 }}>
-      {presets.map(row)}
-      {custom.length > 0 && <div style={{ fontSize: 11, fontWeight: 900, color: "#94a3b8", marginTop: 4 }}>MIS RETOS</div>}
-      {custom.map(row)}
+      {cfg.retos.map(row)}
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
         <input className="qs-input" value={draft} maxLength={140} placeholder="Escribe un reto nuevo…"
           onChange={e => setDraft(e.target.value)} onKeyDown={e => e.key === "Enter" && add()} style={{ flex: 1, minWidth: 0 }} />

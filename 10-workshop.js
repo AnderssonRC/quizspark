@@ -581,17 +581,58 @@ function WorkshopQuestionCard({ q, answer, onAnswer, colorInfo }) {
 // ============================================================
 // FLUJO OFFLINE — el estudiante lo hace por su cuenta hasta la fecha límite
 // ============================================================
+// ---- Recargar la página / desconectarse (todo en ESTE dispositivo) ----
+// Igual que el examen online (08-online.js): el progreso se guarda mientras
+// el estudiante trabaja (respuestas largas incluidas) y al recargar sigue
+// donde iba; un envío que falló se puede reintentar al volver; y tras
+// enviar, recargar ya no deja enviarlo otra vez ("Soy otro estudiante"
+// para computadores compartidos).
+const WS_KEEP_MS = 3 * 24 * 3600 * 1000; // un taller puede tomar varios días
+const wsLsGet = (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { return null; } };
+const wsLsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* sin almacenamiento: no se recuerda */ } };
+const wsLsDel = (k) => { try { localStorage.removeItem(k); } catch (e) { /* no-op */ } };
+const wsKeys = (qid) => ({ progress: "qs_workshop_progress_" + qid, pending: "qs_workshop_pending_" + qid, done: "qs_workshop_done_" + qid });
+
+// Estado inicial al abrir el taller: { phase, saved } (saved = lo recuperado).
+function wsInitialState(quiz) {
+  const k = wsKeys(quiz.id);
+  const pending = wsLsGet(k.pending);
+  if (pending) return { phase: "retry", saved: pending };
+  const deadline = quiz.deliveryDeadline || null;
+  if (deadline && Date.now() > deadline) return { phase: "closed", saved: null };
+  const done = wsLsGet(k.done);
+  if (done && Date.now() - (done.at || 0) < WS_KEEP_MS) return { phase: "already", saved: done };
+  const pr = wsLsGet(k.progress);
+  if (pr && Date.now() - (pr.savedAt || 0) < WS_KEEP_MS) return { phase: "workshop", saved: pr, resumed: true };
+  return { phase: "identify", saved: null };
+}
+
 function WorkshopOfflineFlow({ quiz, onExit }) {
   const deadline = quiz.deliveryDeadline || null;
-  const alreadyClosed = deadline && Date.now() > deadline;
-  // identify | workshop | submitting | done | closed
-  const [phase, setPhase] = useStateW(alreadyClosed ? "closed" : "identify");
-  const [studentName, setStudentName] = useStateW("");
-  const [studentCourse, setStudentCourse] = useStateW("");
-  const [partnerName, setPartnerName] = useStateW("");
-  const [currentIdx, setCurrentIdx] = useStateW(0);
-  const [answers, setAnswers] = useStateW({});
-  const [startedAt, setStartedAt] = useStateW(null);
+  const keys = wsKeys(quiz.id);
+  const [init] = useStateW(() => wsInitialState(quiz));
+  const pr = init.resumed ? init.saved : null;
+  // identify | meta | workshop | submitting | done | closed | already | retry
+  const [phase, setPhase] = useStateW(init.phase);
+  const [studentName, setStudentName] = useStateW(pr ? pr.studentName || "" : "");
+  const [studentCourse, setStudentCourse] = useStateW(pr ? pr.studentCourse || "" : "");
+  const [partnerName, setPartnerName] = useStateW(pr ? pr.partnerName || "" : "");
+  const [currentIdx, setCurrentIdx] = useStateW(pr ? Math.min(Math.max(0, pr.currentIdx || 0), Math.max(0, (quiz.questions || []).length - 1)) : 0);
+  const [answers, setAnswers] = useStateW(pr ? pr.answers || {} : {});
+  const [startedAt, setStartedAt] = useStateW(pr ? pr.startedAt || Date.now() : null);
+  const [resumed, setResumed] = useStateW(!!pr);
+  const [retryError, setRetryError] = useStateW("");
+  useEffectW(() => {
+    if (!resumed) return;
+    const t = setTimeout(() => setResumed(false), 5000);
+    return () => clearTimeout(t);
+  }, []);
+
+  // Guardar el progreso en este dispositivo mientras trabaja.
+  useEffectW(() => {
+    if (phase !== "workshop") return;
+    wsLsSet(keys.progress, { studentName, studentCourse, partnerName, answers, currentIdx, startedAt, savedAt: Date.now() });
+  }, [phase, answers, currentIdx]);
 
   const questions = quiz.questions || [];
 
@@ -644,7 +685,8 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
 
   // Vigilar el cierre por fecha límite mientras el estudiante trabaja
   useEffectW(() => {
-    if (!deadline || phase === "closed" || phase === "done") return;
+    // El reintento de un envío que ya se hizo a tiempo no se bloquea.
+    if (!deadline || ["closed", "done", "retry", "already", "submitting"].includes(phase)) return;
     const check = () => { if (Date.now() > deadline) setPhase("closed"); };
     const id = setInterval(check, 15000);
     return () => clearInterval(id);
@@ -727,12 +769,35 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
         startedAt, finishedAt, totalSeconds,
         submittedAt: Date.now(),
       };
-      await window.QS.db.collection("results").add(submission);
-      setPhase("done");
+      // Borrador del envío ANTES de intentarlo: si falla y recarga, se reintenta.
+      wsLsSet(keys.pending, submission);
+      await sendSubmission(submission);
     } catch (err) {
       console.error("Error enviando el taller:", err);
-      alert("Error al enviar el taller: " + err.message);
+      alert("Error al enviar el taller: " + err.message + "\n\nTus respuestas siguen guardadas en este dispositivo: vuelve a intentarlo.");
       setPhase("workshop");
+    }
+  };
+
+  // Envío real (también lo usa el reintento tras recargar).
+  const sendSubmission = async (submission) => {
+    await window.QS.db.collection("results").add(submission);
+    wsLsDel(keys.pending);
+    wsLsDel(keys.progress);
+    wsLsSet(keys.done, { name: submission.studentName, at: Date.now() });
+    setPhase("done");
+  };
+  const retryPending = async () => {
+    const submission = init.saved;
+    setRetryError("");
+    setPhase("submitting");
+    try {
+      setStudentName(submission.studentName || "");
+      await sendSubmission(submission);
+    } catch (err) {
+      console.error("Error reenviando el taller:", err);
+      setRetryError("Sigue sin poder enviarse. Revisa tu conexión e inténtalo de nuevo.");
+      setPhase("retry");
     }
   };
 
@@ -763,6 +828,53 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
           <button onClick={onExit} className="qs-btn qs-btn--lg"
             style={{ background: "transparent", color: WORKSHOP_TEXT, border: "1px solid " + WORKSHOP_BORDER }}>
             Ir al inicio
+          </button>
+        </WorkshopCard>
+      </div>
+    );
+  }
+
+  // Recargó con un envío que había fallado: reintentar con lo ya respondido.
+  if (phase === "retry") {
+    return (
+      <div style={{ ...shellStyle, display: "grid", placeItems: "center", fontFamily: WORKSHOP_FONT }}>
+        <WorkshopCard style={{ padding: 32, maxWidth: 460, width: "100%", textAlign: "center" }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>📤</div>
+          <h2 style={{ fontSize: 22, marginBottom: 8, fontFamily: WORKSHOP_FONT, fontWeight: 600 }}>Tu taller aún no se ha enviado</h2>
+          <p style={{ color: WORKSHOP_TEXT_MUTED, fontSize: 14, lineHeight: 1.6, marginBottom: 18 }}>
+            Tus respuestas quedaron guardadas en este dispositivo. Toca reintentar para enviarlas.
+          </p>
+          {retryError && <p style={{ color: "#fca5a5", fontSize: 13, fontWeight: 600, marginBottom: 12 }}>{retryError}</p>}
+          <button onClick={retryPending} className="qs-btn qs-btn--lg"
+            style={{ width: "100%", background: workshopAccentGradient(quiz.color), color: "white", fontWeight: 700, boxShadow: "0 4px 0 " + wc.pair }}>
+            🔄 Reintentar envío
+          </button>
+        </WorkshopCard>
+      </div>
+    );
+  }
+
+  // Ya se envió desde este dispositivo (recargó después de enviar).
+  if (phase === "already") {
+    const info = init.saved || {};
+    return (
+      <div style={{ ...shellStyle, display: "grid", placeItems: "center", fontFamily: WORKSHOP_FONT }}>
+        <WorkshopCard style={{ padding: 32, maxWidth: 460, width: "100%", textAlign: "center" }}>
+          <div style={{ fontSize: 56, marginBottom: 12 }}>✅</div>
+          <h2 style={{ fontSize: 22, marginBottom: 8, fontFamily: WORKSHOP_FONT, fontWeight: 600 }}>Ya enviaste este taller</h2>
+          <p style={{ color: WORKSHOP_TEXT_MUTED, fontSize: 14, lineHeight: 1.6, marginBottom: 18 }}>
+            La entrega{info.name ? <> de <b style={{ color: WORKSHOP_TEXT }}>{info.name}</b></> : null} quedó guardada
+            {info.at ? " el " + new Date(info.at).toLocaleString("es-CO", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : ""}.
+            No hace falta enviarla otra vez.
+          </p>
+          <button onClick={() => {
+            if (!window.confirm("¿Eres OTRO estudiante usando este mismo dispositivo?")) return;
+            wsLsDel(keys.done);
+            setStudentName(""); setStudentCourse(""); setPartnerName(""); setAnswers({}); setCurrentIdx(0);
+            setPhase(deadline && Date.now() > deadline ? "closed" : "identify");
+          }} className="qs-btn qs-btn--sm"
+            style={{ background: "transparent", color: WORKSHOP_TEXT, border: "1px solid " + WORKSHOP_BORDER }}>
+            Soy otro estudiante
           </button>
         </WorkshopCard>
       </div>
@@ -871,6 +983,12 @@ function WorkshopOfflineFlow({ quiz, onExit }) {
   return (
     <div style={{ ...shellStyle, padding: "20px 20px 100px", fontFamily: WORKSHOP_FONT }}>
       <div style={{ maxWidth: 620, margin: "0 auto" }}>
+        {resumed && (
+          <div role="status" style={{
+            marginBottom: 12, padding: "10px 14px", borderRadius: 12, fontWeight: 700, fontSize: 14,
+            background: "rgba(16,185,129,0.9)", color: "white", textAlign: "center",
+          }}>🔄 Seguimos donde ibas: tus respuestas estaban guardadas en este dispositivo.</div>
+        )}
         <div style={{
           display: "flex", justifyContent: "space-between", alignItems: "center",
           flexWrap: "wrap", gap: 8, marginBottom: 10, fontSize: 13, color: "#e7dccf",
