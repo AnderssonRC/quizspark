@@ -51,9 +51,8 @@ function AuthShell({ children }) {
           {children}
         </div>
       </div>
-      <div style={{ textAlign: "center", color: "rgba(255,255,255,0.85)", fontSize: 12, marginTop: 20, fontWeight: 500 }}>
-        Creado por: Andersson Cortes y Res Cogitans · 2026 · Hecho en Bogotá
-      </div>
+      {/* Pie Res Cogitans (fijo abajo, con la licencia CC): 20-rescogitans-pie.js */}
+      {window.ResCogitasFooter ? <><window.RcPieEspacio /><window.ResCogitasFooter /></> : null}
     </div>
   );
 }
@@ -413,6 +412,15 @@ function AdminPanel({ onClose }) {
 
   useEffectAuth(() => { loadUsers(); }, []);
 
+  // Quiénes aceptaron los Términos y Condiciones de Res Cogitans (22-terminos.js).
+  // Necesita la regla de Firestore de la colección "terminos"; sin ella, avisa.
+  const [aceptaron, setAceptaron] = useStateAuth(null);
+  useEffectAuth(() => {
+    window.QS.db.collection("terminos").orderBy("aceptado", "desc").get()
+      .then((snap) => setAceptaron(snap.docs.map((d) => ({ uid: d.id, ...d.data() }))))
+      .catch(() => setAceptaron("error"));
+  }, []);
+
   const updateStatus = async (userId, newStatus) => {
     try {
       await window.QS.db.collection("users").doc(userId).update({ status: newStatus });
@@ -517,6 +525,41 @@ function AdminPanel({ onClose }) {
             ))}
           </div>
         )}
+
+        {/* Términos y Condiciones de Res Cogitans */}
+        <div className="qs-card" style={{ padding: 20, marginTop: 28 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 12 }}>
+            <h2 style={{ fontSize: 18, margin: 0 }}>
+              Aceptaron los Términos y Condiciones
+              {Array.isArray(aceptaron) ? ` (${aceptaron.length})` : ""}
+            </h2>
+            {window.rcVerBienvenida && (
+              <button className="qs-btn qs-btn--ghost qs-btn--sm" onClick={() => window.rcVerBienvenida()}>
+                ▶ Ver bienvenida BETA 1.1
+              </button>
+            )}
+          </div>
+          {aceptaron === null ? (
+            <p style={{ color: "var(--ink-500)", fontSize: 14, margin: 0 }}>Cargando…</p>
+          ) : aceptaron === "error" ? (
+            <p style={{ color: "var(--ink-500)", fontSize: 14, margin: 0 }}>
+              No se pudo leer la lista. Revisa que la regla de Firestore de la colección «terminos» esté publicada.
+            </p>
+          ) : aceptaron.length === 0 ? (
+            <p style={{ color: "var(--ink-500)", fontSize: 14, margin: 0 }}>Nadie los ha aceptado todavía.</p>
+          ) : (
+            <div style={{ display: "grid", gap: 6 }}>
+              {aceptaron.map((a) => (
+                <div key={a.uid} style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 8, fontSize: 14, padding: "6px 0", borderBottom: "1px solid var(--ink-100)" }}>
+                  <span style={{ fontWeight: 600 }}>{a.nombre || "(sin nombre)"}</span>
+                  <span style={{ color: "var(--ink-500)" }}>
+                    {a.aceptado ? new Date(a.aceptado).toLocaleString("es-CO") : "—"} · versión {a.version || "—"}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

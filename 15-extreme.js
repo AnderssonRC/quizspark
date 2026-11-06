@@ -14,7 +14,14 @@
 //   participants.{pid}.shield   escudo activo
 //   privilegeOffer              { pid, options:[ids], qIdx, status, choice }
 //   privilegeQueue              [pid, ...] en espera de su turno
-//   extremeEffects.{key}        efectos programados para la siguiente pregunta
+//   extremeEffects.{key}.{pid}  efectos programados para la siguiente pregunta,
+//                               uno por quien lo lanzó (dos Tijeras no se pisan).
+//                               immune: [pids] cuyos escudos bloquearon el ataque.
+//   extremeEffects.repeatExempt quienes no repiten la pregunta ("Otra vez")
+//   extremeStreakBase           rachas antes de revelar la pregunta qIdx (si se
+//                               repite, no se cuentan dos veces)
+//   privilegeResult             último privilegio aplicado: a quién le quitó
+//                               cuánto y qué escudos lo bloquearon (aviso)
 // ============================================================
 
 const { useState: useStateX, useEffect: useEffectX, useMemo: useMemoX } = React;
@@ -139,26 +146,58 @@ function extremeRankingDue(quiz, idx) {
 }
 
 // ---------- Rachas (lo calcula el DOCENTE al revelar) ----------
-// answersByPid: { pid: answerDoc } de la pregunta recién revelada.
+// answersByPid: { pid: answerDoc } de la pregunta qIdx recién revelada.
 // Devuelve las actualizaciones de racha y quiénes acaban de ganar privilegio.
-function extremeStreakUpdates(session, answersByPid) {
+// Si la pregunta se repite ("Otra vez" o re-lanzar) y se revela de nuevo,
+// la racha se recalcula desde la que tenían ANTES de esta pregunta
+// (extremeStreakBase): antes se sumaba dos veces. Quien ya recibió su
+// privilegio por esta pregunta (base.done) no lo vuelve a recibir.
+function extremeStreakUpdates(session, answersByPid, qIdx) {
   const updates = {};
   const triggered = [];
+  const sb = session.extremeStreakBase;
+  const base = sb && qIdx !== undefined && sb.qIdx === qIdx ? sb : null;
+  const done = (base && base.done) || [];
+  const streaks = {};
   Object.values(session.participants || {}).forEach(p => {
+    const now = p.streak || 0;
+    const start = base && base.streaks && base.streaks[p.id] !== undefined ? base.streaks[p.id] : now;
+    streaks[p.id] = start;
     const a = answersByPid[p.id];
     // Respondió, pero la respuesta aún no tiene nota (abierta que el docente
     // califica después del reveal — en el Taller casi todas): no suma ni
     // corta la racha. Antes contaba como fallo y en un Taller que alterna
     // cerradas y abiertas nadie llegaba nunca a 3 seguidas.
-    if (a && (a.correct === null || a.correct === undefined)) return;
+    if (a && (a.correct === null || a.correct === undefined)) {
+      if (start !== now) updates[`participants.${p.id}.streak`] = start;
+      return;
+    }
     // extremeWin: en "Concentración" ganar es elegir una incorrecta.
     const correct = !!(a && (a.extremeWin !== undefined ? a.extremeWin : a.correct === true));
-    const next = correct ? (p.streak || 0) + 1 : 0;
-    if (next !== (p.streak || 0)) updates[`participants.${p.id}.streak`] = next;
-    if (correct && next > 0 && next % EXTREME_STREAK_STEP === 0) triggered.push(p.id);
+    const next = correct ? start + 1 : 0;
+    if (next !== now) updates[`participants.${p.id}.streak`] = next;
+    if (correct && next > 0 && next % EXTREME_STREAK_STEP === 0 && !done.includes(p.id)) triggered.push(p.id);
   });
+  if (qIdx !== undefined) {
+    if (!base) updates.extremeStreakBase = { qIdx, streaks, triggered, done: [] };
+    else updates["extremeStreakBase.triggered"] = [...new Set([...(base.triggered || []), ...triggered])];
+  }
   return { updates, triggered };
 }
+
+// ---------- Efectos programados (uno por quien lo lanzó) ----------
+// Efectos de tipo k que aplican a la pregunta qIdx. Las sesiones de antes
+// guardaban uno solo ({ by, qIdx, ... }) directo en extremeEffects.{k}.
+function extremeFxList(session, k, qIdx) {
+  const v = session && session.extremeEffects && session.extremeEffects[k];
+  if (!v || typeof v !== "object") return [];
+  const all = v.by ? [v] : [];
+  Object.values(v).forEach(s => { if (s && typeof s === "object" && s.by) all.push(s); });
+  return all.filter(s => s.qIdx === qIdx);
+}
+// Privilegios "para la siguiente" que perjudican a los demás: el escudo
+// también los bloquea (no solo Drenaje, Asalto y Acusar).
+const EXTREME_NEXT_ATTACKS = ["timecut", "freeze", "sabotage", "gravity", "blind", "confusion", "concentration"];
 
 // Oferta de privilegio, o null si el docente apagó todos los privilegios
 // de este quiz (la racha se sigue contando, pero no hay nada que elegir).
@@ -189,32 +228,48 @@ function extremeApprovalUpdates({ session, quiz, pid, privId, target, firebase }
   const stamp = { by: pid, qIdx: nextIdx, at: Date.now() };
   let repeat = false;
   let expel = null;
+  // Resultado visible (aviso en celulares y proyector): cuánto le cambió a
+  // cada uno y qué escudos bloquearon el ataque.
+  const result = { by: pid, privId, target: target || null, hits: {}, blocked: [], at: Date.now() };
+  const shieldBlocks = (p) => {
+    if (!p.shield) return false;
+    updates[`participants.${p.id}.shield`] = false;   // el escudo absorbe y se gasta
+    result.blocked.push(p.id);
+    return true;
+  };
   // Restar sin dejar a nadie en negativo.
   const takeFrom = (p, n) => {
     const amount = Math.min(n, Math.max(0, p.score || 0));
-    if (amount > 0) updates[`participants.${p.id}.score`] = inc(-amount);
+    if (amount > 0) {
+      updates[`participants.${p.id}.score`] = inc(-amount);
+      result.hits[p.id] = -amount;
+    }
     return amount;
+  };
+  // Efecto para la siguiente pregunta, guardado bajo el id de quien lo lanzó.
+  // Si es un ataque, los escudos de los demás lo bloquean (immune).
+  const schedule = (extra) => {
+    if (nextIdx < 0) return;
+    const s = { ...stamp, ...(extra || {}) };
+    if (EXTREME_NEXT_ATTACKS.includes(privId)) s.immune = others.filter(shieldBlocks).map(p => p.id);
+    updates[`extremeEffects.${privId}.${pid}`] = s;
   };
 
   switch (privId) {
     case "drain": {
       const n = extremeDrainPts(quiz);
-      others.forEach(p => {
-        if (p.shield) updates[`participants.${p.id}.shield`] = false;   // el escudo absorbe
-        else takeFrom(p, n);
-      });
+      others.forEach(p => { if (!shieldBlocks(p)) takeFrom(p, n); });
       break;
     }
     case "steal": {
       const leader = [...others].sort((a, b) => (b.score || 0) - (a.score || 0))[0];
-      if (leader) {
-        if (leader.shield) updates[`participants.${leader.id}.shield`] = false;
-        else {
-          const amount = extremeStealPts(quiz, leader.score || 0);
-          if (amount > 0) {
-            updates[`participants.${leader.id}.score`] = inc(-amount);
-            updates[`participants.${pid}.score`] = inc(amount);
-          }
+      if (leader && !shieldBlocks(leader)) {
+        const amount = extremeStealPts(quiz, leader.score || 0);
+        if (amount > 0) {
+          updates[`participants.${leader.id}.score`] = inc(-amount);
+          updates[`participants.${pid}.score`] = inc(amount);
+          result.hits[leader.id] = -amount;
+          result.hits[pid] = amount;
         }
       }
       break;
@@ -223,71 +278,73 @@ function extremeApprovalUpdates({ session, quiz, pid, privId, target, firebase }
       updates[`participants.${pid}.shield`] = true;
       break;
     case "repeat":
+      // Los escudos se revisan al relanzar (relaunchQuestion en 09-live.js):
+      // solo protegen a quien ya había respondido.
       repeat = true;
       break;
     case "timecut":
-      if (nextIdx >= 0) updates["extremeEffects.timecut"] = { ...stamp, seconds: EXTREME_TIMECUT_S };
+      schedule({ seconds: EXTREME_TIMECUT_S });
       break;
     case "freeze":
-      if (nextIdx >= 0) updates["extremeEffects.freeze"] = { ...stamp, seconds: EXTREME_FREEZE_S };
+      schedule({ seconds: EXTREME_FREEZE_S });
       break;
     case "accuse": {
       const t = session.participants?.[target];
-      if (t) {
-        if (t.shield) updates[`participants.${t.id}.shield`] = false;
-        else takeFrom(t, EXTREME_ACCUSE_PTS);
-      }
+      if (t && !shieldBlocks(t)) takeFrom(t, EXTREME_ACCUSE_PTS);
       break;
     }
     case "bonus":
       updates[`participants.${pid}.score`] = inc(EXTREME_BONUS_PTS);
+      result.hits[pid] = EXTREME_BONUS_PTS;
       break;
     case "expel":
       if (target && session.participants?.[target]) expel = target;
       break;
-    case "gravity": case "blind": case "confusion": case "reveal": case "help":
-      if (nextIdx >= 0) updates["extremeEffects." + privId] = stamp;
-      break;
     case "concentration":
-      if (nextIdx >= 0) updates["extremeEffects.concentration"] = { ...stamp, penalty: EXTREME_CONCENTRATION_PTS };
+      schedule({ penalty: EXTREME_CONCENTRATION_PTS });
       break;
-    case "sabotage":
-      if (nextIdx >= 0) updates["extremeEffects.sabotage"] = stamp;
-      break;
-    case "freepass":
-      if (nextIdx >= 0) updates["extremeEffects.freepass"] = stamp;
-      break;
-    case "double":
-      if (nextIdx >= 0) updates["extremeEffects.double"] = stamp;
-      break;
-    case "spotlight":
-      if (nextIdx >= 0) updates["extremeEffects.spotlight"] = stamp;
+    case "gravity": case "blind": case "confusion": case "sabotage":
+    case "reveal": case "help": case "freepass": case "double": case "spotlight":
+      schedule();
       break;
     default: break;
   }
+  if (privId !== "expel" && privId !== "repeat") updates.privilegeResult = result;
   return { updates, repeat, expel };
 }
 
 // Efectos que aplican a la pregunta qIdx, vistos desde el estudiante `me`.
+// Si varios lanzaron el mismo ataque, me afectan todos los que no son míos
+// ni bloqueó mi escudo (Tijera y Congelar suman segundos, con el tope de
+// extremeTimecutFor / extremeFreezeFor).
 function extremeEffectsFor(session, qIdx, me) {
-  const fx = session?.extremeEffects || {};
-  const on = (k) => fx[k] && fx[k].qIdx === qIdx ? fx[k] : null;
-  const notMe = (e) => e && e.by !== me ? e : null;
-  const forMe = (e) => e && e.by === me ? e : null;
+  const list = (k) => extremeFxList(session, k, qIdx);
+  const attack = (k) => {
+    const hits = list(k).filter(e => e.by !== me && !(e.immune || []).includes(me));
+    if (!hits.length) return null;
+    return {
+      ...hits[0], byList: hits.map(e => e.by),
+      seconds: hits.reduce((s, e) => s + (e.seconds || 0), 0),
+      penalty: Math.max(0, ...hits.map(e => e.penalty || 0)),
+    };
+  };
+  const forMe = (k) => list(k).find(e => e.by === me) || null;
+  const rx = session?.extremeEffects?.repeatExempt;
+  const repeatExempt = rx && rx.qIdx === qIdx && (rx.by === me || (rx.immune || []).includes(me)) ? rx : null;
   return {
-    timecut:   notMe(on("timecut")),
-    freeze:    notMe(on("freeze")),
-    sabotage:  notMe(on("sabotage")),
-    freepass:  forMe(on("freepass")),
-    double:    forMe(on("double")),
-    spotlight: on("spotlight"),
-    repeatExempt: forMe(on("repeatExempt")),
-    gravity:   notMe(on("gravity")),
-    blind:     notMe(on("blind")),
-    confusion: notMe(on("confusion")),
-    concentration: notMe(on("concentration")),
-    reveal:    forMe(on("reveal")),
-    help:      forMe(on("help")),
+    timecut:   attack("timecut"),
+    freeze:    attack("freeze"),
+    sabotage:  attack("sabotage"),
+    freepass:  forMe("freepass"),
+    double:    forMe("double"),
+    spotlight: list("spotlight")[0] || null,
+    repeatExempt,
+    gravity:   attack("gravity"),
+    blind:     attack("blind"),
+    confusion: attack("confusion"),
+    concentration: attack("concentration"),
+    reveal:    forMe("reveal"),
+    help:      forMe("help"),
   };
 }
 
@@ -611,24 +668,49 @@ function ExtremeHostPanel({ session, quiz, onApprove, onReject, onSkip }) {
 // Para el ESTUDIANTE: qué me afecta a mí. Para el DOCENTE (me = null): todo.
 function ExtremeEffectBanner({ session, quiz, me, style }) {
   const qIdx = session.currentQuestionIdx;
-  const fx = session.extremeEffects || {};
   const name = (pid) => session.participants?.[pid]?.name || "alguien";
+  const names = (arr) => arr.map(e => name(e.by)).join(", ");
   const chips = [];
-  const on = (k) => fx[k] && fx[k].qIdx === qIdx ? fx[k] : null;
-  const t = on("timecut"), f = on("freeze"), s = on("sabotage"), fp = on("freepass"), d = on("double"), sp = on("spotlight");
-  const gr = on("gravity"), bl = on("blind"), cf = on("confusion"), cc = on("concentration"), rv = on("reveal"), hp = on("help");
-  if (gr && (me == null || gr.by !== me)) chips.push({ e: "🌀", txt: me == null ? `Gravedad de ${name(gr.by)}: las respuestas flotan` : `Gravedad de ${name(gr.by)}: ¡atrapa tu respuesta!` });
-  if (bl && (me == null || bl.by !== me)) chips.push({ e: "🕶️", txt: me == null ? `A ciegas de ${name(bl.by)}: pantallas parpadeando` : `A ciegas por ${name(bl.by)}` });
-  if (cf && (me == null || cf.by !== me)) chips.push({ e: "🔀", txt: me == null ? `Confusión de ${name(cf.by)}: respuestas revueltas` : `Confusión de ${name(cf.by)}: ¡nada se entiende!` });
-  if (cc && (me == null || cc.by !== me)) chips.push({ e: "🧘", txt: me == null ? `Concentración de ${name(cc.by)}: la correcta resta ${cc.penalty || EXTREME_CONCENTRATION_PTS}` : `Concentración: la correcta te quita ${cc.penalty || EXTREME_CONCENTRATION_PTS} pts. ¡Elige una INCORRECTA!` });
-  if (rv && (me == null || rv.by === me)) chips.push({ e: "🔮", txt: me == null ? `${name(rv.by)} ve la respuesta correcta` : "Revelación: la correcta brilla en tu pantalla" });
-  if (hp && (me == null || hp.by === me)) chips.push({ e: "🙋", txt: me == null ? `${name(hp.by)} pidió tu ayuda: dale una pista` : "El docente te va a ayudar en esta pregunta" });
-  if (sp) chips.push({ e: "👑", txt: me == null || sp.by !== me ? `${name(sp.by)} lleva la corona` : "¡Llevas la corona!" });
-  if (t && (me == null || t.by !== me)) chips.push({ e: "✂️", txt: me == null ? `Tijera de ${name(t.by)}: −${t.seconds} s a los demás` : `Tijera de ${name(t.by)}: tienes ${t.seconds} s menos` });
-  if (f && (me == null || f.by !== me)) chips.push({ e: "❄️", txt: me == null ? `Congelar de ${name(f.by)}: los demás esperan ${f.seconds} s` : `Congelado ${f.seconds} s por ${name(f.by)}` });
-  if (s && (me == null || s.by !== me)) chips.push({ e: "🕳️", txt: me == null ? `Sabotaje de ${name(s.by)}: la opción correcta no aparece a los demás` : `Sabotaje de ${name(s.by)}: ¡falta una opción!` });
-  if (fp && (me == null || fp.by === me)) chips.push({ e: "🎫", txt: me == null ? `${name(fp.by)} tiene pase libre` : "Pase libre: esta la ganas sin responder" });
-  if (d && (me == null || d.by === me)) chips.push({ e: "💎", txt: me == null ? `${name(d.by)} juega doble o nada` : "Doble o nada: ¡vale el doble!" });
+  const list = (k) => extremeFxList(session, k, qIdx);
+  // Ataques que me pegan (no los míos ni los que bloqueó mi escudo).
+  const hitMe = (k) => list(k).filter(e => e.by !== me && !(e.immune || []).includes(me));
+  const mine = (k) => list(k).find(e => e.by === me);
+  const sec = (arr) => arr.reduce((s, e) => s + (e.seconds || 0), 0);
+  const ATTACK_TXT = {
+    gravity:   { e: "🌀", host: (a) => `Gravedad de ${names(a)}: las respuestas flotan`, me: (a) => `Gravedad de ${names(a)}: ¡atrapa tu respuesta!` },
+    blind:     { e: "🕶️", host: (a) => `A ciegas de ${names(a)}: pantallas parpadeando`, me: (a) => `A ciegas por ${names(a)}` },
+    confusion: { e: "🔀", host: (a) => `Confusión de ${names(a)}: respuestas revueltas`, me: (a) => `Confusión de ${names(a)}: ¡nada se entiende!` },
+    concentration: { e: "🧘", host: (a) => `Concentración de ${names(a)}: la correcta resta ${a[0].penalty || EXTREME_CONCENTRATION_PTS}`, me: (a) => `Concentración: la correcta te quita ${a[0].penalty || EXTREME_CONCENTRATION_PTS} pts. ¡Elige una INCORRECTA!` },
+    timecut:   { e: "✂️", host: (a) => `Tijera de ${names(a)}: −${a[0].seconds} s a los demás`, me: (a) => `Tijera de ${names(a)}: tienes ${sec(a)} s menos` },
+    freeze:    { e: "❄️", host: (a) => `Congelar de ${names(a)}: los demás esperan ${a[0].seconds} s`, me: (a) => `Congelado ${sec(a)} s por ${names(a)}` },
+    sabotage:  { e: "🕳️", host: (a) => `Sabotaje de ${names(a)}: la opción correcta no aparece a los demás`, me: (a) => `Sabotaje de ${names(a)}: ¡falta una opción!` },
+  };
+  const PRIV_NAME = (k) => (extremePrivilege(k) || {}).name || k;
+  Object.keys(ATTACK_TXT).forEach(k => {
+    const all = list(k);
+    if (!all.length) return;
+    if (me == null) {
+      chips.push({ e: ATTACK_TXT[k].e, txt: ATTACK_TXT[k].host(all) });
+      const blocked = [...new Set(all.flatMap(e => e.immune || []))];
+      if (blocked.length) chips.push({ e: "🛡️", txt: `${blocked.map(name).join(", ")} bloqueó ${PRIV_NAME(k)} con su escudo` });
+      return;
+    }
+    const hits = hitMe(k);
+    if (hits.length) chips.push({ e: ATTACK_TXT[k].e, txt: ATTACK_TXT[k].me(hits) });
+    const blockedMe = all.filter(e => (e.immune || []).includes(me));
+    if (blockedMe.length) chips.push({ e: "🛡️", txt: `Tu escudo bloqueó ${PRIV_NAME(k)} de ${names(blockedMe)}` });
+  });
+  const SELF_TXT = {
+    reveal:   { e: "🔮", host: (n) => `${n} ve la respuesta correcta`, me: "Revelación: la correcta brilla en tu pantalla" },
+    help:     { e: "🙋", host: (n) => `${n} pidió tu ayuda: dale una pista`, me: "El docente te va a ayudar en esta pregunta" },
+    freepass: { e: "🎫", host: (n) => `${n} tiene pase libre`, me: "Pase libre: esta la ganas sin responder" },
+    double:   { e: "💎", host: (n) => `${n} juega doble o nada`, me: "Doble o nada: ¡vale el doble!" },
+  };
+  Object.keys(SELF_TXT).forEach(k => {
+    if (me == null) list(k).forEach(e => chips.push({ e: SELF_TXT[k].e, txt: SELF_TXT[k].host(name(e.by)) }));
+    else if (mine(k)) chips.push({ e: SELF_TXT[k].e, txt: SELF_TXT[k].me });
+  });
+  list("spotlight").forEach(sp => chips.push({ e: "👑", txt: me == null || sp.by !== me ? `${name(sp.by)} lleva la corona` : "¡Llevas la corona!" }));
   if (!chips.length) return null;
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "center", ...style }}>
@@ -651,6 +733,69 @@ function ExtremeSkipScreen({ emoji, title, desc }) {
       <div style={{ fontSize: 96, lineHeight: 1, animation: "qs-x-bounce 1.2s ease-in-out infinite" }}>{emoji}</div>
       <ExtremeTitle sub={desc}>{title}</ExtremeTitle>
       <p style={{ opacity: .8, fontWeight: 600 }}>Relájate y mira sufrir a los demás 😎</p>
+    </div>
+  );
+}
+
+// ---------- Aviso del resultado de un privilegio aprobado ----------
+// Antes, cuando un escudo bloqueaba o alguien tenía 0 puntos, no se veía
+// nada y parecía que el privilegio "no descontó". Lee privilegeResult de la
+// sesión y se muestra ~9 s. La hora de la primera vez que ESTE dispositivo
+// lo vio se guarda fuera del componente, así el aviso no vuelve a empezar
+// cada vez que cambia la pantalla (y no depende del reloj del celular).
+const extremeResultSeen = {};
+function ExtremeResultToast({ session, quiz, me }) {
+  const r = session && session.privilegeResult;
+  const key = r ? `${r.by}-${r.privId}-${r.at}` : null;
+  const [, setTick] = useStateX(0);
+  if (key && extremeResultSeen[key] === undefined) {
+    // Al recargar la página no se repite un aviso viejo (5 min de margen).
+    extremeResultSeen[key] = Math.abs(Date.now() - (r.at || 0)) < 5 * 60 * 1000 ? Date.now() : 0;
+  }
+  const shownAt = key ? extremeResultSeen[key] : 0;
+  const left = shownAt ? 9000 - (Date.now() - shownAt) : 0;
+  useEffectX(() => {
+    if (left <= 0) return;
+    const id = setTimeout(() => setTick(t => t + 1), left + 50);
+    return () => clearTimeout(id);
+  }, [key, left > 0]);
+  if (!r || left <= 0) return null;
+  const pr = extremePrivilege(r.privId);
+  if (!pr) return null;
+  const name = (pid) => session.participants?.[pid]?.name || "alguien";
+  const fmt = (n) => (n > 0 ? "+" : "−") + (window.fmtPts ? window.fmtPts(Math.abs(n)) : Math.abs(n));
+  const hits = r.hits || {};
+  const blocked = r.blocked || [];
+  const lines = [];
+  if (me != null) {
+    if (blocked.includes(me)) lines.push(`🛡️ ¡Tu escudo te protegió! No te afectó. (Ya no tienes escudo)`);
+    else if (hits[me] !== undefined && r.by !== me) lines.push(`${hits[me] < 0 ? "💥 Perdiste" : "Ganaste"} ${fmt(hits[me])} pts`);
+    if (r.by === me && hits[me] !== undefined) lines.push(`Ganaste ${fmt(hits[me])} pts`);
+    if (r.by !== me && hits[me] === undefined && !blocked.includes(me) && ["drain", "steal", "accuse"].includes(r.privId)) {
+      lines.push((session.participants?.[me]?.score || 0) <= 0 && r.privId === "drain" ? "No tenías puntos que perder 😅" : "No te afectó");
+    }
+  } else {
+    const lost = Object.entries(hits).filter(([, n]) => n < 0);
+    if (lost.length) lines.push(lost.length > 4
+      ? `${lost.length} estudiantes perdieron puntos`
+      : lost.map(([pid, n]) => `${name(pid)} ${fmt(n)}`).join(" · "));
+    if (hits[r.by] > 0) lines.push(`${name(r.by)} ${fmt(hits[r.by])}`);
+  }
+  if (me == null && blocked.length) lines.push(`🛡️ Bloqueado por el escudo de ${blocked.map(name).join(", ")}`);
+  if (me != null && r.by === me && blocked.length) lines.push(`🛡️ ${blocked.map(name).join(", ")} te bloqueó con su escudo`);
+  if (r.privId === "shield") lines.push(r.by === me ? "Tienes escudo: te protege del próximo ataque" : `${name(r.by)} ahora tiene escudo 🛡️`);
+  return (
+    <div style={{
+      position: "fixed", left: "50%", bottom: 16, transform: "translateX(-50%)", zIndex: 900,
+      width: "min(440px, calc(100vw - 32px))", padding: "12px 16px", borderRadius: 16,
+      background: EXTREME_BG, color: "#fff", border: "2px solid #ffd54f", fontFamily: EXTREME_FONT,
+      boxShadow: "0 14px 40px rgba(0,0,0,.55)", animation: "qs-x-rise .45s ease", pointerEvents: "none",
+    }}>
+      <ExtremeStyles />
+      <div style={{ fontWeight: 900, fontSize: 15, color: "#ffd54f" }}>
+        {pr.emoji} {name(r.by)} usó {pr.name}{r.target ? ` → ${name(r.target)}` : ""}
+      </div>
+      {lines.map((l, i) => <div key={i} style={{ fontSize: 14, fontWeight: 700, marginTop: 4, overflowWrap: "anywhere" }}>{l}</div>)}
     </div>
   );
 }
@@ -783,3 +928,5 @@ window.ExtremeWaiting = ExtremeWaiting;
 window.ExtremeHostPanel = ExtremeHostPanel;
 window.ExtremeEffectBanner = ExtremeEffectBanner;
 window.ExtremeSkipScreen = ExtremeSkipScreen;
+window.ExtremeResultToast = ExtremeResultToast;
+window.extremeFxList = extremeFxList;

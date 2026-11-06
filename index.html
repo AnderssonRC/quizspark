@@ -19,7 +19,8 @@
 
   <!-- Fredoka: tipografía redondeada y juvenil, solo para el Taller Evaluativo
        (Inter/Poppins siguen siendo la identidad del Quiz/Encuesta) -->
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet" />
+  <!-- Outfit: textos de la marca Res Cogitans (manifiesto, bienvenida y términos) -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@600;700;800&family=Fredoka:wght@500;600;700&family=Outfit:wght@400;500;600&display=swap" rel="stylesheet" />
 
   <link rel="stylesheet" href="styles.css?v=6" />
 
@@ -60,6 +61,33 @@
   </style>
 </head>
 <body>
+  <!-- Pantalla de carga Res Cogitans: el logo se escribe trazo a trazo.
+       Solo con sesión iniciada: al recargar con la sesión abierta (marca
+       'rc_sesion_desafiate', la pone 07-app.js) y justo después de iniciar
+       sesión (07-app.js llama a rcMostrarCarga). Nunca en la pantalla de
+       ingreso ni en los modos de estudiante o del mando (?exam=, ?join=,
+       ?remote=). La retira 07-app.js cuando la sesión ya está verificada.
+       Claves de localStorage propias: Presentaciones Interactivas comparte
+       el dominio (y el localStorage) y usa 'rc_sesion' y 'rcl_dia'. -->
+  <script src="rc-loader.js?v=1"></script>
+  <script>
+    window.rcMostrarCarga = function () {
+      if (!window.RCLoader || /[?&](exam|join|remote)=/.test(location.search)) return null;
+      if (RCLoader.current && !RCLoader.current.hidden && !RCLoader.current._hideRequest) return RCLoader.current;
+      // Primera vez del día: animación completa. Las siguientes del mismo día: versión breve.
+      var hoy = new Date(), dia = hoy.getFullYear() + '-' + (hoy.getMonth() + 1) + '-' + hoy.getDate();
+      var rapido = false;
+      try { rapido = localStorage.getItem('rcl_dia_desafiate') === dia; localStorage.setItem('rcl_dia_desafiate', dia); } catch (e) {}
+      var carga = RCLoader.current = RCLoader.show({ theme: 'light', quick: rapido });
+      // Respaldo: si algo falla, no dejar la pantalla de carga para siempre.
+      setTimeout(function () { carga.hide(); }, 25000);
+      return carga;
+    };
+    var rcHaySesion = false;
+    try { rcHaySesion = localStorage.getItem('rc_sesion_desafiate') === '1'; } catch (e) {}
+    if (rcHaySesion) window.rcMostrarCarga();
+  </script>
+
   <div id="root">
     <div class="qs-splash">
       <div class="qs-splash-inner">
@@ -82,6 +110,8 @@
       function showFatal(detail) {
         if (shown || !appNotStarted()) return;
         shown = true;
+        // Que la pantalla de carga Res Cogitans no tape el mensaje de error.
+        try { if (window.RCLoader && RCLoader.current) RCLoader.current.destroy(); } catch (e) {}
         document.getElementById("root").innerHTML =
           '<div class="qs-splash"><div class="qs-splash-inner" style="max-width:420px;padding:20px;">' +
           '<div style="font-size:40px;margin-bottom:10px;">⚠️</div>' +
@@ -123,7 +153,9 @@
   -->
   <!-- Configuración + auth -->
   <script defer src="00-firebase.js?v=3"></script>
-  <script type="text/x-qs-app" src="00b-auth.js?v=4"></script>
+  <!-- Marca Res Cogitans: crea fbAuth, fbDB y AIP (los usa 22-terminos.js) a partir de window.QS -->
+  <script defer src="rescogitans-puente.js?v=1"></script>
+  <script type="text/x-qs-app" src="00b-auth.js?v=5"></script>
 
   <!-- Núcleo -->
   <script type="text/x-qs-app" src="01-core.js?v=4"></script>
@@ -136,7 +168,7 @@
   <script type="text/x-qs-app" src="14-meta.js?v=18"></script>
 
   <!-- COMPETENCIA EXTREMA: ranking cada 3 preguntas + rachas y privilegios (sala en vivo) -->
-  <script type="text/x-qs-app" src="15-extreme.js?v=4"></script>
+  <script type="text/x-qs-app" src="15-extreme.js?v=5"></script>
 
   <!-- RETO FÍSICO: el docente pausa la sala en vivo con un reto en el salón (+10 a los 3 primeros) -->
   <script type="text/x-qs-app" src="18-reto-fisico.js?v=6"></script>
@@ -154,7 +186,7 @@
   <script type="text/x-qs-app" src="08-online.js?v=31"></script>
 
   <!-- Sala en vivo -->
-  <script type="text/x-qs-app" src="09-live.js?v=45"></script>
+  <script type="text/x-qs-app" src="09-live.js?v=46"></script>
 
   <!-- Taller Evaluativo (modo de actividad nuevo, junto a Quiz y Encuesta) -->
   <script type="text/x-qs-app" src="10-workshop.js?v=23"></script>
@@ -171,8 +203,14 @@
   <!-- Lector OMR: tabla de resultados + editor + guardado (fórmula lineal propia, siempre 1 hoja) -->
   <script type="text/x-qs-app" src="13c-omr-results.js?v=13"></script>
 
+  <!-- MARCA RES COGITANS: pie de página con licencia CC BY-NC-ND 4.0 y manifiesto,
+       bienvenida BETA 1.1 y Términos y Condiciones (antes de 07-app.js) -->
+  <script type="text/x-qs-app" src="20-rescogitans-pie.js?v=1"></script>
+  <script type="text/x-qs-app" src="21-bienvenida.js?v=1"></script>
+  <script type="text/x-qs-app" src="22-terminos.js?v=1"></script>
+
   <!-- App principal -->
-  <script type="text/x-qs-app" src="07-app.js?v=6"></script>
+  <script type="text/x-qs-app" src="07-app.js?v=7"></script>
 
   <!--
     CARGADOR CON CACHÉ DE COMPILACIÓN
@@ -307,7 +345,16 @@
           if (e && e.tag === CACHE_TAG && e.hash === f.hash && typeof e.code === "string") codes[i] = e.code;
           else misses.push(i);
         });
-        var compiled = !misses.length ? Promise.resolve() : loadBabel().then(function (Babel) {
+        // Compilar congela la pantalla unos segundos: si se ve la pantalla de
+        // carga Res Cogitans, se compila cuando el logo ya está dibujado y la
+        // frase apareció, para que la animación sea fluida (máx. 15 s).
+        function esperarLogo() {
+          var carga = window.RCLoader && RCLoader.current;
+          if (!carga || carga.hidden || !carga.whenRead) return Promise.resolve();
+          return new Promise(function (res) { carga.whenRead(res); setTimeout(res, 15000); });
+        }
+        var compiled = !misses.length ? Promise.resolve() : Promise.all([loadBabel(), esperarLogo()]).then(function (r) {
+          var Babel = r[0];
           var n = 0;
           return misses.reduce(function (p, i) {
             return p.then(function () {

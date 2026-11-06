@@ -119,12 +119,24 @@ function App() {
 
   // ---- Listener de sesión Firebase (solo si NO estamos en modo estudiante por URL) ----
   // El mando del celular maneja su propio inicio de sesión (LectioRemoteControl).
+  // Pantalla de carga Res Cogitans (index.html): se recuerda si hay sesión
+  // (rc_sesion_desafiate) para mostrarla al recargar, y se muestra justo
+  // después de iniciar sesión. Nunca en la pantalla de ingreso.
+  const authPrevio = useRefA({ respondio: false, user: null });
   useEffectA(() => {
     if (examCode || joinCode || remoteCode) {
       setAuthChecking(false);
       return;
     }
     const unsub = window.QS.auth.onAuthStateChanged(async (fbUser) => {
+      try {
+        if (fbUser) localStorage.setItem("rc_sesion_desafiate", "1");
+        else localStorage.removeItem("rc_sesion_desafiate");
+      } catch (e) { /* sin almacenamiento */ }
+      if (fbUser && authPrevio.current.respondio && !authPrevio.current.user && window.rcMostrarCarga) {
+        window.rcMostrarCarga();
+      }
+      authPrevio.current = { respondio: true, user: fbUser || null };
       if (fbUser) {
         try {
           const doc = await window.QS.db.collection("users").doc(fbUser.uid).get();
@@ -157,11 +169,32 @@ function App() {
     return () => unsub();
   }, [examCode, joinCode, remoteCode]);
 
+  // Retira la pantalla de carga Res Cogitans cuando ya hay algo que mostrar
+  // (el ingreso o el panel). hide() espera a que el logo termine de escribirse.
+  useEffectA(() => {
+    if (!authChecking && window.RCLoader && window.RCLoader.current) window.RCLoader.current.hide();
+  }, [authChecking, user ? user.uid : null, userData]);
+
   const handleLogout = async () => {
     await window.QS.auth.signOut();
     setView("dashboard");
     setShowAdmin(false);
   };
+
+  // Bienvenida BETA 1.1 y Términos y Condiciones (22-terminos.js): solo para
+  // docentes con cuenta aprobada (y el administrador), nunca en los modos de
+  // estudiante. Va en la misma posición en todas las vistas del docente para
+  // que no se reinicie al cambiar de pantalla.
+  const marcaActiva = !!(user && userData && userData.status !== "pending" && userData.status !== "rejected");
+  const conMarca = (vista) => (
+    <React.Fragment>
+      {vista}
+      {marcaActiva && window.TerminosGate ? <window.TerminosGate /> : null}
+    </React.Fragment>
+  );
+  const pieRC = window.ResCogitasFooter
+    ? <React.Fragment><window.RcPieEspacio /><window.ResCogitasFooter /></React.Fragment>
+    : null;
 
   // ===== MODOS ESPECIALES POR URL (sin login) =====
   if (examCode) {
@@ -223,21 +256,27 @@ function App() {
     return <window.QS.RejectedScreen onLogout={handleLogout} />;
   }
   if (showAdmin && userData?.role === "admin") {
-    return <window.QS.AdminPanel onClose={() => setShowAdmin(false)} />;
+    return conMarca(
+      <React.Fragment>
+        <window.QS.AdminPanel onClose={() => setShowAdmin(false)} />
+        {pieRC}
+      </React.Fragment>
+    );
   }
 
   // ===== VISTA: SALA EN VIVO (profesor) =====
+  // Sin pie de página: es la vista que se proyecta en el salón.
   if (view === "live" && (liveQuizId || liveResumeId)) {
-    return <window.QS.LiveSessionHost
+    return conMarca(<window.QS.LiveSessionHost
       quizId={liveQuizId}
       resumeSessionId={liveResumeId}
       onExit={() => { setView("dashboard"); setLiveQuizId(null); setLiveResumeId(null); }}
-    />;
+    />);
   }
 
   // ===== VISTA: JOIN desde botón TopNav =====
   if (showJoinFromNav) {
-    return <window.QS.StudentJoinLive onCancel={() => setShowJoinFromNav(false)} />;
+    return conMarca(<window.QS.StudentJoinLive onCancel={() => setShowJoinFromNav(false)} />);
   }
 
   const handleNav = (target) => {
@@ -264,7 +303,7 @@ function App() {
     setView("live");
   };
 
-  return (
+  return conMarca(
     <div style={{ minHeight: "100vh", background: "var(--ink-50)", display: "flex", flexDirection: "column" }}>
       <TopNav
         active={view}
@@ -298,7 +337,8 @@ function App() {
           <LibraryView onBack={() => setView("dashboard")}/>
         )}
       </div>
-      <Footer />
+      {/* Pie Res Cogitans con la licencia CC (antes: <Footer /> de 01-core.js) */}
+      {pieRC || <Footer />}
     </div>
   );
 }

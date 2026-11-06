@@ -2644,12 +2644,19 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     try {
       // Leer respuestas de esta pregunta
       const snap = await ref.collection("answers").where("questionIdx", "==", qIdx).get();
+      // "Otra vez": el escudo protege a quien ya había respondido (conserva
+      // su respuesta y sus puntos) y se gasta. Sin respuesta no hay nada
+      // que proteger: repite normal y no pierde el escudo.
+      const live = latestSessionRef.current || session;
+      const shielded = exceptPid ? snap.docs.map(d => d.data().participantId)
+        .filter(pid => pid !== exceptPid && live.participants?.[pid]?.shield) : [];
+      const keep = exceptPid ? [exceptPid, ...shielded] : [];
       // Revertir puntaje y borrar cada respuesta
       const batch = window.QS.db.batch();
       const scoreReverts = {};
       snap.docs.forEach(d => {
         const data = d.data();
-        if (exceptPid && data.participantId === exceptPid) return; // conserva su acierto
+        if (keep.includes(data.participantId)) return; // conserva su respuesta
         // Solo revertir lo que ya se sumó al marcador (applied). Los pendientes
         // nunca se sumaron, así que no hay nada que revertir de ellos.
         const pts = data.applied ? (data.points || 0) : 0;
@@ -2667,7 +2674,11 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
         questionVersion: (session.questionVersion || 0) + 1,
         status: "playing",
       };
-      if (exceptPid) updates["extremeEffects.repeatExempt"] = { by: exceptPid, qIdx, at: Date.now() };
+      if (exceptPid) {
+        updates["extremeEffects.repeatExempt"] = { by: exceptPid, qIdx, at: Date.now(), immune: shielded };
+        shielded.forEach(pid => { updates[`participants.${pid}.shield`] = false; });
+        updates.privilegeResult = { by: exceptPid, privId: "repeat", target: null, hits: {}, blocked: shielded, at: Date.now() };
+      }
       Object.entries(scoreReverts).forEach(([pid, delta]) => {
         updates[`participants.${pid}.score`] = firebase.firestore.FieldValue.increment(delta);
       });
@@ -2788,7 +2799,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     if (quiz.extremeMode && quiz.mode !== "survey" && window.extremeStreakUpdates) {
       const answersByPid = {};
       answerDocs.forEach(d => { const a = d.data(); answersByPid[a.participantId] = a; });
-      const { updates, triggered } = window.extremeStreakUpdates(session, answersByPid);
+      const { updates, triggered } = window.extremeStreakUpdates(session, answersByPid, qIdx);
       Object.assign(revealUpdates, updates);
       // Solo con privilegios activos en este quiz (ventana "Elegir
       // privilegios" del editor); si el docente los apagó todos, la racha
@@ -2819,7 +2830,17 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
         session, quiz, pid: offer.pid, privId: offer.choice, target: offer.target || null, firebase,
       });
       Object.assign(updates, window.extremeAdvanceQueue(session, quiz));
-      if (repeat) { updates.privilegeOffer = null; updates.privilegeQueue = []; }
+      if (repeat) {
+        updates.privilegeOffer = null; updates.privilegeQueue = [];
+        // Quien ya recibió su privilegio por esta pregunta no lo vuelve a
+        // recibir al revelarla de nuevo; los que seguían en la cola sí, si
+        // vuelven a acertar (la cola se pierde al repetir).
+        const sb = session.extremeStreakBase;
+        if (sb && sb.qIdx === session.currentQuestionIdx) {
+          const waiting = session.privilegeQueue || [];
+          updates["extremeStreakBase.done"] = [...new Set([...(sb.done || []), ...(sb.triggered || []).filter(id => !waiting.includes(id)), offer.pid])];
+        }
+      }
       if (expel) {
         updates[`participants.${expel}`] = firebase.firestore.FieldValue.delete();
         // Si estaba en la cola de rachas, sacarlo también.
@@ -3095,8 +3116,15 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   // COMPETENCIA EXTREMA (15-extreme.js): panel de aprobación de privilegios
   // y aviso de efectos activos en la pregunta actual (proyección).
   const isExtreme = !!quiz.extremeMode && quiz.mode !== "survey";
-  const extremePanel = isExtreme && session.privilegeOffer && window.ExtremeHostPanel ? (
-    <window.ExtremeHostPanel session={session} quiz={quiz} onApprove={approvePrivilege} onReject={rejectPrivilege} onSkip={rejectPrivilege} />
+  // Panel de aprobación + aviso de lo que hizo el último privilegio
+  // (puntos quitados, escudos que bloquearon).
+  const extremePanel = isExtreme ? (
+    <>
+      {session.privilegeOffer && window.ExtremeHostPanel && (
+        <window.ExtremeHostPanel session={session} quiz={quiz} onApprove={approvePrivilege} onReject={rejectPrivilege} onSkip={rejectPrivilege} />
+      )}
+      {window.ExtremeResultToast && <window.ExtremeResultToast session={session} quiz={quiz} me={null} />}
+    </>
   ) : null;
   const extremeBanner = isExtreme && window.ExtremeEffectBanner ? (
     <window.ExtremeEffectBanner session={session} quiz={quiz} me={null}
@@ -4247,8 +4275,11 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
   if (!currentQ) return null;
 
   // === COMPETENCIA EXTREMA: ranking cada 3 preguntas y elección de privilegio ===
+  // Aviso de lo que me hizo el último privilegio (o que mi escudo lo bloqueó).
+  const xToast = isExtremeStudent && window.ExtremeResultToast
+    ? <window.ExtremeResultToast session={session} quiz={quiz} me={participantId} /> : null;
   if (isExtremeStudent && session.status === "ranking" && window.ExtremeRanking) {
-    return <window.ExtremeRanking session={session} quiz={quiz} myId={participantId} />;
+    return <><window.ExtremeRanking session={session} quiz={quiz} myId={participantId} />{xToast}</>;
   }
   if (session.status === "ranking") {
     return <LiveRanking session={session} quiz={quiz} myId={participantId} />;
@@ -4258,7 +4289,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
     if (offer.pid === participantId) {
       return <window.ExtremePrivilegePicker offer={offer} participant={session.participants?.[participantId]} onChoose={choosePrivilege} session={session} quiz={quiz} />;
     }
-    return <window.ExtremeWaiting offer={offer} session={session} quiz={quiz} myId={participantId} />;
+    return <><window.ExtremeWaiting offer={offer} session={session} quiz={quiz} myId={participantId} />{xToast}</>;
   }
 
   // === Mostrando respuesta correcta (el docente reveló) ===
@@ -4382,6 +4413,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
           </p>
         </div>
         {esmigol.node}
+        {xToast}
       </div>
     );
   }
@@ -4436,7 +4468,9 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
 
     // COMPETENCIA EXTREMA: pantallas en las que NO respondo.
     if (xfx.repeatExempt && window.ExtremeSkipScreen) {
-      return <window.ExtremeSkipScreen emoji="🔁" title="Ya la tienes ganada" desc="Los demás repiten esta pregunta. Tu acierto se conserva." />;
+      return xfx.repeatExempt.by === participantId
+        ? <window.ExtremeSkipScreen emoji="🔁" title="Ya la tienes ganada" desc="Los demás repiten esta pregunta. Tu acierto se conserva." />
+        : <window.ExtremeSkipScreen emoji="🛡️" title="Tu escudo te protegió" desc="Los demás repiten esta pregunta. Tu respuesta se conserva." />;
     }
     if (xfx.freepass && window.ExtremeSkipScreen) {
       return <window.ExtremeSkipScreen emoji="🎫" title="Pase libre" desc="Esta pregunta la ganas sin responder." />;
