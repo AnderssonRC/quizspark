@@ -397,7 +397,7 @@ function ExtremeStyles() {
 function extremeShell(children, extra) {
   return (
     <div className="qs-x-stripes" style={{
-      position: "fixed", inset: 0, zIndex: 800, overflowY: "auto",
+      position: "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: 800, overflowY: "auto",
       background: EXTREME_BG, color: "#fff", fontFamily: EXTREME_FONT,
       padding: "24px 16px", ...extra,
     }}>
@@ -609,7 +609,9 @@ function ExtremeWaiting({ offer, session, quiz, myId }) {
 }
 
 // ---------- PANEL DEL DOCENTE (aprobar / rechazar) ----------
-function ExtremeHostPanel({ session, quiz, onApprove, onReject, onSkip }) {
+// busy: la aprobación/rechazo se está guardando (09-live.js): los botones
+// se desactivan para que un doble toque no aplique el privilegio dos veces.
+function ExtremeHostPanel({ session, quiz, onApprove, onReject, onSkip, busy = false }) {
   const offer = session.privilegeOffer;
   if (!offer) return null;
   const p = session.participants?.[offer.pid];
@@ -637,7 +639,7 @@ function ExtremeHostPanel({ session, quiz, onApprove, onReject, onSkip }) {
             <div style={{ fontSize: 13, opacity: .9, lineHeight: 1.4 }}>{extremeDesc(pr, quiz)}</div>
             {pr.id === "expel" && (
               <div style={{ fontSize: 12, marginTop: 6, color: "#ffab91", fontWeight: 700 }}>
-                ⚠ Si apruebas, {t ? t.name : "el estudiante"} sale de la sala y su resultado no se guarda.
+                ⚠ Si apruebas, {t ? t.name : "el estudiante"} sale de la sala. Lo que respondió se archiva en Resultados con nota pendiente.
               </div>
             )}
             {pr.id === "help" && (
@@ -647,16 +649,16 @@ function ExtremeHostPanel({ session, quiz, onApprove, onReject, onSkip }) {
             )}
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={onApprove} className="qs-btn" style={{ flex: 1, background: "linear-gradient(135deg, #43a047, #a5d6a7)", color: "#062e0a", fontWeight: 900 }}>
-              {pr.id === "expel" ? "🚪 Expulsar" : "✅ Aprobar"}
+            <button onClick={onApprove} disabled={busy} className="qs-btn" style={{ flex: 1, background: "linear-gradient(135deg, #43a047, #a5d6a7)", color: "#062e0a", fontWeight: 900, opacity: busy ? .6 : 1 }}>
+              {busy ? "Guardando…" : pr.id === "expel" ? "🚪 Expulsar" : "✅ Aprobar"}
             </button>
-            <button onClick={onReject} className="qs-btn" style={{ flex: 1, background: "rgba(255,255,255,.12)", color: "#fff", fontWeight: 800, border: "1px solid rgba(255,255,255,.3)" }}>✋ Rechazar</button>
+            <button onClick={onReject} disabled={busy} className="qs-btn" style={{ flex: 1, background: "rgba(255,255,255,.12)", color: "#fff", fontWeight: 800, border: "1px solid rgba(255,255,255,.3)", opacity: busy ? .6 : 1 }}>✋ Rechazar</button>
           </div>
         </>
       ) : (
         <>
           <div style={{ fontSize: 14, opacity: .9, marginBottom: 10 }}>Está eligiendo entre 4 privilegios en su celular…</div>
-          <button onClick={onSkip} className="qs-btn qs-btn--sm" style={{ background: "rgba(255,255,255,.12)", color: "#fff", border: "1px solid rgba(255,255,255,.3)" }}>Saltar este turno</button>
+          <button onClick={onSkip} disabled={busy} className="qs-btn qs-btn--sm" style={{ background: "rgba(255,255,255,.12)", color: "#fff", border: "1px solid rgba(255,255,255,.3)", opacity: busy ? .6 : 1 }}>Saltar este turno</button>
         </>
       )}
       {queued > 0 && <div style={{ fontSize: 12, opacity: .7, marginTop: 8 }}>+{queued} en cola con racha</div>}
@@ -821,7 +823,7 @@ function ExtremePrivilegesModal({ quiz, setQuiz, onClose }) {
 
   return (
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(10,4,4,.65)", zIndex: 120,
+      position: "fixed", top: 0, right: 0, bottom: 0, left: 0, background: "rgba(10,4,4,.65)", zIndex: 120,
       display: "grid", placeItems: "center", padding: 16, overflowY: "auto",
     }}>
       <div onClick={e => e.stopPropagation()} style={{

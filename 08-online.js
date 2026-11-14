@@ -459,6 +459,22 @@ function StudentExam({ examCode }) {
   // Cronómetro por pregunta: cuándo arrancó la pregunta actual y cuánto queda
   const [questionStartedAt, setQuestionStartedAt] = useStateO(null);
   const [secondsLeft, setSecondsLeft] = useStateO(null);
+  // Salidas de la evaluación (cambiar de app o de pestaña, bloquear la
+  // pantalla, recargar) durante una pregunta: se cuentan, se avisan y se
+  // guardan en el resultado para el docente. Aquí NO hay docente en vivo
+  // que autorice, así que no se bloquea (decisión del dueño, 2026-11-14).
+  // Las refs llevan el valor más reciente para el envío automático del
+  // cronómetro (que corre con una copia vieja del componente).
+  const exitsRef = useRefO(0);
+  const exitLogRef = useRefO([]);
+  const [exits, setExits] = useStateO(0);
+  const [exitNotice, setExitNotice] = useStateO(null); // número de salida a avisar
+  const noteExit = (entry) => {
+    exitsRef.current += 1;
+    exitLogRef.current = [...exitLogRef.current, entry];
+    setExits(exitsRef.current);
+    setExitNotice(exitsRef.current);
+  };
 
   // ---- Recargar la página / desconectarse (todo en ESTE dispositivo) ----
   // · progreso: mientras responde se guarda lo respondido, la pregunta en
@@ -512,6 +528,13 @@ function StudentExam({ examCode }) {
     setCurrentIdx(idx);
     setStartedAt(pr.startedAt || Date.now());
     if (pr.questionStartedAt) restoredQStartRef.current = { idx, at: pr.questionStartedAt };
+    // Salidas guardadas + esta: reabrir la evaluación a mitad de una
+    // pregunta cuenta como salida (si no, cerrar y reabrir la pestaña sería
+    // el atajo para que no se cuente).
+    exitsRef.current = pr.exits || 0;
+    exitLogRef.current = Array.isArray(pr.exitLog) ? pr.exitLog : [];
+    if (qs[idx] && qs[idx].type !== "slide") noteExit({ at: Date.now(), qIdx: idx, seconds: null, kind: "reload" });
+    else setExits(exitsRef.current);
     setResumed(true);
     setTimeout(() => setResumed(false), 5000);
     return "exam";
@@ -615,10 +638,11 @@ function StudentExam({ examCode }) {
     if (phase !== "exam" || !quiz) return;
     lsSet(progressKey(quiz.id), {
       studentName, studentCourse, partnerName, examDate, answers, currentIdx, startedAt, questionStartedAt,
+      exits: exitsRef.current, exitLog: exitLogRef.current,
       order: questionsOrder.map(q => ({ id: q.id, opts: (q.options || []).map(o => o.id) })),
       savedAt: Date.now(),
     });
-  }, [phase, answers, currentIdx, questionStartedAt]);
+  }, [phase, answers, currentIdx, questionStartedAt, exits]);
 
   // Tick del cronómetro: cada segundo descontamos. Si llega a 0, avanzamos.
   useEffectO(() => {
@@ -652,6 +676,20 @@ function StudentExam({ examCode }) {
     }, 250);
     return () => clearInterval(interval);
   }, [phase, currentIdx, questionStartedAt]);
+
+  // Vigilar las salidas mientras hay una pregunta en pantalla (no en
+  // diapositivas). El hook vive en 09-live.js (se carga después de este
+  // archivo, pero antes de que React monte nada).
+  const exitQ = phase === "exam" ? questionsOrder[currentIdx] : null;
+  (window.useQuizExitWatch || (() => {}))(
+    !!exitQ && exitQ.type !== "slide",
+    ({ seconds, at }) => noteExit({ at, qIdx: currentIdx, seconds, kind: "hidden" })
+  );
+  useEffectO(() => {
+    if (exitNotice == null) return;
+    const t = setTimeout(() => setExitNotice(null), 9000);
+    return () => clearTimeout(t);
+  }, [exitNotice]);
 
   // Clave del borrador local: si el envío falla (ej. wifi del colegio se
   // cae justo al terminar), la respuesta ya contestada no se pierde y se
@@ -706,6 +744,9 @@ function StudentExam({ examCode }) {
       startedAt,
       finishedAt,
       totalSeconds,
+      // Salidas de la evaluación durante las preguntas (ver exitsRef)
+      exits: exitsRef.current,
+      exitLog: exitLogRef.current,
       submittedAt: Date.now(),
     };
     // Guardar el borrador ANTES de intentar enviar: si la escritura a
@@ -857,6 +898,7 @@ function StudentExam({ examCode }) {
             if (!window.confirm("¿Eres OTRO estudiante usando este mismo dispositivo?")) return;
             lsDel(doneKey(quiz.id));
             setStudentName(""); setStudentCourse(""); setPartnerName(""); setAnswers({}); setCurrentIdx(0);
+            exitsRef.current = 0; exitLogRef.current = []; setExits(0); setExitNotice(null);
             setAlreadyInfo(null); setPhase("identify");
           }}>
             Soy otro estudiante
@@ -1111,6 +1153,12 @@ function StudentExam({ examCode }) {
             marginBottom: 12, padding: "10px 14px", borderRadius: 12, fontWeight: 700, fontSize: 14,
             background: "rgba(16,185,129,0.9)", color: "white", textAlign: "center",
           }}>🔄 Seguimos donde ibas: tus respuestas estaban guardadas en este dispositivo.</div>
+        )}
+        {exitNotice != null && (
+          <div role="status" style={{
+            marginBottom: 12, padding: "10px 14px", borderRadius: 12, fontWeight: 700, fontSize: 14,
+            background: "#fef3c7", color: "#92400e", textAlign: "center", lineHeight: 1.4,
+          }}>🚪 Saliste de la evaluación ({exitNotice} {exitNotice === 1 ? "vez" : "veces"}). Queda registrado para tu profesor.</div>
         )}
         {/* Header con progreso */}
         <div style={{
@@ -1801,7 +1849,7 @@ function OnlineResultsPanel({ onBack }) {
     }
     const questions = exportQuestions(filtered);
     // Construimos CSV (compatible con Excel y Google Sheets)
-    const header = ["Nombre", "Compañero", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Preguntas respondidas", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Enviado"];
+    const header = ["Nombre", "Compañero", "Curso", "Fecha", "Nota", "Puntos obtenidos", "Puntos máximos", "Aciertos", "Preguntas respondidas", "Total preguntas", "% Correcto", "Tiempo (segundos)", "Salidas del quiz", "Enviado"];
     questions.forEach((q, i) => {
       header.push(`P${i+1}: ${(window.richToPlain ? window.richToPlain(q.text) : (q.text || "")).substring(0, 50)}`);
       header.push(`P${i+1} ¿correcto?`);
@@ -1821,6 +1869,7 @@ function OnlineResultsPanel({ onBack }) {
         s.total || 0,
         (s.percent || 0) + "%",
         s.totalSeconds || 0,
+        s.exits || 0,
         new Date(s.submittedAt || 0).toLocaleString("es-CO"),
       ];
       questions.forEach(col => {
@@ -1914,6 +1963,7 @@ function OnlineResultsPanel({ onBack }) {
     rows.push(["Curso", ...filtered.map(s => s.studentCourse)]);
     rows.push(["Fecha", ...filtered.map(s => s.examDate)]);
     rows.push(["Nota final (0-5)", ...filtered.map(s => s.score != null ? s.score.toFixed(2) : "PENDIENTE")]);
+    rows.push(["Salidas del quiz", ...filtered.map(s => s.exits || 0)]);
     rows.push([]);
     exportQuestions(filtered).filter(q => q.type !== "slide").forEach((q, i) => {
       rows.push([`P${i + 1}: ${(window.richToPlain ? window.richToPlain(q.text) : (q.text || "")).substring(0, 80)}`, ...filtered.map(s => answerFor(s, q))]);
@@ -2167,6 +2217,21 @@ function OnlineResultsPanel({ onBack }) {
                                     borderRadius: 999, background: "var(--ink-200)", color: "var(--ink-700)",
                                   }}>✂️ parcial</span>
                               )}
+                              {s.expelled && (
+                                <span title="Fue sacado de la sala en vivo antes de terminar; se archivó lo que alcanzó a responder"
+                                  style={{
+                                    marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 7px",
+                                    borderRadius: 999, background: "#fee2e2", color: "#991b1b",
+                                  }}>⛔ expulsado</span>
+                              )}
+                              {s.exits > 0 && (
+                                <span title={`Salió del quiz ${s.exits} ${s.exits === 1 ? "vez" : "veces"} durante una pregunta (otra app, otra pestaña, bloqueo de pantalla o recarga)`}
+                                  style={{
+                                    marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 7px", borderRadius: 999,
+                                    background: s.exits >= 3 ? "#fee2e2" : "var(--ink-200)",
+                                    color: s.exits >= 3 ? "#991b1b" : "var(--ink-700)",
+                                  }}>🚪 {s.exits}</span>
+                              )}
                             </td>
                             <td style={{ padding: 12, color: "var(--ink-500)" }}>{s.partnerName || "—"}</td>
                             <td style={{ padding: 12 }}>{s.studentCourse}</td>
@@ -2282,6 +2347,8 @@ function ReviewModal({ submission, quiz, onClose, onSaved }) {
               {submission.studentCourse} · {submission.examDate}
               {submission.partnerName ? <><br/>👥 Con {submission.partnerName}</> : null}
               {submission.lateJoin ? <><br/>⏰ Se unió después de que empezó la sala</> : null}
+              {submission.expelled ? <><br/>⛔ Fue sacado de la sala en la pregunta {(submission.expelledAtQuestionIdx ?? -1) + 1}; se archivó lo que alcanzó a responder</> : null}
+              {submission.exits > 0 ? <><br/>🚪 Salió del quiz {submission.exits} {submission.exits === 1 ? "vez" : "veces"} durante las preguntas (otra app, otra pestaña, bloqueo de pantalla o recarga)</> : null}
             </p>
           </div>
           {needsManualGrade ? (

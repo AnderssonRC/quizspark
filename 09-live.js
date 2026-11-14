@@ -80,7 +80,9 @@ function calculatePoints(q, isCorrect, secondsTaken, totalSeconds) {
 
   // Si acertó: puntos base + bonus por velocidad proporcional, en décimas.
   // Ej.: pregunta de 60 s, bonus 5 → cada 1,2 s que tarda pierde 0,1.
-  const ratio = Math.max(0, 1 - (secondsTaken / Math.max(1, totalSeconds)));
+  // Acotado a [0, 1]: un tiempo negativo (reloj del celular atrasado frente
+  // al del docente) daba un bonus por encima del máximo.
+  const ratio = Math.min(1, Math.max(0, 1 - (secondsTaken / Math.max(1, totalSeconds))));
   const bonus = Math.round(pBonus * ratio * 10) / 10;
   return fmtPts(pCorrect + bonus);
 }
@@ -94,7 +96,7 @@ function calculateGradePoints(q, isCorrect, secondsTaken, totalSeconds) {
   const pWrong = q.pointsWrong ?? 0;
   const pBonus = q.pointsSpeedBonus ?? 0;
   if (!isCorrect) return pWrong;
-  const ratio = Math.max(0, 1 - (secondsTaken / Math.max(1, totalSeconds)));
+  const ratio = Math.min(1, Math.max(0, 1 - (secondsTaken / Math.max(1, totalSeconds))));
   return pCorrect + Math.round(pBonus * ratio);
 }
 function gradeBonusFor(q) { return q?.pointsSpeedBonus ?? 0; }
@@ -195,6 +197,9 @@ function buildLiveResultData(quiz, p, myAnswers, sessionCode, examDate) {
     studentCourse: p.course || "Sin curso",
     partnerName: p.partnerName || null,
     lateJoin: isLateJoin,
+    // Veces que salió del quiz (otra app, otra pestaña, recarga) durante
+    // una pregunta abierta; ver useQuizExitWatch.
+    exits: p.exits || 0,
     examDate,
     mode: "live",
     sessionCode,
@@ -217,7 +222,13 @@ function buildLiveResultData(quiz, p, myAnswers, sessionCode, examDate) {
 // ---- Persistencia de sesión del estudiante (reconexión tras recarga) ----
 // Guardamos por código de sala para que, si el estudiante recarga o cierra
 // la pestaña, vuelva a su sitio sin re-registrarse ni duplicarse.
+// Sufijo _desafiate: Presentaciones Interactivas comparte el dominio (y el
+// localStorage), como las demás claves de la app. La clave vieja se sigue
+// leyendo y borrando para no cortar salas abiertas al actualizar.
 function liveStorageKey(code) {
+  return "qs_live_" + code + "_desafiate";
+}
+function liveStorageKeyOld(code) {
   return "qs_live_" + code;
 }
 function saveLiveSession(code, data) {
@@ -226,14 +237,74 @@ function saveLiveSession(code, data) {
 }
 function loadLiveSession(code) {
   try {
-    const raw = localStorage.getItem(liveStorageKey(code));
+    const raw = localStorage.getItem(liveStorageKey(code)) || localStorage.getItem(liveStorageKeyOld(code));
     return raw ? JSON.parse(raw) : null;
   } catch (e) { return null; }
 }
 function clearLiveSession(code) {
-  try { localStorage.removeItem(liveStorageKey(code)); }
-  catch (e) { /* no-op */ }
+  try {
+    localStorage.removeItem(liveStorageKey(code));
+    localStorage.removeItem(liveStorageKeyOld(code));
+  } catch (e) { /* no-op */ }
 }
+
+// ---- Identidad del estudiante en la sala (sin cuenta) ----
+// Llave de nombre + curso para el tope de ingresos y para reconectar un
+// ingreso tardío a su registro: minúsculas, sin tildes, sin espacios
+// dobles y solo letras/números ("Ana M. Pérez" y "ana perez" dan lo
+// mismo). Sin caracteres especiales porque se usa como nombre de campo en
+// joinCounts.<llave>: un punto en el nombre partía la ruta en Firestore y
+// el tope de 2 ingresos nunca aplicaba.
+function liveIdentityKey(name, course) {
+  const norm = (s) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .toLowerCase().replace(/[^a-z0-9]+/g, " ").trim().replace(/\s+/g, "_");
+  return norm(name) + "__" + norm(course);
+}
+function liveFindSameIdentity(participants, name, course) {
+  const key = liveIdentityKey(name, course);
+  return Object.values(participants || {}).find(p => liveIdentityKey(p.name, p.course) === key) || null;
+}
+
+// ---- Salidas del quiz (visibilitychange / pagehide) ----
+// Detecta cuándo el estudiante se va de la pestaña o de la app (WhatsApp,
+// otra pestaña, bloquear la pantalla) y vuelve. `active` dice si en ese
+// momento hay una pregunta abierta sin responder (la ventana en la que
+// salir sirve para buscar la respuesta): solo las salidas que EMPIEZAN
+// ahí cuentan, aunque vuelva ya en la revelación. Ausencias de menos de
+// EXIT_MIN_MS no cuentan: un cambio de app accidental de un segundo no da
+// para buscar nada, y en iPhone una llamada entrante o el bloqueo
+// automático también disparan estos eventos. onExit({ seconds, at }) al
+// volver. La usan la sala en vivo (aquí) y el examen asincrónico (08-online.js).
+const EXIT_MIN_MS = 2000;
+const LIVE_EXIT_LIMIT = 3; // a la 3ª salida el celular se bloquea hasta que el docente autorice
+function useQuizExitWatch(active, onExit) {
+  const activeRef = useRefL(active);
+  activeRef.current = active;
+  const onExitRef = useRefL(onExit);
+  onExitRef.current = onExit;
+  const hiddenAtRef = useRefL(null);
+  useEffectL(() => {
+    const gone = () => { if (hiddenAtRef.current == null && activeRef.current) hiddenAtRef.current = Date.now(); };
+    const back = () => {
+      const t = hiddenAtRef.current;
+      hiddenAtRef.current = null;
+      if (t == null) return;
+      const ms = Date.now() - t;
+      if (ms >= EXIT_MIN_MS) onExitRef.current({ seconds: Math.round(ms / 1000), at: Date.now() });
+    };
+    const onVis = () => { if (document.visibilityState === "hidden") gone(); else back(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("pagehide", gone);
+    window.addEventListener("pageshow", back);
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      window.removeEventListener("pagehide", gone);
+      window.removeEventListener("pageshow", back);
+    };
+  }, []);
+}
+window.useQuizExitWatch = useQuizExitWatch;
+window.LIVE_EXIT_LIMIT = LIVE_EXIT_LIMIT;
 
 function checkAnswer(question, answer) {
   if (question.type === "multi" || question.type === "truefalse") {
@@ -1217,7 +1288,7 @@ function HostQuestion({ session, quiz, currentQ, answersThisQ, totalParticipants
                     {/* En el celular sale como hoja desde abajo, encima de todo
                         (la burbuja ✨ de herramientas tapaba las fichas). */}
                     <div onClick={() => setTimeMenu(false)} style={{
-                      position: "fixed", inset: 0, zIndex: timeSheet ? 949 : 40,
+                      position: "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: timeSheet ? 949 : 40,
                       background: timeSheet ? "rgba(10,4,28,.55)" : "transparent",
                     }} />
                     <div role="menu" aria-label="Agregar tiempo a esta pregunta" className="qs-pop-in" style={{
@@ -1510,7 +1581,7 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
                 padding: 16, borderRadius: 12, background: bg, color: "white", overflow: "hidden",
                 opacity: counts[i] > 0 ? 1 : 0.55,
               }}>
-                <div style={{ position: "absolute", inset: 0, width: widthPct + "%", background: "rgba(255,255,255,0.18)", transition: "width 0.6s ease" }} />
+                <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, width: widthPct + "%", background: "rgba(255,255,255,0.18)", transition: "width 0.6s ease" }} />
                 <div style={{ position: "relative", display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
                   <div style={{ fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 10 }}>
                     <span style={{ width: 26, height: 26, borderRadius: "50%", background: "rgba(255,255,255,0.25)", display: "grid", placeItems: "center", fontWeight: 800, fontSize: 13 }}>{i + 1}</span>
@@ -1665,7 +1736,7 @@ function HostReveal({ session, quiz, currentQ, answersThisQ, onNext, onGradeLive
               color: "white", overflow: "hidden",
               opacity: highlightCorrect || count > 0 ? 1 : 0.5,
             }}>
-              <div style={{ position: "absolute", inset: 0, width: widthPct + "%", background: "rgba(255,255,255,0.15)", transition: "width 0.6s ease" }} />
+              <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, width: widthPct + "%", background: "rgba(255,255,255,0.15)", transition: "width 0.6s ease" }} />
               <div style={{ position: "relative", display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
                 <div style={{ fontWeight: 700, fontSize: 16, display: "flex", alignItems: "center", gap: 10 }}>
                   {highlightCorrect && <span style={{ fontSize: 22 }}>✓</span>}
@@ -1897,7 +1968,7 @@ function ParticipantsModal({ participants, onKick, onClose, onAddPoints }) {
     .sort((a, b) => (b.score || 0) - (a.score || 0));
   return (
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(15,23,42,0.6)",
+      position: "fixed", top: 0, right: 0, bottom: 0, left: 0, background: "rgba(15,23,42,0.6)",
       display: "grid", placeItems: "center", padding: 20, zIndex: 50,
     }}>
       <div onClick={e => e.stopPropagation()} className="qs-card" style={{
@@ -1927,6 +1998,14 @@ function ParticipantsModal({ participants, onKick, onClose, onAddPoints }) {
                         borderRadius: 999, background: "var(--amber-400)", color: "#7c2d12",
                         verticalAlign: "middle",
                       }}>⏰ tarde</span>
+                    )}
+                    {p.exits > 0 && (
+                      <span title={`Salió del quiz ${p.exits} ${p.exits === 1 ? "vez" : "veces"} (otra app, otra pestaña o recarga durante una pregunta)`} style={{
+                        marginLeft: 6, fontSize: 10, fontWeight: 700, padding: "1px 7px",
+                        borderRadius: 999, verticalAlign: "middle",
+                        background: p.blocked ? "var(--red-500)" : "var(--ink-200)",
+                        color: p.blocked ? "white" : "var(--ink-700)",
+                      }}>🚪 {p.exits}{p.blocked ? " · bloqueado" : ""}</span>
                     )}
                   </div>
                   <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
@@ -2146,7 +2225,7 @@ function LiveQuestionAdder({ quiz, session, onAdd }) {
 
       {open && (
         <div onClick={() => setOpen(false)} style={{
-          position: "fixed", inset: 0, zIndex: 940, background: "rgba(15,10,40,.6)",
+          position: "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: 940, background: "rgba(15,10,40,.6)",
           display: "grid", placeItems: "center", padding: 16,
         }}>
           <div onClick={e => e.stopPropagation()} className="qs-card" style={{
@@ -2230,42 +2309,88 @@ function LiveQuestionAdder({ quiz, session, onAdd }) {
   );
 }
 
-function JoinRequestsBanner({ requests, onApprove, onReject }) {
+// También muestra a los estudiantes BLOQUEADOS por salir del quiz
+// LIVE_EXIT_LIMIT veces (ver registerExit en StudentLive): el docente los
+// deja seguir o los saca. Y si quien pide ingreso tardío ya está en la sala
+// con el mismo nombre + curso (se le apagó el celular, cambió de
+// navegador), ofrece RECONECTARLO a su registro en vez de crear otro.
+function JoinRequestsBanner({ requests = [], participants = {}, onApprove, onReject, blocked = [], onAllow, onKick }) {
   const [busyId, setBusyId] = useStateL(null);
-  const act = async (fn, req) => {
-    setBusyId(req.id);
-    try { await fn(req); } finally { setBusyId(null); }
+  const act = async (fn, arg, id, extra) => {
+    setBusyId(id);
+    try { await fn(arg, extra); } finally { setBusyId(null); }
   };
   return (
     <div style={{
       position: "fixed", left: 16, right: 16, bottom: 16, zIndex: 200,
       display: "flex", flexDirection: "column", gap: 8, maxWidth: 480, margin: "0 auto",
     }}>
-      {requests.map(req => (
-        <div key={req.id} className="qs-card qs-pop-in" style={{
-          padding: 14, display: "flex", alignItems: "center", gap: 12,
-          border: "2px solid var(--amber-400)", flexWrap: "wrap",
-        }}>
-          <div style={{ fontSize: 24 }}>🙋</div>
-          <div style={{ flex: 1, minWidth: 140 }}>
-            <div style={{ fontWeight: 700, fontSize: 14 }}>{req.name}</div>
-            <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
-              {req.course}{req.partnerName ? ` · 👥 ${req.partnerName}` : ""} · quiere unirse — el quiz ya empezó
+      {blocked.map(p => {
+        const id = "b-" + p.id;
+        return (
+          <div key={id} className="qs-card qs-pop-in" style={{
+            padding: 14, display: "flex", alignItems: "center", gap: 12,
+            border: "2px solid var(--red-500)", flexWrap: "wrap",
+          }}>
+            <div style={{ fontSize: 24 }}>🚪</div>
+            <div style={{ flex: 1, minWidth: 140 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{p.name}</div>
+              <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
+                {p.course} · salió del quiz <b>{p.exits} veces</b>
+                {p.blocked && p.blocked.qIdx >= 0 ? ` (la última en la pregunta ${p.blocked.qIdx + 1})` : ""} · su celular está bloqueado
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button
+                onClick={() => act(onKick, p.id, id)} disabled={busyId === id}
+                className="qs-btn qs-btn--ghost qs-btn--sm"
+                style={{ color: "var(--red-500)", borderColor: "var(--red-500)" }}
+              >Sacar</button>
+              <button
+                onClick={() => act(onAllow, p.id, id)} disabled={busyId === id}
+                className="qs-btn qs-btn--success qs-btn--sm"
+              >Dejar seguir</button>
             </div>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button
-              onClick={() => act(onReject, req)} disabled={busyId === req.id}
-              className="qs-btn qs-btn--ghost qs-btn--sm"
-              style={{ color: "var(--red-500)", borderColor: "var(--red-500)" }}
-            >Rechazar</button>
-            <button
-              onClick={() => act(onApprove, req)} disabled={busyId === req.id}
-              className="qs-btn qs-btn--success qs-btn--sm"
-            >Aprobar</button>
+        );
+      })}
+      {requests.map(req => {
+        const same = liveFindSameIdentity(participants, req.name, req.course);
+        return (
+          <div key={req.id} className="qs-card qs-pop-in" style={{
+            padding: 14, display: "flex", alignItems: "center", gap: 12,
+            border: "2px solid var(--amber-400)", flexWrap: "wrap",
+          }}>
+            <div style={{ fontSize: 24 }}>{same ? "🔁" : "🙋"}</div>
+            <div style={{ flex: 1, minWidth: 140 }}>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>{req.name}</div>
+              <div style={{ fontSize: 12, color: "var(--ink-500)" }}>
+                {req.course}{req.partnerName ? ` · 👥 ${req.partnerName}` : ""} · quiere unirse — el quiz ya empezó
+                {same && (
+                  <><br/><b style={{ color: "var(--violet-700)" }}>Ya está en la sala con {fmtPts(same.score)} pts.</b> Reconectar conserva su puntaje y su nota; "Como nuevo" lo crea aparte en 0.</>
+                )}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                onClick={() => act(onReject, req, req.id)} disabled={busyId === req.id}
+                className="qs-btn qs-btn--ghost qs-btn--sm"
+                style={{ color: "var(--red-500)", borderColor: "var(--red-500)" }}
+              >Rechazar</button>
+              {same && (
+                <button
+                  onClick={() => act(onApprove, req, req.id, "new")} disabled={busyId === req.id}
+                  className="qs-btn qs-btn--ghost qs-btn--sm"
+                >Como nuevo</button>
+              )}
+              <button
+                onClick={() => act(onApprove, req, req.id, same ? "reconnect" : "new")} disabled={busyId === req.id}
+                className="qs-btn qs-btn--success qs-btn--sm"
+              >{same ? "🔁 Reconectar" : "Aprobar"}</button>
+            </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -2329,6 +2454,38 @@ function useLiveQuiz(quizBase, session) {
   return React.useMemo(() => liveEffectiveQuiz(quizBase, session), [quizBase, version]);
 }
 
+// ---------- Puntos en espera (pendingPoints) ----------
+// El celular NO suma sus puntos al marcador al responder: los deja en la
+// respuesta como pendingPoints / applied:false y los suma el docente al
+// revelar (así el puntaje no delata si acertó). Esta función arma, para un
+// lote de respuestas, el increment por participante y la lista de
+// respuestas que quedan marcadas como aplicadas.
+//  · Varias respuestas del mismo participante (al finalizar) se SUMAN en un
+//    solo increment: antes la segunda pisaba a la primera en el objeto.
+//  · Solo se suma a quienes siguen en la sala: un increment sobre un
+//    participante expulsado lo revivía como "fantasma" con solo score.
+function livePendingIncrements(answerDocs, participants) {
+  const sums = {};
+  const docs = [];
+  (answerDocs || []).forEach(d => {
+    const a = d.data();
+    const pend = Number(a.pendingPoints) || 0;
+    if (a.applied || pend === 0) return;
+    docs.push(d);
+    if (participants && !participants[a.participantId]) return;
+    sums[a.participantId] = (sums[a.participantId] || 0) + pend;
+  });
+  const increments = {};
+  Object.entries(sums).forEach(([pid, n]) => {
+    // Puntos negativos (Concentración de la Competencia Extrema): nunca
+    // dejan a nadie por debajo de 0, igual que Drenaje, Asalto y Acusar.
+    if (n < 0 && participants && participants[pid]) n = Math.max(n, -Math.max(0, participants[pid].score || 0));
+    const v = fmtPts(n);
+    if (v !== 0) increments[`participants.${pid}.score`] = firebase.firestore.FieldValue.increment(v);
+  });
+  return { increments, docs };
+}
+
 // resumeSessionId: si viene, se RECONECTA a esa sala existente en vez de
 // crear una nueva (ver "Retomar" en el dashboard).
 function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
@@ -2343,10 +2500,37 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   // Cuenta regresiva META (14-meta.js) en la proyección, entre "Iniciar" y
   // la primera pregunta. Los estudiantes siguen en el lobby mientras tanto.
   const [metaCountdown, setMetaCountdown] = useStateL(false);
+  const [metaSeconds, setMetaSeconds] = useStateL(5); // segundos de la cuenta (menos si se retoma)
     // El id de sesión como ESTADO (no solo ref): garantiza que la suscripción
   // a Firestore se active apenas exista la sesión.
   const [sessionId, setSessionId] = useStateL(null);
   const sessionIdRef = useRefL(null);
+  // latestSessionRef: la sesión más reciente (los callbacks pueden traer
+  // una copia vieja de `session`).
+  const latestSessionRef = useRefL(null);
+  latestSessionRef.current = session;
+
+  // Candados contra el doble toque: mientras una acción guarda en
+  // Firestore, la misma acción no vuelve a correr. Antes un doble clic en
+  // "Aprobar" aplicaba el privilegio dos veces (Drenaje doble a toda la
+  // clase), premiar el Reto Físico sumaba +20 en vez de +10, calificar una
+  // abierta sumaba la diferencia dos veces y "Siguiente" / "Finalizar"
+  // podían archivar los resultados por duplicado. `busy` solo sirve para
+  // que los botones se vean desactivados; el candado real es la ref.
+  // La llave puede ser una función de los argumentos (candado por estudiante).
+  const locksRef = useRefL({});
+  const [busy, setBusy] = useStateL({});
+  const locked = (key, fn) => async (...args) => {
+    const k = typeof key === "function" ? key(...args) : key;
+    if (locksRef.current[k]) return;
+    locksRef.current[k] = true;
+    setBusy(b => ({ ...b, [k]: true }));
+    try { return await fn(...args); }
+    finally {
+      locksRef.current[k] = false;
+      setBusy(b => ({ ...b, [k]: false }));
+    }
+  };
 
   // Crear sesión al montar (o reconectarse a una existente)
   useEffectL(() => {
@@ -2463,9 +2647,22 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
 
   // Aprobar una solicitud: crea el participante con puntaje en 0 (no recibe
   // los puntos de preguntas ya jugadas) y suma su cupo de ingresos (máx. 2).
-  const approveJoinRequest = async (req) => {
+  // mode "reconnect" (por defecto): si ya hay en la sala alguien con el
+  // mismo nombre + curso (ver liveIdentityKey), la solicitud se resuelve con
+  // ESE participantId: el estudiante vuelve con su puntaje y su nota, y no
+  // aparece dos veces en el ranking ni en Resultados. mode "new": entra
+  // como participante nuevo aunque haya un homónimo (lateJoin, en 0).
+  const approveJoinRequest = locked((req) => "join:" + req.id, async (req, mode = "reconnect") => {
+    const live = latestSessionRef.current || session;
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
     try {
+      const same = mode === "new" ? null : liveFindSameIdentity(live.participants, req.name, req.course);
+      if (same) {
+        await ref.collection("joinRequests").doc(req.id).update({
+          status: "approved", participantId: same.id, reconnected: true, resolvedAt: Date.now(),
+        });
+        return;
+      }
       const pid = "p-" + Date.now() + "-" + Math.random().toString(36).slice(2, 7);
       await ref.update({
         [`participants.${pid}`]: {
@@ -2476,9 +2673,9 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
           joinedAt: Date.now(),
           score: 0,
           lateJoin: true,
-          joinedAtQuestionIdx: session.currentQuestionIdx,
+          joinedAtQuestionIdx: live.currentQuestionIdx,
         },
-        [`joinCounts.${req.identityKey}`]: firebase.firestore.FieldValue.increment(1),
+        [`joinCounts.${liveIdentityKey(req.name, req.course)}`]: firebase.firestore.FieldValue.increment(1),
       });
       await ref.collection("joinRequests").doc(req.id).update({
         status: "approved", participantId: pid, resolvedAt: Date.now(),
@@ -2487,7 +2684,24 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       console.error("Error aprobando ingreso:", err);
       alert("No se pudo aprobar el ingreso: " + err.message);
     }
-  };
+  });
+
+  // Salidas del quiz: dejar seguir a un estudiante bloqueado. exitsAllowed
+  // guarda hasta qué salida se autorizó: la SIGUIENTE salida lo vuelve a
+  // bloquear (no se le regalan otras 3).
+  const allowBlockedParticipant = locked((pid) => "allow:" + pid, async (pid) => {
+    const p = (latestSessionRef.current || session).participants?.[pid];
+    if (!p) return;
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
+        [`participants.${pid}.blocked`]: firebase.firestore.FieldValue.delete(),
+        [`participants.${pid}.exitsAllowed`]: p.exits || 0,
+      });
+    } catch (err) {
+      console.error("Error desbloqueando participante:", err);
+      alert("No se pudo desbloquear: " + err.message);
+    }
+  });
 
   const rejectJoinRequest = async (req) => {
     try {
@@ -2506,6 +2720,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   // estudiante muestra exactamente los mismos segundos que la proyección.
   const META_COUNTDOWN_SECONDS = 5;
   const startMetaCountdown = async () => {
+    setMetaSeconds(META_COUNTDOWN_SECONDS);
     setMetaCountdown(true);
     try {
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
@@ -2517,6 +2732,17 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       console.error("Error avisando cuenta regresiva:", err);
     }
   };
+
+  // Si el docente recargó (o retomó la sala) durante la cuenta regresiva,
+  // los celulares seguían contando y aquí reaparecía el lobby sin cuenta:
+  // se retoma con los segundos que falten, o arranca ya si se acabó.
+  useEffectL(() => {
+    if (!session || session.status !== "lobby" || !session.metaCountdownUntil || metaCountdown) return;
+    const left = session.metaCountdownUntil - Date.now();
+    if (left <= 500) { startQuiz(); return; }
+    setMetaSeconds(Math.ceil(left / 1000));
+    setMetaCountdown(true);
+  }, [session?.status, session?.metaCountdownUntil]);
 
   const startQuiz = async () => {
     await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
@@ -2602,19 +2828,28 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   };
   // Puntos a uno de los primeros (solo ranking). Puntos y cuántos ganan
   // vienen del reto (los configura el docente; por defecto +10 a 3).
-  const awardPhysicalChallenge = async (pid) => {
-    const ch = session.physicalChallenge;
-    const max = (ch && ch.winnersMax) || window.RF_WINNERS || 3;
-    if (!ch || (ch.winners || []).includes(pid) || (ch.winners || []).length >= max) return;
+  // awardedRef recuerda a quién ya se premió en ESTE reto aunque la sala
+  // todavía no haya traído la lista nueva: un doble toque no premia dos veces.
+  const awardedRef = useRefL({ id: null, pids: [] });
+  const awardPhysicalChallenge = locked("award", async (pid) => {
+    const live = latestSessionRef.current || session;
+    const ch = live.physicalChallenge;
+    if (!ch) return;
+    const max = ch.winnersMax || window.RF_WINNERS || 3;
+    if (awardedRef.current.id !== ch.id) awardedRef.current = { id: ch.id, pids: [] };
+    const given = [...new Set([...(ch.winners || []), ...awardedRef.current.pids])];
+    if (given.includes(pid) || given.length >= max) return;
+    awardedRef.current.pids.push(pid);
     try {
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
-        "physicalChallenge.winners": [...(ch.winners || []), pid],
+        "physicalChallenge.winners": [...given, pid],
         [`participants.${pid}.score`]: firebase.firestore.FieldValue.increment(ch.points || window.RF_POINTS || 10),
       });
     } catch (err) {
+      awardedRef.current.pids = awardedRef.current.pids.filter(p => p !== pid);
       console.error("Error premiando reto físico:", err);
     }
-  };
+  });
   // Volver al quiz: quitar el reto y, si el reto pausó la pregunta,
   // reanudarla corriendo el inicio (igual que togglePause).
   const finishPhysicalChallenge = async () => {
@@ -2636,10 +2871,11 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   // que el estudiante resetee su estado de "ya respondí".
   // opts.silent: sin confirmación. opts.exceptPid: ese participante conserva
   // su respuesta y puntos (privilegio "Otra vez" de Competencia Extrema).
-  const relaunchQuestion = async (opts = {}) => {
+  const relaunchQuestion = locked("advance", async (opts = {}) => {
     const { silent = false, exceptPid = null } = opts || {};
     if (!silent && !confirm("¿Re-lanzar esta pregunta? Se borrarán las respuestas actuales y se reiniciará el tiempo.")) return;
-    const qIdx = session.currentQuestionIdx;
+    const live = latestSessionRef.current || session;
+    const qIdx = live.currentQuestionIdx;
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
     try {
       // Leer respuestas de esta pregunta
@@ -2647,7 +2883,6 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       // "Otra vez": el escudo protege a quien ya había respondido (conserva
       // su respuesta y sus puntos) y se gasta. Sin respuesta no hay nada
       // que proteger: repite normal y no pierde el escudo.
-      const live = latestSessionRef.current || session;
       const shielded = exceptPid ? snap.docs.map(d => d.data().participantId)
         .filter(pid => pid !== exceptPid && live.participants?.[pid]?.shield) : [];
       const keep = exceptPid ? [exceptPid, ...shielded] : [];
@@ -2665,13 +2900,14 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
         }
         batch.delete(d.ref);
       });
-      await batch.commit();
-      // Aplicar reversión de puntajes
+      // Reversión de puntajes y reinicio, en la MISMA escritura que el
+      // borrado: si el wifi fallaba entre las dos, quedaban respuestas
+      // borradas con puntos sin devolver.
       const updates = {
         questionStartedAt: Date.now(),
         extraSeconds: 0,
         pausedAt: null,
-        questionVersion: (session.questionVersion || 0) + 1,
+        questionVersion: (live.questionVersion || 0) + 1,
         status: "playing",
       };
       if (exceptPid) {
@@ -2682,12 +2918,13 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       Object.entries(scoreReverts).forEach(([pid, delta]) => {
         updates[`participants.${pid}.score`] = firebase.firestore.FieldValue.increment(delta);
       });
-      await ref.update(updates);
+      batch.update(ref, updates);
+      await batch.commit();
     } catch (err) {
       console.error("Error re-lanzando pregunta:", err);
       alert("No se pudo re-lanzar la pregunta: " + err.message);
     }
-  };
+  });
 
   // Expulsar a un participante (conserva su registro en 'results' al final,
   // pero lo saca del juego activo).
@@ -2703,44 +2940,102 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     });
   };
 
-  const kickParticipant = async (pid) => {
-    const p = session.participants?.[pid];
-    if (!confirm(`¿Sacar a ${p?.name || "este participante"} de la sala?`)) return;
+  // Archivar en 'results' lo que el estudiante alcanzó a jugar ANTES de
+  // sacarlo de la sala. Antes se perdía: saveLiveResults solo recorre a
+  // quienes siguen en la sala al final. Queda con nota pendiente, como un
+  // ingreso tardío: el docente decide qué nota merece lo que jugó.
+  const archiveParticipant = async (pid, reason) => {
+    const live = latestSessionRef.current || session;
+    const p = live?.participants?.[pid];
+    const uid = window.QS.currentUser?.uid;
+    if (!p || !uid || !quiz || quiz.mode === "survey") return;
+    const snap = await window.QS.db.collection("liveSessions").doc(sessionIdRef.current)
+      .collection("answers").where("participantId", "==", pid).get();
+    const myAnswers = snap.docs.map(d => d.data());
+    const data = buildLiveResultData(quiz, p, myAnswers, live.code, localDateISO());
+    await window.QS.db.collection("results").add({
+      ...data, ownerId: uid,
+      score: null, graded: false,
+      expelled: true, expelledReason: reason, expelledAtQuestionIdx: live.currentQuestionIdx,
+    });
+  };
+
+  const kickParticipant = locked((pid) => "kick:" + pid, async (pid) => {
+    const live = latestSessionRef.current || session;
+    const p = live.participants?.[pid];
+    if (!p) return;
+    const inGame = live.status !== "lobby" && quiz.mode !== "survey";
+    const msg = `¿Sacar a ${p.name || "este participante"} de la sala?`
+      + (inGame ? "\n\nLo que respondió hasta ahora se archivará en Resultados con nota pendiente." : "");
+    if (!confirm(msg)) return;
     try {
+      if (inGame) {
+        try {
+          await archiveParticipant(pid, "kicked");
+        } catch (err) {
+          console.error("Error archivando al expulsado:", err);
+          if (!confirm("No se pudo archivar su resultado: " + err.message + "\n\n¿Sacarlo de todas formas? Se perdería lo que respondió.")) return;
+        }
+      }
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
         [`participants.${pid}`]: firebase.firestore.FieldValue.delete(),
       });
     } catch (err) {
       console.error("Error expulsando participante:", err);
     }
+  });
+
+  // Aplica, en UNA sola escritura (respuestas marcadas como aplicadas +
+  // puntos sumados al marcador), los puntos en espera de esas respuestas.
+  // En lotes de 400 por el límite de Firestore (500 operaciones por lote).
+  const applyPendingDocs = async (answerDocs) => {
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    const participants = (latestSessionRef.current || session || {}).participants;
+    const pending = (answerDocs || []).filter(d => {
+      const a = d.data();
+      return !a.applied && (Number(a.pendingPoints) || 0) !== 0;
+    });
+    for (let i = 0; i < pending.length; i += 400) {
+      const { increments, docs } = livePendingIncrements(pending.slice(i, i + 400), participants);
+      const batch = window.QS.db.batch();
+      docs.forEach(d => batch.update(d.ref, { applied: true }));
+      if (Object.keys(increments).length) batch.update(ref, increments);
+      await batch.commit();
+    }
+    return pending.length;
   };
 
-  // Finalizar el quiz inmediatamente desde cualquier pregunta
-  const finishNow = async () => {
-    if (!confirm("¿Finalizar el quiz ahora? Se guardarán los resultados con el puntaje actual.")) return;
-    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+  // Respuestas que llegaron en el último segundo, cuando el docente ya
+  // estaba revelando: no entraban en la lectura del reveal y quedaban sin
+  // sumar para siempre ("¡Correcto! +12" en el celular, nada en el
+  // ranking). Se recogen antes del ranking o de la siguiente pregunta.
+  const applyLatePoints = async (qIdx) => {
+    if (qIdx == null || qIdx < 0) return;
     try {
-      // Aplicar cualquier puntaje en espera que aún no se haya sumado
+      const snap = await window.QS.db.collection("liveSessions").doc(sessionIdRef.current)
+        .collection("answers").where("questionIdx", "==", qIdx).get();
+      await applyPendingDocs(snap.docs);
+    } catch (err) {
+      console.error("Error sumando respuestas tardías:", err);
+    }
+  };
+
+  // Cierre de la sala (desde "Siguiente" en la última pregunta o desde
+  // "Finalizar ahora"): suma cualquier puntaje en espera, archiva los
+  // resultados y marca la sala como terminada. Una sola lectura de las
+  // respuestas sirve para las dos cosas.
+  const finishLive = async () => {
+    const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
+    let answerData = null;
+    try {
       const snap = await ref.collection("answers").get();
-      const increments = {};
-      const batch = window.QS.db.batch();
-      let has = false;
-      snap.docs.forEach(d => {
-        const data = d.data();
-        const pend = data.pendingPoints || 0;
-        if (!data.applied && pend !== 0) {
-          increments[`participants.${data.participantId}.score`] =
-            firebase.firestore.FieldValue.increment(pend);
-          batch.update(d.ref, { applied: true });
-          has = true;
-        }
-      });
-      if (has) { await batch.commit(); await ref.update(increments); }
+      answerData = snap.docs.map(d => d.data());
+      await applyPendingDocs(snap.docs);
     } catch (err) {
       console.error("Error aplicando pendientes al finalizar:", err);
     }
     try {
-      await saveLiveResults();
+      await saveLiveResults(answerData);
     } catch (err) {
       console.error("Error guardando resultados:", err);
       alert("⚠️ Los resultados no se pudieron archivar automáticamente: " + err.message + "\n\nNo se perdieron: podrás reenviarlos desde Resultados → Sesiones en vivo.");
@@ -2751,93 +3046,118 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     });
   };
 
+  // Finalizar el quiz inmediatamente desde cualquier pregunta
+  const finishNow = locked("advance", async () => {
+    const live = latestSessionRef.current || session;
+    const pendingOffer = live.privilegeOffer ? (live.participants?.[live.privilegeOffer.pid]?.name || "un estudiante") : null;
+    const msg = "¿Finalizar el quiz ahora? Se guardarán los resultados con el puntaje actual."
+      + (pendingOffer ? `\n\nOjo: ${pendingOffer} tiene un privilegio pendiente (ganó la racha) y lo perdería.` : "");
+    if (!confirm(msg)) return;
+    await finishLive();
+  });
+
   // Un solo revelado a la vez (doble clic, o el botón justo cuando se acaba
   // el tiempo), y nunca sobre una pregunta que ya no está "en juego".
-  // latestSessionRef: la sesión más reciente (los callbacks pueden traer
-  // una copia vieja de `session`).
   const revealingRef = useRefL(false);
-  const latestSessionRef = useRefL(null);
-  latestSessionRef.current = session;
   const revealCurrent = async () => {
     const live = latestSessionRef.current || session;
     if (revealingRef.current || !live || live.status !== "playing") return;
     revealingRef.current = true;
     try { await revealCurrentNow(live); } finally { revealingRef.current = false; }
   };
+  // Revelar = sumar al marcador los puntos en espera de esta pregunta y
+  // pasar a "showResults", TODO en UNA transacción:
+  //  · Si el docente tiene la sala abierta en dos pantallas (proyector y
+  //    celular), las dos revelaban solas al llegar a 0 y cada una sumaba
+  //    los puntos: puntaje doble. La transacción vuelve a leer la sala y,
+  //    si otra pantalla ya la pasó a "showResults" (o cambió de pregunta),
+  //    no hace nada.
+  //  · Antes se marcaban las respuestas como aplicadas en una escritura y
+  //    se sumaban los puntos en otra: si la segunda fallaba por el wifi,
+  //    esos puntos se perdían. Ahora van juntas (o no va ninguna, y el
+  //    docente vuelve a pulsar "Revelar").
   const revealCurrentNow = async (session) => {
     const qIdx = session.currentQuestionIdx;
+    const version = session.questionVersion || 0;
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
-    let answerDocs = []; // se reutiliza para las rachas (sin volver a leer)
     try {
-      // Aplicar los puntos en espera de esta pregunta al marcador de cada quien
       const snap = await ref.collection("answers").where("questionIdx", "==", qIdx).get();
-      answerDocs = snap.docs;
-      const increments = {};
-      const batch = window.QS.db.batch();
-      let hasIncrements = false;
-      snap.docs.forEach(d => {
-        const data = d.data();
-        const pend = data.pendingPoints || 0;
-        if (!data.applied && pend !== 0) {
-          increments[`participants.${data.participantId}.score`] =
-            firebase.firestore.FieldValue.increment(pend);
-          batch.update(d.ref, { applied: true });
-          hasIncrements = true;
+      const answerDocs = snap.docs;
+      await window.QS.db.runTransaction(async (tx) => {
+        const sDoc = await tx.get(ref);
+        if (!sDoc.exists) return;
+        const live = { id: sDoc.id, ...sDoc.data() };
+        // Otra pantalla ya reveló, se re-lanzó o se cambió de pregunta.
+        if (live.status !== "playing" || live.currentQuestionIdx !== qIdx
+            || (live.questionVersion || 0) !== version) return;
+        const updates = { status: "showResults", revealedAt: Date.now(), pausedAt: null };
+        const { increments, docs } = livePendingIncrements(answerDocs, live.participants);
+        Object.assign(updates, increments);
+        // COMPETENCIA EXTREMA (15-extreme.js): rachas y, si alguien llegó a 3
+        // seguidas, la oferta de privilegio. Va en la MISMA escritura del
+        // reveal: no cuesta lecturas ni escrituras extra.
+        if (quiz.extremeMode && quiz.mode !== "survey" && window.extremeStreakUpdates) {
+          const answersByPid = {};
+          answerDocs.forEach(d => { const a = d.data(); answersByPid[a.participantId] = a; });
+          const { updates: streakUpdates, triggered } = window.extremeStreakUpdates(live, answersByPid, qIdx);
+          Object.assign(updates, streakUpdates);
+          // Solo con privilegios activos en este quiz (ventana "Elegir
+          // privilegios" del editor); si el docente los apagó todos, la racha
+          // se cuenta igual pero no se ofrece nada.
+          const offer = triggered.length && !live.privilegeOffer
+            ? window.extremeBuildOffer(triggered[0], qIdx, quiz) : null;
+          if (offer) {
+            updates.privilegeOffer = offer;
+            updates.privilegeQueue = triggered.slice(1);
+          }
         }
+        docs.forEach(d => tx.update(d.ref, { applied: true }));
+        tx.update(ref, updates);
       });
-      if (hasIncrements) {
-        await batch.commit();
-        await ref.update(increments);
-      }
     } catch (err) {
-      console.error("Error aplicando puntajes al revelar:", err);
+      console.error("Error revelando la pregunta:", err);
+      alert("No se pudo revelar la pregunta: " + err.message + "\n\nPulsa \"Revelar\" otra vez.");
     }
-    const revealUpdates = { status: "showResults", revealedAt: Date.now(), pausedAt: null };
-    // COMPETENCIA EXTREMA (15-extreme.js): rachas y, si alguien llegó a 3
-    // seguidas, la oferta de privilegio. Va en la MISMA escritura del
-    // reveal: no cuesta lecturas ni escrituras extra.
-    if (quiz.extremeMode && quiz.mode !== "survey" && window.extremeStreakUpdates) {
-      const answersByPid = {};
-      answerDocs.forEach(d => { const a = d.data(); answersByPid[a.participantId] = a; });
-      const { updates, triggered } = window.extremeStreakUpdates(session, answersByPid, qIdx);
-      Object.assign(revealUpdates, updates);
-      // Solo con privilegios activos en este quiz (ventana "Elegir
-      // privilegios" del editor); si el docente los apagó todos, la racha
-      // se cuenta igual pero no se ofrece nada.
-      const offer = triggered.length && !session.privilegeOffer
-        ? window.extremeBuildOffer(triggered[0], qIdx, quiz) : null;
-      if (offer) {
-        revealUpdates.privilegeOffer = offer;
-        revealUpdates.privilegeQueue = triggered.slice(1);
-      }
-    }
-    await ref.update(revealUpdates);
   };
 
   // ---- COMPETENCIA EXTREMA: privilegios (el docente aprueba/rechaza) ----
-  const approvePrivilege = async () => {
-    const offer = session.privilegeOffer;
+  // handledOfferRef: la última oferta ya resuelta ("pid:at"). Con el
+  // candado `locked` evita que un doble toque en "Aprobar" aplique el
+  // mismo privilegio dos veces (y que el siguiente de la cola pierda su turno).
+  const handledOfferRef = useRefL(null);
+  const offerKeyOf = (offer) => offer.pid + ":" + (offer.at || 0);
+  const approvePrivilege = locked("privilege", async () => {
+    const live = latestSessionRef.current || session;
+    const offer = live.privilegeOffer;
     if (!offer || !offer.choice) return;
+    if (handledOfferRef.current === offerKeyOf(offer)) return;
     const ref = window.QS.db.collection("liveSessions").doc(sessionIdRef.current);
-    // Expulsión: sacar a alguien borra su participación (no se archiva su
-    // resultado), así que se confirma aunque el botón ya diga "Expulsar".
+    // Expulsión: sacar a alguien lo borra de la sala (lo que jugó se archiva
+    // en Resultados con nota pendiente), así que se confirma aunque el
+    // botón ya diga "Expulsar".
     if (offer.choice === "expel" && offer.target) {
-      const t = session.participants?.[offer.target];
-      if (t && !confirm(`¿Expulsar a ${t.name} de la sala? Su resultado de esta sesión no se guardará.`)) return;
+      const t = live.participants?.[offer.target];
+      if (t && !confirm(`¿Expulsar a ${t.name} de la sala?\n\nLo que respondió hasta ahora se archivará en Resultados con nota pendiente.`)) return;
     }
+    handledOfferRef.current = offerKeyOf(offer);
     try {
+      // Antes de borrarlo de la sala, archivar su resultado. Si no se
+      // puede, no se expulsa (el error sale abajo y se puede reintentar).
+      if (offer.choice === "expel" && offer.target && live.participants?.[offer.target]) {
+        await archiveParticipant(offer.target, "privilege");
+      }
       const { updates, repeat, expel } = window.extremeApprovalUpdates({
-        session, quiz, pid: offer.pid, privId: offer.choice, target: offer.target || null, firebase,
+        session: live, quiz, pid: offer.pid, privId: offer.choice, target: offer.target || null, firebase,
       });
-      Object.assign(updates, window.extremeAdvanceQueue(session, quiz));
+      Object.assign(updates, window.extremeAdvanceQueue(live, quiz));
       if (repeat) {
         updates.privilegeOffer = null; updates.privilegeQueue = [];
         // Quien ya recibió su privilegio por esta pregunta no lo vuelve a
         // recibir al revelarla de nuevo; los que seguían en la cola sí, si
         // vuelven a acertar (la cola se pierde al repetir).
-        const sb = session.extremeStreakBase;
-        if (sb && sb.qIdx === session.currentQuestionIdx) {
-          const waiting = session.privilegeQueue || [];
+        const sb = live.extremeStreakBase;
+        if (sb && sb.qIdx === live.currentQuestionIdx) {
+          const waiting = live.privilegeQueue || [];
           updates["extremeStreakBase.done"] = [...new Set([...(sb.done || []), ...(sb.triggered || []).filter(id => !waiting.includes(id)), offer.pid])];
         }
       }
@@ -2850,24 +3170,31 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
       // "Otra vez": los demás repiten la pregunta; el ganador queda exento.
       if (repeat) await relaunchQuestion({ silent: true, exceptPid: offer.pid });
     } catch (err) {
+      handledOfferRef.current = null; // que pueda volver a intentarlo
       console.error("Error aprobando privilegio:", err);
       alert("No se pudo aplicar el privilegio: " + err.message);
     }
-  };
-  const rejectPrivilege = async () => {
-    if (!session.privilegeOffer) return;
+  });
+  const rejectPrivilege = locked("privilege", async () => {
+    const live = latestSessionRef.current || session;
+    const offer = live.privilegeOffer;
+    if (!offer) return;
+    if (handledOfferRef.current === offerKeyOf(offer)) return;
+    handledOfferRef.current = offerKeyOf(offer);
     try {
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current)
-        .update(window.extremeAdvanceQueue(session, quiz));
+        .update(window.extremeAdvanceQueue(live, quiz));
     } catch (err) {
+      handledOfferRef.current = null;
       console.error("Error rechazando privilegio:", err);
     }
-  };
+  });
 
   // Calificar en vivo una respuesta abierta de un estudiante.
   // result: "correct" | "partial" | "wrong". Asigna puntos y los suma al participante.
-  const gradeLiveAnswer = async (pid, result) => {
-    const qIdx = session.currentQuestionIdx;
+  // Candado por estudiante: un doble toque sumaba la diferencia dos veces.
+  const gradeLiveAnswer = locked((pid) => "grade:" + pid, async (pid, result) => {
+    const qIdx = (latestSessionRef.current || session).currentQuestionIdx;
     const q = quiz.questions[qIdx];
     const pCorrect = q.pointsCorrect ?? 10;
     const pWrong = q.pointsWrong ?? 0;
@@ -2901,12 +3228,12 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     } catch (err) {
       console.error("Error calificando en vivo:", err);
     }
-  };
+  });
 
   // Taller Evaluativo (En vivo): calificación directa de 1 a 10 por respuesta
   // abierta (sin las 3 etiquetas de correcto/parcial/incorrecto).
-  const gradeWorkshopAnswer = async (pid, value) => {
-    const qIdx = session.currentQuestionIdx;
+  const gradeWorkshopAnswer = locked((pid) => "grade:" + pid, async (pid, value) => {
+    const qIdx = (latestSessionRef.current || session).currentQuestionIdx;
     const points = Math.max(1, Math.min(10, Math.round(value)));
     const docId = `${pid}-${qIdx}`;
     const answerRef = window.QS.db.collection("liveSessions").doc(sessionIdRef.current)
@@ -2926,37 +3253,38 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     } catch (err) {
       console.error("Error calificando taller en vivo:", err);
     }
-  };
+  });
 
-  const goNext = async () => {
-    const nextIdx = session.currentQuestionIdx + 1;
+  const goNext = locked("advance", async () => {
+    const live = latestSessionRef.current || session;
+    const nextIdx = live.currentQuestionIdx + 1;
+    // COMPETENCIA EXTREMA: con una oferta de privilegio abierta, avanzar la
+    // borraba sin aviso y el ganador de la racha nunca llegaba a elegir.
+    if (live.privilegeOffer && quiz.extremeMode) {
+      const who = live.participants?.[live.privilegeOffer.pid]?.name || "Un estudiante";
+      if (!confirm(`${who} todavía tiene un privilegio pendiente (ganó la racha). Si avanzas, lo pierde.\n\n¿Avanzar de todas formas?`)) return;
+    }
+    // Respuestas del último segundo que el reveal no alcanzó a sumar (ver
+    // applyLatePoints): antes del ranking o de la siguiente pregunta.
+    if (live.status === "showResults") await applyLatePoints(live.currentQuestionIdx);
     // RANKING ACTUALIZADO (opción del editor): después de los resultados de
     // cada pregunta, antes de la siguiente. Competencia Extrema tiene el suyo.
     if (!quiz.extremeMode && quiz.showRanking && quiz.mode !== "survey"
-        && session.status === "showResults" && nextIdx < quiz.questions.length) {
+        && live.status === "showResults" && nextIdx < quiz.questions.length) {
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({ status: "ranking" });
       return;
     }
     // COMPETENCIA EXTREMA: ranking animado cada 3 preguntas antes de avanzar.
-    if (quiz.extremeMode && session.status !== "ranking" && window.extremeRankingDue
-        && window.extremeRankingDue(quiz, session.currentQuestionIdx)) {
+    if (quiz.extremeMode && live.status !== "ranking" && window.extremeRankingDue
+        && window.extremeRankingDue(quiz, live.currentQuestionIdx)) {
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
         status: "ranking", privilegeOffer: null, privilegeQueue: [],
       });
       return;
     }
     if (nextIdx >= quiz.questions.length) {
-      // Terminar: primero guardar resultados de cada participante
-      try {
-        await saveLiveResults();
-      } catch (err) {
-        console.error("Error guardando resultados:", err);
-        alert("⚠️ Los resultados no se pudieron archivar automáticamente: " + err.message + "\n\nNo se perdieron: podrás reenviarlos desde Resultados → Sesiones en vivo.");
-      }
-      await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
-        status: "finished",
-        finishedAt: Date.now(),
-      });
+      // Terminar: puntos en espera + resultados de cada participante
+      await finishLive();
     } else {
       await window.QS.db.collection("liveSessions").doc(sessionIdRef.current).update({
         status: "playing",
@@ -2968,25 +3296,30 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
         privilegeQueue: [],
       });
     }
-  };
+  });
 
   // Guardar resultados de la sala en vivo en la colección 'results' (para panel y Excel)
-  const saveLiveResults = async () => {
+  // answerRows: las respuestas ya leídas (finishLive); si no vienen, se leen aquí.
+  const saveLiveResults = async (answerRows = null) => {
     const uid = window.QS.currentUser?.uid;
-    if (!uid || !session || !quiz) return;
+    const live = latestSessionRef.current || session;
+    if (!uid || !live || !quiz) return;
     // En modo encuesta no se guardan resultados calificados.
     if (quiz.mode === "survey") return;
-    const participants = Object.values(session.participants || {});
+    const participants = Object.values(live.participants || {});
     if (participants.length === 0) return;
 
     const today = localDateISO();
 
     // Cargar todas las respuestas de esta sesión de una vez
-    const answersSnap = await window.QS.db.collection("liveSessions")
-      .doc(sessionIdRef.current).collection("answers").get();
+    let rows = answerRows;
+    if (!rows) {
+      const answersSnap = await window.QS.db.collection("liveSessions")
+        .doc(sessionIdRef.current).collection("answers").get();
+      rows = answersSnap.docs.map(d => d.data());
+    }
     const answersByParticipant = {};
-    answersSnap.docs.forEach(d => {
-      const data = d.data();
+    rows.forEach(data => {
       if (!answersByParticipant[data.participantId]) answersByParticipant[data.participantId] = [];
       answersByParticipant[data.participantId].push(data);
     });
@@ -2995,7 +3328,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     const batch = window.QS.db.batch();
     for (const p of participants) {
       const myAnswers = answersByParticipant[p.id] || [];
-      const resultData = { ...buildLiveResultData(quiz, p, myAnswers, session.code, today), ownerId: uid };
+      const resultData = { ...buildLiveResultData(quiz, p, myAnswers, live.code, today), ownerId: uid };
       const docRef = window.QS.db.collection("results").doc();
       batch.set(docRef, resultData);
     }
@@ -3074,7 +3407,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
         {metaCountdown && (
           <window.MetaCountdown
             mode="live"
-            seconds={META_COUNTDOWN_SECONDS}
+            seconds={metaSeconds}
             background={quizBg(quiz.color)}
             allowSkip
             onDone={() => { setMetaCountdown(false); startQuiz(); }}
@@ -3093,11 +3426,18 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
     />
   ) : null;
 
-  const joinRequestsBanner = pendingJoinRequests.length > 0 ? (
+  // Avisos abajo: ingresos tardíos por aprobar y estudiantes bloqueados por
+  // salir del quiz (ver JoinRequestsBanner).
+  const blockedParticipants = participants.filter(p => p.blocked);
+  const joinRequestsBanner = (pendingJoinRequests.length > 0 || blockedParticipants.length > 0) ? (
     <JoinRequestsBanner
       requests={pendingJoinRequests}
+      participants={session.participants || {}}
       onApprove={approveJoinRequest}
       onReject={rejectJoinRequest}
+      blocked={blockedParticipants}
+      onAllow={allowBlockedParticipant}
+      onKick={kickParticipant}
     />
   ) : null;
 
@@ -3121,7 +3461,7 @@ function LiveSessionHost({ quizId, resumeSessionId, onExit }) {
   const extremePanel = isExtreme ? (
     <>
       {session.privilegeOffer && window.ExtremeHostPanel && (
-        <window.ExtremeHostPanel session={session} quiz={quiz} onApprove={approvePrivilege} onReject={rejectPrivilege} onSkip={rejectPrivilege} />
+        <window.ExtremeHostPanel session={session} quiz={quiz} onApprove={approvePrivilege} onReject={rejectPrivilege} onSkip={rejectPrivilege} busy={!!busy.privilege} />
       )}
       {window.ExtremeResultToast && <window.ExtremeResultToast session={session} quiz={quiz} me={null} />}
     </>
@@ -3454,7 +3794,7 @@ function StudentJoinLive({ initialCode, onCancel }) {
     // Tope de ingresos por estudiante (mismo nombre + curso), cuenta tanto la
     // entrada normal por el lobby como los ingresos tardíos ya aprobados.
     // En anónimo no aplica: sin nombre, todo el curso compartiría el tope.
-    const identityKey = (joinName + "|" + course.trim()).toLowerCase();
+    const identityKey = liveIdentityKey(joinName, course);
     const priorEntries = (session.joinCounts && session.joinCounts[identityKey]) || 0;
     if (!anon && priorEntries >= 2) {
       setError("Ya ingresaste el máximo de veces permitido a esta sala (2).");
@@ -3617,7 +3957,10 @@ function StudentJoinLive({ initialCode, onCancel }) {
                 borderRadius: 10, fontSize: 13, color: "#92400e", lineHeight: 1.5,
               }}>
                 ⏳ El quiz ya empezó. Puedes pedir unirte, pero tu profesor debe
-                aprobarlo y no recibirás los puntos de las preguntas ya jugadas.
+                aprobarlo. Si ya estabas en esta sala (se te apagó el celular o
+                cambiaste de navegador), escribe el <b>mismo nombre y curso</b>:
+                tu profesor puede reconectarte con tu puntaje. Si eres nuevo, no
+                recibirás los puntos de las preguntas ya jugadas.
               </div>
             )}
             {session?.anonymous ? (
@@ -3832,6 +4175,7 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
   // vez, reemplazando su respuesta). Mientras se verifica, no deja responder.
   // Las preguntas siguientes no necesitan esta lectura: arrancan en memoria.
   const [restoreKey, setRestoreKey] = useStateL(undefined); // pregunta pendiente de verificar
+  const reloadExitRef = useRefL(null); // { qIdx } si volver fue a mitad de pregunta sin responder
   useEffectL(() => {
     if (!session || restoreKey !== undefined) return;
     if (session.status !== "playing" && session.status !== "showResults") { setRestoreKey(null); return; }
@@ -3852,6 +4196,13 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
             correct: d.correct ?? null, points: d.points || 0, survey: isSurvey,
             pendingGrade: isLiveGradedOpen, concentration: d.extremeWin !== undefined,
           });
+        } else if (session.status === "playing" && quiz.questions[qIdx] && quiz.questions[qIdx].type !== "slide") {
+          // Volvió (recarga, pestaña cerrada y reabierta) a mitad de una
+          // pregunta sin haberla respondido: cuenta como salida del quiz
+          // (si no, cerrar y reabrir sería el atajo para que no se cuente).
+          // No aplica a un ingreso tardío recién aprobado en esta pregunta.
+          const p = session.participants?.[participantId];
+          if (!(p && p.lateJoin && p.joinedAtQuestionIdx === qIdx)) reloadExitRef.current = { qIdx };
         }
       })
       .catch(err => console.warn("No se pudo verificar la respuesta guardada:", err))
@@ -3892,23 +4243,64 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
     ? (window.extremeTimecutFor ? window.extremeTimecutFor(xBaseSec, xfx.timecut.seconds) : (xfx.timecut.seconds || 0))
     : 0;
 
+  // ---- Reloj propio del celular ----
+  // Antes el cronómetro y el tiempo de respuesta se calculaban restando la
+  // hora de ESTE celular menos questionStartedAt (hora del computador del
+  // docente). Si los relojes difieren un minuto, el cronómetro arrancaba
+  // en 0 (o sobraba tiempo) y el bono de velocidad se salía del máximo.
+  // Ahora, al RECIBIR la pregunta, se guarda la diferencia entre la hora
+  // local y questionStartedAt (offset = desfase + latencia) y todo se mide
+  // desde ese momento. Si el celular se reconectó a mitad de pregunta
+  // (recarga, ingreso tardío) no hay dato: se usa la hora del docente tal
+  // cual, así recargar no reinicia el tiempo.
+  const clockRef = useRefL({ key: null, offset: 0 });
+  const seenKeyRef = useRefL(undefined);
+  useEffectL(() => {
+    if (!session) return;
+    const key = session.currentQuestionIdx + ":" + (session.questionVersion || 0);
+    const prevKey = seenKeyRef.current;
+    seenKeyRef.current = key;
+    if (session.status !== "playing" || clockRef.current.key === key) return;
+    const receivedLive = prevKey !== undefined && prevKey !== key;
+    clockRef.current = {
+      key,
+      offset: receivedLive && session.questionStartedAt ? Date.now() - session.questionStartedAt : 0,
+    };
+  }, [session?.status, session?.currentQuestionIdx, session?.questionVersion]);
+
+  // Segundos transcurridos y restantes de la pregunta actual, con el reloj
+  // propio. En pausa el tiempo se congela en el instante de la pausa (las
+  // dos horas son del docente, así que ahí no entra el desfase). Al
+  // reanudar, el docente corre questionStartedAt y la cuenta sigue bien.
+  const elapsedNow = () => {
+    if (!session) return 0;
+    const startedAt = session.questionStartedAt || Date.now();
+    const ms = session.pausedAt
+      ? session.pausedAt - startedAt
+      : Date.now() - startedAt - clockRef.current.offset;
+    return Math.max(0, ms / 1000);
+  };
+  const secondsLeftNow = () => {
+    if (!session || session.status !== "playing") return 0;
+    const q = quiz.questions[session.currentQuestionIdx];
+    if (!q) return 0;
+    const totalSec = Math.max(5, (q.timer || 60) + (session.extraSeconds || 0) - myTimeCut);
+    return Math.max(0, totalSec - elapsedNow());
+  };
+
   // Cronómetro (respeta la pausa del docente)
   useEffectL(() => {
     if (!session || session.status !== "playing") return;
     const currentQ = quiz.questions[session.currentQuestionIdx];
     if (!currentQ) return;
-    const totalSec = Math.max(5, (currentQ.timer || 60) + (session.extraSeconds || 0) - myTimeCut);
-    const startedAt = session.questionStartedAt || Date.now();
-    const isPaused = !!session.pausedAt;
     const tick = () => {
-      const now = isPaused ? session.pausedAt : Date.now();
-      const left = Math.max(0, totalSec - (now - startedAt) / 1000);
+      const left = secondsLeftNow();
       // Solo re-renderizar cuando cambia el segundo visible (ahorro de
       // batería y CPU en los celulares de los estudiantes).
       setSecondsLeft(prev => (Math.ceil(left) === Math.ceil(prev) ? prev : left));
     };
     tick();
-    if (isPaused) return;
+    if (session.pausedAt) return;
     const id = setInterval(tick, 200);
     return () => clearInterval(id);
   }, [session?.questionStartedAt, session?.status, session?.extraSeconds, session?.pausedAt, myTimeCut]);
@@ -3957,11 +4349,17 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
     if (session.pausedAt) return; // no se puede responder en pausa
     if (restoring) return; // verificando si ya había respondido (reconexión)
     if (answeredAtIdx === session.currentQuestionIdx) return;
+    if (session.participants?.[participantId]?.blocked) return; // bloqueado por salidas
+    // Mi reloj llegó a 0 (incluye tiempo extra, Tijera y pausa): ya no se
+    // responde, aunque el docente todavía no haya revelado. Antes la Tijera
+    // solo acortaba el número en pantalla y se podía responder con 0.
+    if (secondsLeftNow() <= 0) return;
     const qIdx = session.currentQuestionIdx;
     const currentQ = quiz.questions[qIdx];
     const totalSec = currentQ.timer || 60;
-    const startedAt = session.questionStartedAt || Date.now();
-    const secondsTaken = (Date.now() - startedAt) / 1000;
+    // Tiempo de respuesta con el reloj propio (ver clockRef), acotado al
+    // tiempo de la pregunta: el bono de velocidad nunca pasa del máximo.
+    const secondsTaken = Math.min(totalSec, elapsedNow());
     const isSurvey = quiz.mode === "survey";
     // Respuesta abierta con calificación en vivo: el docente pone la nota,
     // no se autocalifica ni se asignan puntos al responder.
@@ -3981,7 +4379,10 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
       && ["multi", "truefalse", "checks"].includes(currentQ.type);
     if (concentrationOn) {
       extremeWin = !isCorrect;
-      points = isCorrect ? -(xfx.concentration.penalty || 17) : (currentQ.pointsCorrect ?? 10);
+      // La penalización no baja de 0 (el docente la acota igual al sumar).
+      points = isCorrect
+        ? -Math.min(xfx.concentration.penalty || 17, Math.max(0, myScore))
+        : (currentQ.pointsCorrect ?? 10);
     }
 
     setMyAnswer(answer);
@@ -4086,6 +4487,57 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
     liveTallyRef.current = { ...liveTallyRef.current, streak: 0 }; // sin responder corta la racha
     esmigolRef.current.fireNow("tiempo", "sinTiempo");
   }, [session?.status]);
+
+  // ---- Salidas del quiz (useQuizExitWatch) ----
+  // Cada vez que se va de la pestaña/app durante una pregunta abierta y
+  // vuelve, se anota en la sala (participants.<id>.exits y exitLog; el
+  // docente lo ve en la lista y queda en Resultados). A la salida número
+  // LIVE_EXIT_LIMIT el celular queda bloqueado (participants.<id>.blocked)
+  // hasta que el docente lo deje seguir; exitsAllowed marca hasta qué
+  // salida autorizó, así la siguiente lo vuelve a bloquear.
+  const sessionRef = useRefL(null);
+  sessionRef.current = session;
+  const meP = session?.participants?.[participantId] || null;
+  const exitLimit = LIVE_EXIT_LIMIT;
+  const [exitNotice, setExitNotice] = useStateL(null); // { n, at } aviso al volver
+  const registerExit = async (info) => {
+    const s = sessionRef.current;
+    const p = s?.participants?.[participantId];
+    if (!s || !p || s.status === "finished" || s.status === "cancelled") return;
+    const n = (p.exits || 0) + 1;
+    const blocked = n >= exitLimit && n > (p.exitsAllowed || 0);
+    const entry = { at: Date.now(), qIdx: s.currentQuestionIdx, seconds: info.seconds ?? null, kind: info.kind || "hidden" };
+    const updates = {
+      [`participants.${participantId}.exits`]: n,
+      [`participants.${participantId}.exitLog`]: firebase.firestore.FieldValue.arrayUnion(entry),
+    };
+    if (blocked) updates[`participants.${participantId}.blocked`] = { at: Date.now(), qIdx: s.currentQuestionIdx, exits: n };
+    setExitNotice({ n, at: Date.now() });
+    try {
+      await window.QS.db.collection("liveSessions").doc(sessionId).update(updates);
+    } catch (err) {
+      console.error("Error registrando salida del quiz:", err);
+    }
+  };
+  // Solo cuenta si la salida empieza con una pregunta abierta sin responder.
+  useQuizExitWatch(
+    !!session && session.status === "playing" && !session.pausedAt && !session.physicalChallenge
+      && !!liveQ && liveQ.type !== "slide" && answeredAtIdx !== session.currentQuestionIdx
+      && !(meP && meP.blocked) && !restoring,
+    ({ seconds }) => registerExit({ seconds, kind: "hidden" })
+  );
+  // Recarga a mitad de pregunta (ver reloadExitRef): se anota al terminar
+  // de verificar si ya había respondido.
+  useEffectL(() => {
+    if (restoring || !reloadExitRef.current) return;
+    reloadExitRef.current = null;
+    registerExit({ seconds: null, kind: "reload" });
+  }, [restoring]);
+  useEffectL(() => {
+    if (!exitNotice) return;
+    const t = setTimeout(() => setExitNotice(null), 9000);
+    return () => clearTimeout(t);
+  }, [exitNotice]);
 
   // ----- Render -----
   if (!session) {
@@ -4228,14 +4680,25 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
             </div>
           )}
 
-          {/* Puntaje */}
-          <div style={{
-            background: "var(--violet-50)", padding: 14, borderRadius: 12, marginBottom: 10,
-          }}>
-            <div style={{ fontSize: 12, color: "var(--violet-700)", fontWeight: 600 }}>Puntaje obtenido</div>
-            <div style={{ fontSize: 28, fontWeight: 800, fontFamily: "var(--font-display)", color: "var(--violet-700)" }}>
-              {myScore}
-              <span style={{ fontSize: 14, opacity: 0.7 }}> / {pointsMaxAnswered}</span>
+          {/* Puntaje: el del RANKING (con bonus de velocidad, privilegios y
+              puntos extra) y, aparte, el que cuenta PARA LA NOTA sobre su
+              máximo. Antes se mostraba el del ranking sobre el máximo de la
+              nota ("135 / 100"), que parecía un error. */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+            <div style={{ background: "var(--violet-50)", padding: 14, borderRadius: 12 }}>
+              <div style={{ fontSize: 12, color: "var(--violet-700)", fontWeight: 600 }}>Puntos del ranking</div>
+              <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "var(--font-display)", color: "var(--violet-700)" }}>
+                {myScore}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--ink-500)" }}>con bonus y extras</div>
+            </div>
+            <div style={{ background: "var(--ink-50)", padding: 14, borderRadius: 12 }}>
+              <div style={{ fontSize: 12, color: "var(--ink-500)", fontWeight: 600 }}>Puntos para la nota</div>
+              <div style={{ fontSize: 26, fontWeight: 800, fontFamily: "var(--font-display)", color: "var(--ink-700)" }}>
+                {fmtPts(myGradePoints)}
+                <span style={{ fontSize: 13, opacity: 0.7 }}> / {pointsMaxAnswered}</span>
+              </div>
+              <div style={{ fontSize: 11, color: "var(--ink-500)" }}>solo por tus respuestas</div>
             </div>
           </div>
 
@@ -4267,6 +4730,29 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
           <button onClick={onExit} className="qs-btn qs-btn--primary qs-btn--lg" style={{ width: "100%" }}>Salir</button>
         </div>
         {esmigol.node}
+      </div>
+    );
+  }
+
+  // Bloqueado por salir del quiz (ver registerExit): en pausa hasta que el
+  // docente lo deje seguir. La suscripción sigue viva, así que al
+  // autorizarlo esta pantalla desaparece sola.
+  if (meP && meP.blocked) {
+    return (
+      <div style={{
+        minHeight: "100vh", display: "grid", placeItems: "center",
+        background: quizBg(quiz?.color), padding: 20,
+      }}>
+        <div className="qs-card" style={{ padding: 28, textAlign: "center", maxWidth: 400 }}>
+          <div style={{ fontSize: 56, marginBottom: 8 }}>🚪</div>
+          <h2 style={{ fontSize: 22, marginBottom: 8 }}>Saliste del quiz {meP.exits || exitLimit} veces</h2>
+          <p style={{ color: "var(--ink-500)", lineHeight: 1.5 }}>
+            Tu profesor debe autorizar que sigas. Mientras tanto no puedes responder: espera en esta pantalla.
+          </p>
+          <p style={{ fontSize: 12, color: "var(--ink-500)", marginTop: 14 }}>
+            Cambiar de app o de pestaña, bloquear la pantalla o recargar durante una pregunta cuenta como salida.
+          </p>
+        </div>
       </div>
     );
   }
@@ -4475,6 +4961,24 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
     if (xfx.freepass && window.ExtremeSkipScreen) {
       return <window.ExtremeSkipScreen emoji="🎫" title="Pase libre" desc="Esta pregunta la ganas sin responder." />;
     }
+    // Mi reloj llegó a 0 sin responder: se cierran las opciones hasta que
+    // el docente revele. Hace real la Tijera y evita responder con el
+    // reloj en 0 si al docente se le suspendió el equipo y nadie reveló.
+    if (!haveAnswered && secondsLeftNow() <= 0) {
+      return (
+        <div style={{
+          minHeight: "100vh", display: "grid", placeItems: "center",
+          background: quizBg(quiz?.color), padding: 20,
+        }}>
+          <div className="qs-card" style={{ padding: 32, textAlign: "center", maxWidth: 380 }}>
+            <div style={{ fontSize: 56, marginBottom: 12 }}>⏰</div>
+            <h2 style={{ fontSize: 22, marginBottom: 8 }}>Se acabó tu tiempo</h2>
+            <p style={{ color: "var(--ink-500)" }}>Esperando que el profesor muestre la respuesta...</p>
+          </div>
+          {esmigol.node}
+        </div>
+      );
+    }
     // Congelar: los primeros N segundos no puedo responder.
     const totalSecMe = Math.max(5, (currentQ.timer || 60) + (session.extraSeconds || 0) - myTimeCut);
     // Congelar dura como mucho la mitad del tiempo que me queda en total.
@@ -4539,42 +5043,62 @@ function StudentLive({ sessionId, participantId, quizInitial, onExit, onBonus })
             pointer-events none: se puede tocar "a ciegas". */}
         {xfx.blind && (
           <div aria-hidden="true" style={{
-            position: "fixed", inset: 0, zIndex: 830, background: "#000", pointerEvents: "none",
+            position: "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: 830, background: "#000", pointerEvents: "none",
             animation: "qs-x-blind 1.6s steps(1, end) infinite",
           }} />
         )}
         <div style={{ maxWidth: 600, margin: "0 auto" }}>
+          {/* Encabezado: en iPhone angosto (SE, mini, "Zoom de pantalla") la
+              fila no cabía y el cronómetro, el último a la derecha, quedaba
+              cortado por el borde (la página tiene overflow-x hidden), justo
+              cuando más crece (≤ 5 s). Ahora la fila salta de línea, nada se
+              encoge y queda pegada arriba al desplazarse (preguntas largas
+              o con imagen), con una banda translúcida para leerse encima. */}
           <div style={{
             display: "flex", justifyContent: "space-between", alignItems: "center",
-            color: "white", marginBottom: 12,
+            flexWrap: "wrap", gap: "6px 8px", color: "white",
+            position: "sticky", top: 0, zIndex: 20,
+            margin: "-16px -16px 12px", padding: "10px 16px 8px",
+            background: "rgba(0,0,0,0.22)", WebkitBackdropFilter: "blur(6px)", backdropFilter: "blur(6px)",
           }}>
-            <span style={{ fontWeight: 600 }}>Pregunta {session.currentQuestionIdx + 1} / {quiz.questions.length}</span>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontWeight: 600, whiteSpace: "nowrap" }}>Pregunta {session.currentQuestionIdx + 1} / {quiz.questions.length}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", marginLeft: "auto" }}>
               {isAnonymousSurvey(quiz) && (
                 <span title="Encuesta anónima: nadie sabrá cuáles son tus respuestas" style={{
                   background: "rgba(20,184,166,0.9)", color: "white", padding: "6px 12px",
-                  borderRadius: 10, fontWeight: 800, fontSize: 13,
+                  borderRadius: 10, fontWeight: 800, fontSize: 13, whiteSpace: "nowrap",
                 }}>🕶️ Anónimo</span>
               )}
               {quiz.mode !== "survey" && (
                 <span style={{
                   background: "rgba(255,255,255,0.18)", color: "white", padding: "6px 12px",
-                  borderRadius: 10, fontWeight: 700, fontSize: 14,
+                  borderRadius: 10, fontWeight: 700, fontSize: 14, whiteSpace: "nowrap",
                 }}>⭐ {myScore} pts</span>
               )}
               {window.MetaTimerBadge ? (
-                <window.MetaTimerBadge secondsLeft={secondsLeft} paused={!!session.pausedAt} />
+                <window.MetaTimerBadge secondsLeft={secondsLeft} paused={!!session.pausedAt} style={{ flexShrink: 0 }} />
               ) : (
                 <span style={{
                   background: session.pausedAt ? "var(--amber-400)" : "white",
                   color: session.pausedAt ? "#7c2d12" : (secondsLeft < 5 ? "var(--red-500)" : "var(--violet-700)"),
-                  padding: "6px 14px",
+                  padding: "6px 14px", flexShrink: 0, whiteSpace: "nowrap",
                   borderRadius: 10, fontWeight: 800, fontFamily: "var(--font-display)",
                 }}>{session.pausedAt ? "⏸ Pausa" : Math.ceil(secondsLeft) + "s"}</span>
               )}
             </div>
           </div>
 
+          {exitNotice && (
+            <div role="status" style={{
+              marginBottom: 12, padding: "10px 14px", borderRadius: 12, textAlign: "center",
+              background: "#fef3c7", color: "#92400e", fontWeight: 700, fontSize: 14, lineHeight: 1.4,
+            }}>
+              🚪 Saliste del quiz ({exitNotice.n} de {exitLimit}).{" "}
+              {exitNotice.n >= exitLimit - 1
+                ? "Una salida más y quedarás bloqueado hasta que tu profesor te autorice."
+                : `A la ${exitLimit}ª, tu profesor deberá autorizarte para seguir.`}
+            </div>
+          )}
           {isExtremeStudent && window.ExtremeEffectBanner && (
             <window.ExtremeEffectBanner session={session} quiz={quiz} me={participantId} style={{ marginBottom: 12 }} />
           )}

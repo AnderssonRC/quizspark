@@ -126,7 +126,7 @@ function MetaCountdown({ mode = "quiz", seconds = 5, onDone, background, allowSk
 
   return (
     <div style={{
-      position: "fixed", inset: 0, zIndex: 900, overflow: "hidden",
+      position: "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: 900, overflow: "hidden",
       background: background || info.bg, color: "#fff",
       display: "grid", placeItems: "center", padding: 20,
       fontFamily: "var(--font-display, 'Poppins', 'Segoe UI', system-ui, sans-serif)",
@@ -169,7 +169,7 @@ function MetaCountdown({ mode = "quiz", seconds = 5, onDone, background, allowSk
           ))}
           {/* Destello blanco al llegar a "¡Vamos!" */}
           {isGo && (
-            <div style={{ position: "absolute", inset: 0, background: "#fff", animation: "qs-meta-flash 0.7s ease-out forwards", pointerEvents: "none" }} />
+            <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, background: "#fff", animation: "qs-meta-flash 0.7s ease-out forwards", pointerEvents: "none" }} />
           )}
         </>
       )}
@@ -202,7 +202,7 @@ function MetaCountdown({ mode = "quiz", seconds = 5, onDone, background, allowSk
               style={{ transition: "stroke-dashoffset 1s linear", filter: playful ? "drop-shadow(0 0 6px rgba(255,255,255,0.8))" : "none" }} />
           </svg>
           <div key={left} style={{
-            position: "absolute", inset: 0, display: "grid", placeItems: "center",
+            position: "absolute", top: 0, right: 0, bottom: 0, left: 0, display: "grid", placeItems: "center",
             fontSize: isGo ? (playful ? 40 : 34) : (playful ? 88 : 72), fontWeight: 800, lineHeight: 1,
             textShadow: "0 6px 18px rgba(0,0,0,0.35)",
             animation: isGo && playful ? "qs-meta-go 0.6s cubic-bezier(.2,.9,.3,1.3)" : "qs-meta-pop 0.45s cubic-bezier(.2,.9,.3,1.3)",
@@ -279,6 +279,9 @@ function MetaTimerBadge({ secondsLeft, paused = false, style }) {
         padding: critical ? "8px 18px" : low ? "7px 16px" : "6px 14px",
         borderRadius: 12, fontWeight: 900, fontFamily: "var(--font-display)",
         fontSize: critical ? 30 : low ? 22 : 15, lineHeight: 1,
+        // Es el último de la fila: no se parte en dos líneas y el "latido"
+        // crece hacia la izquierda, no hacia el borde (iPhone angosto).
+        whiteSpace: "nowrap", transformOrigin: "right center",
         boxShadow: critical ? "0 0 0 4px rgba(220,38,38,.35), 0 8px 24px rgba(220,38,38,.5)" : low ? "0 6px 18px rgba(245,158,11,.45)" : "none",
         animation: critical ? "qs-timer-beat .55s cubic-bezier(.2,.9,.3,1.2)" : low ? "qs-timer-pulse 1s ease-in-out infinite" : "none",
         transition: "background .3s, font-size .25s, padding .25s",
@@ -288,7 +291,7 @@ function MetaTimerBadge({ secondsLeft, paused = false, style }) {
       </span>
       {critical && ReactDOM.createPortal(
         <div style={{
-          position: "fixed", inset: 0, pointerEvents: "none", zIndex: 700,
+          position: "fixed", top: 0, right: 0, bottom: 0, left: 0, pointerEvents: "none", zIndex: 700,
           boxShadow: "inset 0 0 0 6px rgba(220,38,38,.9), inset 0 0 90px rgba(220,38,38,.55)",
           animation: "qs-timer-vignette .5s ease-in-out infinite alternate",
         }} />,
@@ -785,7 +788,7 @@ function EsmigolExpressionPicker({ value, onChange, size = 30 }) {
       {open && window.ReactDOM && ReactDOM.createPortal(
         <>
           {/* Capa invisible: cerrar al hacer clic afuera */}
-          <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 9998 }} />
+          <div onClick={() => setOpen(false)} style={{ position: "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: 9998 }} />
           <div className="qs-card" style={{
             position: "fixed",
             top: rect ? Math.min(rect.bottom + 4, window.innerHeight - 270) : 0,

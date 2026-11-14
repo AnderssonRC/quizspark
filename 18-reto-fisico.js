@@ -192,14 +192,14 @@ function RFShell({ children, introDone, ch, contained = false }) {
   const big = contained ? "34px" : "clamp(40px, 11vw, 120px)";
   return (
     <div style={{
-      position: contained ? "absolute" : "fixed", inset: 0, zIndex: contained ? 1 : 950, overflowY: "auto", overflowX: "hidden",
+      position: contained ? "absolute" : "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: contained ? 1 : 950, overflowY: "auto", overflowX: "hidden",
       background: rfBg(t), color: t.text, fontFamily: RF_FONT,
       animation: "qs-rf-frame 2.2s ease-in-out infinite", ...rfVars(t),
     }}>
       <RFStyles />
       {!introDone && (
-        <div aria-hidden="true" style={{ position: contained ? "absolute" : "fixed", inset: 0, pointerEvents: "none", zIndex: 2, display: "grid", placeItems: "center", overflow: "hidden" }}>
-          <div style={{ position: "absolute", inset: 0, background: t.neon, animation: "qs-rf-flash 2.6s ease forwards" }} />
+        <div aria-hidden="true" style={{ position: contained ? "absolute" : "fixed", top: 0, right: 0, bottom: 0, left: 0, pointerEvents: "none", zIndex: 2, display: "grid", placeItems: "center", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, left: 0, background: t.neon, animation: "qs-rf-flash 2.6s ease forwards" }} />
           <div style={{ transform: "rotate(-32deg)", textAlign: "center", lineHeight: 1.05 }}>
             <div style={{
               fontSize: big, fontWeight: 900, letterSpacing: ".04em", color: t.neon,
@@ -241,7 +241,7 @@ function RFVisual({ ch, size }) {
   return (
     <div style={{ position: "relative", width: ch.image ? "auto" : size, height: size, margin: "4px auto 8px", display: "grid", placeItems: "center" }}>
       <div aria-hidden="true" style={{
-        position: "absolute", inset: ch.image ? "-6%" : 0, borderRadius: "50%",
+        position: "absolute", top: ch.image ? "-6%" : 0, right: ch.image ? "-6%" : 0, bottom: ch.image ? "-6%" : 0, left: ch.image ? "-6%" : 0, borderRadius: "50%",
         background: `radial-gradient(circle, ${rfRgba(t.neon, 0.55)} 0%, ${rfRgba(t.neon, 0.12)} 55%, transparent 70%)`,
         animation: "qs-rf-halo 1.6s ease-in-out infinite",
       }} />
@@ -321,7 +321,7 @@ function PhysicalChallengeButton({ onLaunch, style }) {
 
       {open && (
         <div onClick={() => setOpen(false)} style={{
-          position: "fixed", inset: 0, zIndex: 940, background: "rgba(0,0,0,.6)",
+          position: "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: 940, background: "rgba(0,0,0,.6)",
           display: "grid", placeItems: "center", padding: 16,
         }}>
           <div onClick={e => e.stopPropagation()} style={{
@@ -707,7 +707,7 @@ function RetoFisicoStudioModal({ onClose, onSaved }) {
 
   return (
     <div onClick={requestClose} style={{
-      position: "fixed", inset: 0, zIndex: 900, background: "rgba(10,4,28,.72)", display: "grid", placeItems: "center", padding: 16,
+      position: "fixed", top: 0, right: 0, bottom: 0, left: 0, zIndex: 900, background: "rgba(10,4,28,.72)", display: "grid", placeItems: "center", padding: 16,
     }}>
       <style>{`
         .qs-rf-studio { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; }
